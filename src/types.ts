@@ -40,6 +40,9 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  displayName?: string; // Per-group display name in Slack (e.g., "Builder")
+  displayEmoji?: string; // Per-group emoji in Slack (e.g., "hammer_and_wrench")
+  assistantName?: string; // Per-group assistant name for container (e.g., "Builder")
 }
 
 export interface NewMessage {
@@ -51,6 +54,13 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  threadTs?: string; // Slack thread timestamp for thread reply support
+}
+
+export interface SendMessageOpts {
+  displayName?: string;
+  displayEmoji?: string;
+  threadTs?: string;
 }
 
 export interface ScheduledTask {
@@ -82,7 +92,7 @@ export interface TaskRunLog {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string): Promise<void>;
+  sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void>;
   isConnected(): boolean;
   ownsJid(jid: string): boolean;
   disconnect(): Promise<void>;

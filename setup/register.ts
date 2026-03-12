@@ -22,6 +22,8 @@ interface RegisterArgs {
   requiresTrigger: boolean;
   isMain: boolean;
   assistantName: string;
+  displayName: string;
+  displayEmoji: string;
 }
 
 function parseArgs(args: string[]): RegisterArgs {
@@ -34,6 +36,8 @@ function parseArgs(args: string[]): RegisterArgs {
     requiresTrigger: true,
     isMain: false,
     assistantName: 'Andy',
+    displayName: '',
+    displayEmoji: '',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -61,6 +65,12 @@ function parseArgs(args: string[]): RegisterArgs {
         break;
       case '--assistant-name':
         result.assistantName = args[++i] || 'Andy';
+        break;
+      case '--display-name':
+        result.displayName = args[++i] || '';
+        break;
+      case '--display-emoji':
+        result.displayEmoji = args[++i] || '';
         break;
     }
   }
@@ -107,6 +117,9 @@ export async function run(args: string[]): Promise<void> {
     added_at: new Date().toISOString(),
     requiresTrigger: parsed.requiresTrigger,
     isMain: parsed.isMain,
+    displayName: parsed.displayName || undefined,
+    displayEmoji: parsed.displayEmoji || undefined,
+    assistantName: parsed.assistantName !== 'Andy' ? parsed.assistantName : undefined,
   });
 
   logger.info('Wrote registration to SQLite');
@@ -170,6 +183,8 @@ export async function run(args: string[]): Promise<void> {
     TRIGGER: parsed.trigger,
     REQUIRES_TRIGGER: parsed.requiresTrigger,
     ASSISTANT_NAME: parsed.assistantName,
+    DISPLAY_NAME: parsed.displayName,
+    DISPLAY_EMOJI: parsed.displayEmoji,
     NAME_UPDATED: nameUpdated,
     STATUS: 'success',
     LOG: 'logs/setup.log',

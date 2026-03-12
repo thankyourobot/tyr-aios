@@ -11,6 +11,7 @@ import {
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
+  SendMessageOpts,
 } from '../types.js';
 
 // Slack's chat.postMessage API limits text to ~4000 characters per call.
@@ -34,9 +35,12 @@ export class SlackChannel implements Channel {
   private app: App;
   private botUserId: string | undefined;
   private connected = false;
-  private outgoingQueue: Array<{ jid: string; text: string }> = [];
+  private outgoingQueue: Array<{ jid: string; text: string; opts?: SendMessageOpts }> = [];
   private flushing = false;
   private userNameCache = new Map<string, string>();
+
+  // Track latest message context per JID for typing indicator
+  private latestMessageContext = new Map<string, { channel: string; threadTs?: string; messageTs: string }>();
 
   private opts: SlackChannelOpts;
 
@@ -79,9 +83,8 @@ export class SlackChannel implements Channel {
 
       if (!msg.text) return;
 
-      // Threaded replies are flattened into the channel conversation.
-      // The agent sees them alongside channel-level messages; responses
-      // always go to the channel, not back into the thread.
+      // Capture thread_ts for thread reply support
+      const threadTs = (event as { thread_ts?: string }).thread_ts || undefined;
 
       const jid = `slack:${msg.channel}`;
       const timestamp = new Date(parseFloat(msg.ts) * 1000).toISOString();
@@ -90,9 +93,15 @@ export class SlackChannel implements Channel {
       // Always report metadata for group discovery
       this.opts.onChatMetadata(jid, timestamp, undefined, 'slack', isGroup);
 
-      // Only deliver full messages for registered groups
+      // Check if this JID is registered; if not, we'll let the message loop
+      // handle it via main group fallback. Don't reroute — keep original JID
+      // so replies go back to the correct channel (critical for DMs).
       const groups = this.opts.registeredGroups();
-      if (!groups[jid]) return;
+      if (!groups[jid]) {
+        const hasMain = Object.values(groups).some(g => g.isMain);
+        if (!hasMain) return; // No main group configured, drop message
+      }
+      const targetJid = jid;
 
       const isBotMessage =
         !!msg.bot_id || msg.user === this.botUserId;
@@ -118,16 +127,26 @@ export class SlackChannel implements Channel {
         }
       }
 
-      this.opts.onMessage(jid, {
+      this.opts.onMessage(targetJid, {
         id: msg.ts,
-        chat_jid: jid,
+        chat_jid: targetJid,
         sender: msg.user || msg.bot_id || '',
         sender_name: senderName,
         content,
         timestamp,
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
+        threadTs,
       });
+
+      // Track message context for typing indicator
+      if (!isBotMessage && this.connected) {
+        this.latestMessageContext.set(targetJid, {
+          channel: msg.channel,
+          threadTs: threadTs || msg.ts,
+          messageTs: msg.ts,
+        });
+      }
     });
   }
 
@@ -157,11 +176,11 @@ export class SlackChannel implements Channel {
     await this.syncChannelMetadata();
   }
 
-  async sendMessage(jid: string, text: string): Promise<void> {
+  async sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
-      this.outgoingQueue.push({ jid, text });
+      this.outgoingQueue.push({ jid, text, opts });
       logger.info(
         { jid, queueSize: this.outgoingQueue.length },
         'Slack disconnected, message queued',
@@ -170,20 +189,26 @@ export class SlackChannel implements Channel {
     }
 
     try {
+      const postOpts: Record<string, string> = {};
+      if (opts?.displayName) postOpts.username = opts.displayName;
+      if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
+
       // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: channelId, text });
+        await this.app.client.chat.postMessage({ channel: channelId, text, ...postOpts });
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
             channel: channelId,
             text: text.slice(i, i + MAX_MESSAGE_LENGTH),
+            ...postOpts,
           });
         }
       }
       logger.info({ jid, length: text.length }, 'Slack message sent');
     } catch (err) {
-      this.outgoingQueue.push({ jid, text });
+      this.outgoingQueue.push({ jid, text, opts });
       logger.warn(
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send Slack message, queued',
@@ -204,11 +229,29 @@ export class SlackChannel implements Channel {
     await this.app.stop();
   }
 
-  // Slack does not expose a typing indicator API for bots.
-  // This no-op satisfies the Channel interface so the orchestrator
-  // doesn't need channel-specific branching.
-  async setTyping(_jid: string, _isTyping: boolean): Promise<void> {
-    // no-op: Slack Bot API has no typing indicator endpoint
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    const ctx = this.latestMessageContext.get(jid);
+    if (!ctx) return;
+
+    try {
+      // Use Slack's assistant thread status API for native "is typing..." indicator
+      if (isTyping) {
+        await this.app.client.apiCall('assistant.threads.setStatus', {
+          channel_id: ctx.channel,
+          thread_ts: ctx.threadTs,
+          status: 'is thinking...',
+        });
+      } else {
+        await this.app.client.apiCall('assistant.threads.setStatus', {
+          channel_id: ctx.channel,
+          thread_ts: ctx.threadTs,
+          status: '',
+        });
+
+      }
+    } catch (err) {
+      logger.debug({ jid, isTyping, err }, 'Typing indicator failed');
+    }
   }
 
   /**
@@ -275,9 +318,14 @@ export class SlackChannel implements Channel {
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
         const channelId = item.jid.replace(/^slack:/, '');
+        const postOpts: Record<string, string> = {};
+        if (item.opts?.displayName) postOpts.username = item.opts.displayName;
+        if (item.opts?.displayEmoji) postOpts.icon_emoji = `:${item.opts.displayEmoji}:`;
+        if (item.opts?.threadTs) postOpts.thread_ts = item.opts.threadTs;
         await this.app.client.chat.postMessage({
           channel: channelId,
           text: item.text,
+          ...postOpts,
         });
         logger.info(
           { jid: item.jid, length: item.text.length },

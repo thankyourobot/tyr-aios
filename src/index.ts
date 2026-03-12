@@ -53,7 +53,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup, SendMessageOpts } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -67,6 +67,17 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+/**
+ * Find the main group (isMain=true) from registered groups.
+ * DM messages are processed under the main group's config.
+ */
+function getMainGroup(): { jid: string; group: RegisteredGroup } | null {
+  for (const [jid, group] of Object.entries(registeredGroups)) {
+    if (group.isMain) return { jid, group };
+  }
+  return null;
+}
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
@@ -144,8 +155,13 @@ export function _setRegisteredGroups(
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = registeredGroups[chatJid];
-  if (!group) return true;
+  let group = registeredGroups[chatJid];
+  if (!group) {
+    // DM or unknown JID — route through main group's config
+    const main = getMainGroup();
+    if (!main) return true;
+    group = main.group;
+  }
 
   const channel = findChannel(channels, chatJid);
   if (!channel) {
@@ -163,6 +179,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   );
 
   if (missedMessages.length === 0) return true;
+
+  // Default to threading: reply in existing thread, or start a new thread on the triggering message
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  const lastThreadTs = lastMsg.threadTs || lastMsg.id;
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
@@ -215,10 +235,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           ? result.result
           : JSON.stringify(result.result);
       // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      // Agent can wrap output in <channel>...</channel> to post top-level instead of threading
+      const channelMatch = text.match(/^<channel>([\s\S]*)<\/channel>$/);
+      const useThreadTs = channelMatch ? undefined : lastThreadTs;
+      if (channelMatch) text = channelMatch[1].trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
-        await channel.sendMessage(chatJid, text);
+        await channel.sendMessage(chatJid, text, {
+          displayName: group.displayName,
+          displayEmoji: group.displayEmoji,
+          threadTs: useThreadTs,
+        });
         outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
@@ -314,7 +342,7 @@ async function runAgent(
         groupFolder: group.folder,
         chatJid,
         isMain,
-        assistantName: ASSISTANT_NAME,
+        assistantName: group.assistantName || ASSISTANT_NAME,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -352,7 +380,18 @@ async function startMessageLoop(): Promise<void> {
 
   while (true) {
     try {
-      const jids = Object.keys(registeredGroups);
+      // Include DM JIDs so getNewMessages picks up direct messages
+      const registeredJids = Object.keys(registeredGroups);
+      const allChats = getAllChats();
+      const dmJids = allChats
+        .filter(
+          (c) =>
+            !c.is_group &&
+            c.jid !== '__group_sync__' &&
+            !registeredGroups[c.jid],
+        )
+        .map((c) => c.jid);
+      const jids = [...registeredJids, ...dmJids];
       const { messages, newTimestamp } = getNewMessages(
         jids,
         lastTimestamp,
@@ -378,8 +417,14 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          const group = registeredGroups[chatJid];
-          if (!group) continue;
+          let group = registeredGroups[chatJid];
+          const isDm = !group;
+
+          if (!group) {
+            const main = getMainGroup();
+            if (!main) continue;
+            group = main.group;
+          }
 
           const channel = findChannel(channels, chatJid);
           if (!channel) {
@@ -415,7 +460,8 @@ async function startMessageLoop(): Promise<void> {
             allPending.length > 0 ? allPending : groupMessages;
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
-          if (queue.sendMessage(chatJid, formatted)) {
+          // DMs skip IPC pipe to avoid cross-contamination with main group's container
+          if (!isDm && queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -456,6 +502,22 @@ function recoverPendingMessages(): void {
         'Recovery: found unprocessed messages',
       );
       queue.enqueueMessageCheck(chatJid);
+    }
+  }
+
+  // Recover DMs: check lastAgentTimestamp entries that are not registered groups
+  const mainGroup = getMainGroup();
+  if (mainGroup) {
+    for (const [chatJid, cursor] of Object.entries(lastAgentTimestamp)) {
+      if (registeredGroups[chatJid]) continue;
+      const pending = getMessagesSince(chatJid, cursor, ASSISTANT_NAME);
+      if (pending.length > 0) {
+        logger.info(
+          { chatJid, pendingCount: pending.length },
+          'Recovery: found unprocessed DM messages',
+        );
+        queue.enqueueMessageCheck(chatJid);
+      }
     }
   }
 }

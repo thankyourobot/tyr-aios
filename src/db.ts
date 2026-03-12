@@ -9,6 +9,7 @@ import {
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
+  SendMessageOpts,
   TaskRunLog,
 } from './types.js';
 
@@ -32,6 +33,7 @@ function createSchema(database: Database.Database): void {
       timestamp TEXT,
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
+      thread_ts TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -76,11 +78,14 @@ function createSchema(database: Database.Database): void {
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
-      folder TEXT NOT NULL UNIQUE,
+      folder TEXT NOT NULL,
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
       container_config TEXT,
-      requires_trigger INTEGER DEFAULT 1
+      requires_trigger INTEGER DEFAULT 1,
+      display_name TEXT,
+      display_emoji TEXT,
+      assistant_name TEXT
     );
   `);
 
@@ -106,6 +111,13 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add thread_ts column if it doesn't exist (migration for existing DBs)
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN thread_ts TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_main column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -114,6 +126,29 @@ function createSchema(database: Database.Database): void {
     // Backfill: existing rows with folder = 'main' are the main group
     database.exec(
       `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
+  // Add display_name, display_emoji, assistant_name columns if they don't exist (migration for existing DBs)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN display_name TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN display_emoji TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN assistant_name TEXT`,
     );
   } catch {
     /* column already exists */
@@ -262,7 +297,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -272,6 +307,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.threadTs ?? null,
   );
 }
 
@@ -287,9 +323,10 @@ export function storeMessageDirect(msg: {
   timestamp: string;
   is_from_me: boolean;
   is_bot_message?: boolean;
+  threadTs?: string;
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -299,6 +336,7 @@ export function storeMessageDirect(msg: {
     msg.timestamp,
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
+    msg.threadTs ?? null,
   );
 }
 
@@ -311,12 +349,9 @@ export function getNewMessages(
   if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
 
   const placeholders = jids.map(() => '?').join(',');
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
-  // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_ts AS threadTs
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -344,12 +379,9 @@ export function getMessagesSince(
   botPrefix: string,
   limit: number = 200,
 ): NewMessage[] {
-  // Filter bot messages using both the is_bot_message flag AND the content
-  // prefix as a backstop for messages written before the migration ran.
-  // Subquery takes the N most recent, outer query re-sorts chronologically.
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_ts AS threadTs
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -447,7 +479,6 @@ export function updateTask(
 }
 
 export function deleteTask(id: string): void {
-  // Delete child records first (FK constraint)
   db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
   db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
 }
@@ -496,8 +527,6 @@ export function logTaskRun(log: TaskRunLog): void {
   );
 }
 
-// --- Router state accessors ---
-
 export function getRouterState(key: string): string | undefined {
   const row = db
     .prepare('SELECT value FROM router_state WHERE key = ?')
@@ -510,8 +539,6 @@ export function setRouterState(key: string, value: string): void {
     'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
   ).run(key, value);
 }
-
-// --- Session accessors ---
 
 export function getSession(groupFolder: string): string | undefined {
   const row = db
@@ -537,8 +564,6 @@ export function getAllSessions(): Record<string, string> {
   return result;
 }
 
-// --- Registered group accessors ---
-
 export function getRegisteredGroup(
   jid: string,
 ): (RegisteredGroup & { jid: string }) | undefined {
@@ -554,6 +579,9 @@ export function getRegisteredGroup(
         container_config: string | null;
         requires_trigger: number | null;
         is_main: number | null;
+        display_name: string | null;
+        display_emoji: string | null;
+        assistant_name: string | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -576,6 +604,9 @@ export function getRegisteredGroup(
     requiresTrigger:
       row.requires_trigger === null ? undefined : row.requires_trigger === 1,
     isMain: row.is_main === 1 ? true : undefined,
+    displayName: row.display_name ?? undefined,
+    displayEmoji: row.display_emoji ?? undefined,
+    assistantName: row.assistant_name ?? undefined,
   };
 }
 
@@ -584,8 +615,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, assistant_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -595,6 +626,9 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.containerConfig ? JSON.stringify(group.containerConfig) : null,
     group.requiresTrigger === undefined ? 1 : group.requiresTrigger ? 1 : 0,
     group.isMain ? 1 : 0,
+    group.displayName ?? null,
+    group.displayEmoji ?? null,
+    group.assistantName ?? null,
   );
 }
 
@@ -608,6 +642,9 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     container_config: string | null;
     requires_trigger: number | null;
     is_main: number | null;
+    display_name: string | null;
+    display_emoji: string | null;
+    assistant_name: string | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -629,12 +666,13 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       requiresTrigger:
         row.requires_trigger === null ? undefined : row.requires_trigger === 1,
       isMain: row.is_main === 1 ? true : undefined,
+      displayName: row.display_name ?? undefined,
+      displayEmoji: row.display_emoji ?? undefined,
+      assistantName: row.assistant_name ?? undefined,
     };
   }
   return result;
 }
-
-// --- JSON migration ---
 
 function migrateJsonState(): void {
   const migrateFile = (filename: string) => {
@@ -649,7 +687,6 @@ function migrateJsonState(): void {
     }
   };
 
-  // Migrate router_state.json
   const routerState = migrateFile('router_state.json') as {
     last_timestamp?: string;
     last_agent_timestamp?: Record<string, string>;
@@ -666,7 +703,6 @@ function migrateJsonState(): void {
     }
   }
 
-  // Migrate sessions.json
   const sessions = migrateFile('sessions.json') as Record<
     string,
     string
@@ -677,7 +713,6 @@ function migrateJsonState(): void {
     }
   }
 
-  // Migrate registered_groups.json
   const groups = migrateFile('registered_groups.json') as Record<
     string,
     RegisteredGroup
