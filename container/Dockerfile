@@ -23,8 +23,13 @@ RUN apt-get update && apt-get install -y \
     libdrm2 \
     libxshmfence1 \
     curl \
+    python3 \
+    python3-pip \
+    sqlite3 \
     git \
     && rm -rf /var/lib/apt/lists/*
+
+RUN pip3 install --break-system-packages python-ulid typing_extensions
 
 # Set Chromium path for agent-browser
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium

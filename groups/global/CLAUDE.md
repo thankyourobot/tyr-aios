@@ -47,3 +47,27 @@ When you decide not to respond, wrap your reasoning in `<internal>` tags and out
 - Your workspace is isolated — you cannot see other agents' files
 - The `/workspace/global/` directory contains this shared context (read-only)
 - Address the specific person who messaged when responding
+
+## Workspace Structure
+
+Your workspace has a standardized structure:
+- `/workspace/group/CLAUDE.md` — Your identity and instructions (you are reading this)
+- `/workspace/group/brain/` — Domain knowledge (read when you need context)
+- `/workspace/group/skills/` — Procedures and runbooks (read when doing specific tasks)
+- `/workspace/group/projects/` — Active workpapers (your current work in progress)
+- `/workspace/group/memory/` — Your persistent memory (managed by memory tool)
+- `/workspace/group/database/` — Your local databases (agent-specific data)
+- `/workspace/global/` — Shared organizational context (read-only)
+- `/workspace/extra/shared/` — Shared databases accessible to all agents (read-write)
+
+## Task Management
+
+All agents share a task database at `/workspace/extra/shared/tasks.db` (SQLite, WAL mode).
+Use `sqlite3` CLI to query and manage tasks. Generate task IDs with `python3 -c "import ulid; print(ulid.ULID())"`.
+Inspect the schema with `sqlite3 /workspace/extra/shared/tasks.db ".schema"`.
+
+Status values: `open`, `active`, `blocked`, `done`
+
+**Before starting work:** Check `brain/` for relevant domain context and `projects/` for active workpapers.
+**When you learn something important:** Write it to `brain/` for future sessions.
+**When working on a task:** Create a workpaper in `projects/` and link it in the task database.

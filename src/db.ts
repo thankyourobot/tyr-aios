@@ -133,9 +133,7 @@ function createSchema(database: Database.Database): void {
 
   // Add display_name, display_emoji, assistant_name columns if they don't exist (migration for existing DBs)
   try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN display_name TEXT`,
-    );
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN display_name TEXT`);
   } catch {
     /* column already exists */
   }

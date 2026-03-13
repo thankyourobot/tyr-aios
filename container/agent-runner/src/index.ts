@@ -407,6 +407,7 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
+        'memory_20250818',
         'mcp__nanoclaw__*'
       ],
       env: sdkEnv,

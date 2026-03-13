@@ -35,12 +35,19 @@ export class SlackChannel implements Channel {
   private app: App;
   private botUserId: string | undefined;
   private connected = false;
-  private outgoingQueue: Array<{ jid: string; text: string; opts?: SendMessageOpts }> = [];
+  private outgoingQueue: Array<{
+    jid: string;
+    text: string;
+    opts?: SendMessageOpts;
+  }> = [];
   private flushing = false;
   private userNameCache = new Map<string, string>();
 
   // Track latest message context per JID for typing indicator
-  private latestMessageContext = new Map<string, { channel: string; threadTs?: string; messageTs: string }>();
+  private latestMessageContext = new Map<
+    string,
+    { channel: string; threadTs?: string; messageTs: string }
+  >();
 
   private opts: SlackChannelOpts;
 
@@ -98,13 +105,12 @@ export class SlackChannel implements Channel {
       // so replies go back to the correct channel (critical for DMs).
       const groups = this.opts.registeredGroups();
       if (!groups[jid]) {
-        const hasMain = Object.values(groups).some(g => g.isMain);
+        const hasMain = Object.values(groups).some((g) => g.isMain);
         if (!hasMain) return; // No main group configured, drop message
       }
       const targetJid = jid;
 
-      const isBotMessage =
-        !!msg.bot_id || msg.user === this.botUserId;
+      const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
       let senderName: string;
       if (isBotMessage) {
@@ -122,7 +128,10 @@ export class SlackChannel implements Channel {
       let content = msg.text;
       if (this.botUserId && !isBotMessage) {
         const mentionPattern = `<@${this.botUserId}>`;
-        if (content.includes(mentionPattern) && !TRIGGER_PATTERN.test(content)) {
+        if (
+          content.includes(mentionPattern) &&
+          !TRIGGER_PATTERN.test(content)
+        ) {
           content = `@${ASSISTANT_NAME} ${content}`;
         }
       }
@@ -161,10 +170,7 @@ export class SlackChannel implements Channel {
       this.botUserId = auth.user_id as string;
       logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
     } catch (err) {
-      logger.warn(
-        { err },
-        'Connected to Slack but failed to get bot user ID',
-      );
+      logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
     }
 
     this.connected = true;
@@ -176,7 +182,11 @@ export class SlackChannel implements Channel {
     await this.syncChannelMetadata();
   }
 
-  async sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void> {
+  async sendMessage(
+    jid: string,
+    text: string,
+    opts?: SendMessageOpts,
+  ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
 
     if (!this.connected) {
@@ -196,7 +206,11 @@ export class SlackChannel implements Channel {
 
       // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({ channel: channelId, text, ...postOpts });
+        await this.app.client.chat.postMessage({
+          channel: channelId,
+          text,
+          ...postOpts,
+        });
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
@@ -247,7 +261,6 @@ export class SlackChannel implements Channel {
           thread_ts: ctx.threadTs,
           status: '',
         });
-
       }
     } catch (err) {
       logger.debug({ jid, isTyping, err }, 'Typing indicator failed');
@@ -288,9 +301,7 @@ export class SlackChannel implements Channel {
     }
   }
 
-  private async resolveUserName(
-    userId: string,
-  ): Promise<string | undefined> {
+  private async resolveUserName(userId: string): Promise<string | undefined> {
     if (!userId) return undefined;
 
     const cached = this.userNameCache.get(userId);
@@ -320,7 +331,8 @@ export class SlackChannel implements Channel {
         const channelId = item.jid.replace(/^slack:/, '');
         const postOpts: Record<string, string> = {};
         if (item.opts?.displayName) postOpts.username = item.opts.displayName;
-        if (item.opts?.displayEmoji) postOpts.icon_emoji = `:${item.opts.displayEmoji}:`;
+        if (item.opts?.displayEmoji)
+          postOpts.icon_emoji = `:${item.opts.displayEmoji}:`;
         if (item.opts?.threadTs) postOpts.thread_ts = item.opts.threadTs;
         await this.app.client.chat.postMessage({
           channel: channelId,
