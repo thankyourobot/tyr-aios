@@ -52,8 +52,7 @@ When you decide not to respond, wrap your reasoning in `<internal>` tags and out
 
 Your workspace has a standardized structure:
 - `/workspace/group/CLAUDE.md` — Your identity and instructions (you are reading this)
-- `/workspace/group/brain/` — Domain knowledge (read when you need context)
-- `/workspace/group/skills/` — Procedures and runbooks (read when doing specific tasks)
+- `/workspace/group/.claude/skills/` — Skills, domain knowledge, and procedures (loaded by Claude Code)
 - `/workspace/group/projects/` — Active workpapers (your current work in progress)
 - `/workspace/group/memory/` — Your persistent memory (managed by memory tool)
 - `/workspace/group/database/` — Your local databases (agent-specific data)
@@ -68,6 +67,6 @@ Inspect the schema with `sqlite3 /workspace/extra/shared/tasks.db ".schema"`.
 
 Status values: `open`, `active`, `blocked`, `done`
 
-**Before starting work:** Check `brain/` for relevant domain context and `projects/` for active workpapers.
-**When you learn something important:** Write it to `brain/` for future sessions.
+**Before starting work:** Check relevant skill reference files for domain context and `projects/` for active workpapers.
+**When you learn something important:** Persist it via skill reference files or the memory tool.
 **When working on a task:** Create a workpaper in `projects/` and link it in the task database.
