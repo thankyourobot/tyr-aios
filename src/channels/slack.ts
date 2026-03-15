@@ -84,7 +84,8 @@ export class SlackChannel implements Channel {
       // Bolt's event type is the full MessageEvent union (17+ subtypes).
       // We filter on subtype first, then narrow to the two types we handle.
       const subtype = (event as { subtype?: string }).subtype;
-      if (subtype && subtype !== 'bot_message' && subtype !== 'file_share') return;
+      if (subtype && subtype !== 'bot_message' && subtype !== 'file_share')
+        return;
 
       // After filtering, event is either GenericMessageEvent or BotMessageEvent
       const msg = event as HandledMessageEvent;
@@ -140,8 +141,18 @@ export class SlackChannel implements Channel {
       }
 
       // Extract file attachments from Slack event
-      const eventFiles = (event as { files?: Array<{ id: string; name: string; mimetype: string; size: number; url_private_download: string }> }).files;
-      const files: FileAttachment[] | undefined = eventFiles?.map(f => ({
+      const eventFiles = (
+        event as {
+          files?: Array<{
+            id: string;
+            name: string;
+            mimetype: string;
+            size: number;
+            url_private_download: string;
+          }>;
+        }
+      ).files;
+      const files: FileAttachment[] | undefined = eventFiles?.map((f) => ({
         id: f.id,
         name: f.name,
         mimetype: f.mimetype,
@@ -244,7 +255,6 @@ export class SlackChannel implements Channel {
     }
   }
 
-
   async sendVerboseMessage(
     jid: string,
     text: string,
@@ -253,7 +263,12 @@ export class SlackChannel implements Channel {
   ): Promise<void> {
     const channelId = jid.replace(/^slack:/, '');
     const prefix = type === 'thinking' ? '💭 ' : '';
-    const blocks = [{ type: 'context', elements: [{ type: 'mrkdwn', text: `${prefix}${text}` }] }];
+    const blocks = [
+      {
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `${prefix}${text}` }],
+      },
+    ];
     const fallback = `${prefix}${text}`;
     try {
       const postOpts: Record<string, string> = {};

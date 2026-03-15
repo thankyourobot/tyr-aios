@@ -373,7 +373,7 @@ function formatToolUseSummary(
   // Add FileBrowser link if available
   if (filebrowserBaseUrl && groupFolder && filePath.startsWith('/workspace/group/')) {
     const relativePath = filePath.replace('/workspace/group/', '');
-    summary += ` \u2014 <${filebrowserBaseUrl}/${groupFolder}/${relativePath}|view>`;
+    summary += ` \u2014 <${filebrowserBaseUrl}/files/agent-workspaces/${groupFolder}/${relativePath}|view>`;
   }
 
   return summary;
@@ -509,6 +509,19 @@ async function runQuery(
               containerInput.groupFolder,
             );
             writeOutput({ status: 'success', result: summary, type: 'verbose' });
+          }
+        }
+      }
+    }
+
+    // Tool failure capture: detect error results in UserMessage
+    if (message.type === 'user' && containerInput.verbose) {
+      const userContent = (message as { message?: { content?: Array<{ type: string; tool_use_id?: string; content?: string; is_error?: boolean }> } }).message?.content;
+      if (Array.isArray(userContent)) {
+        for (const block of userContent) {
+          if (block.type === 'tool_result' && block.is_error) {
+            const errorText = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+            writeOutput({ status: 'success', result: `\u274c Tool failed: ${errorText.slice(0, 300)}`, type: 'verbose' });
           }
         }
       }

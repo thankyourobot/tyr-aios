@@ -76,7 +76,10 @@ const channels: Channel[] = [];
 const queue = new GroupQueue();
 
 // Per-thread toggle overrides (ephemeral — resets on restart)
-const threadToggles = new Map<string, { verbose: boolean; thinking: boolean }>();
+const threadToggles = new Map<
+  string,
+  { verbose: boolean; thinking: boolean }
+>();
 
 function getToggleState(
   jid: string,
@@ -138,14 +141,21 @@ async function downloadFiles(
       fs.writeFileSync(filePath, buffer);
 
       const sizeKB = Math.round(file.size / 1024);
-      const hint = file.mimetype.startsWith('image/') ? ' \u2014 use Read tool to view' : '';
+      const hint = file.mimetype.startsWith('image/')
+        ? ' \u2014 use Read tool to view'
+        : '';
       annotations.push(
         `- /workspace/group/uploads/${filename} (${file.mimetype}, ${sizeKB}KB)${hint}`,
       );
-      logger.info({ file: filename, size: file.size }, 'Downloaded Slack file attachment');
+      logger.info(
+        { file: filename, size: file.size },
+        'Downloaded Slack file attachment',
+      );
     } catch (err) {
       logger.warn({ file: file.name, err }, 'Failed to download Slack file');
-      annotations.push(`- [File download failed: ${file.name} \u2014 ${err instanceof Error ? err.message : String(err)}]`);
+      annotations.push(
+        `- [File download failed: ${file.name} \u2014 ${err instanceof Error ? err.message : String(err)}]`,
+      );
     }
   }
 
@@ -175,9 +185,17 @@ async function handleCommand(
       threadTs: msg.threadTs,
     };
     if (stopped) {
-      await channel.sendMessage(chatJid, `Stopped ${group?.name || 'agent'}`, displayOpts);
+      await channel.sendMessage(
+        chatJid,
+        `Stopped ${group?.name || 'agent'}`,
+        displayOpts,
+      );
     } else {
-      await channel.sendMessage(chatJid, 'No active agent to stop', displayOpts);
+      await channel.sendMessage(
+        chatJid,
+        'No active agent to stop',
+        displayOpts,
+      );
     }
     return true;
   }
@@ -198,7 +216,8 @@ async function handleCommand(
 
     if (inThread && toggleKey) {
       // Per-thread override
-      const current = threadToggles.get(toggleKey) || getToggleState(chatJid, msg.threadTs);
+      const current =
+        threadToggles.get(toggleKey) || getToggleState(chatJid, msg.threadTs);
       if (arg === 'on') newValue = true;
       else if (arg === 'off') newValue = false;
       else newValue = isVerbose ? !current.verbose : !current.thinking;
@@ -223,7 +242,9 @@ async function handleCommand(
       setRegisteredGroup(chatJid, group);
     }
 
-    const scope = inThread ? 'this thread' : `${group?.name || 'group'} (default)`;
+    const scope = inThread
+      ? 'this thread'
+      : `${group?.name || 'group'} (default)`;
     const stateStr = newValue ? 'ON' : 'OFF';
     await channel.sendMessage(
       chatJid,
@@ -239,7 +260,6 @@ async function handleCommand(
 
   return false;
 }
-
 
 /**
  * Find the main group (isMain=true) from registered groups.
@@ -407,59 +427,68 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Get toggle state for this thread
   const toggleState = getToggleState(chatJid, lastThreadTs);
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
+  const output = await runAgent(
+    group,
+    prompt,
+    chatJid,
+    async (result) => {
+      // Streaming output callback — called for each agent result
 
-    // Route verbose/thinking output to dedicated methods
-    if (result.type === 'verbose' && result.result) {
-      await channel.sendVerboseMessage?.(chatJid, result.result, 'verbose', {
-        displayName: group.displayName,
-        displayEmoji: group.displayEmoji,
-        threadTs: lastThreadTs,
-      });
-      return;
-    }
-    if (result.type === 'thinking' && result.result) {
-      await channel.sendVerboseMessage?.(chatJid, result.result, 'thinking', {
-        displayName: group.displayName,
-        displayEmoji: group.displayEmoji,
-        threadTs: lastThreadTs,
-      });
-      return;
-    }
-
-    if (result.result) {
-      const raw =
-        typeof result.result === 'string'
-          ? result.result
-          : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      // Agent can wrap output in <channel>...</channel> to post top-level instead of threading
-      const channelMatch = text.match(/^<channel>([\s\S]*)<\/channel>$/);
-      const useThreadTs = channelMatch ? undefined : lastThreadTs;
-      if (channelMatch) text = channelMatch[1].trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text, {
+      // Route verbose/thinking output to dedicated methods
+      if (result.type === 'verbose' && result.result) {
+        channel.sendVerboseMessage?.(chatJid, result.result, 'verbose', {
           displayName: group.displayName,
           displayEmoji: group.displayEmoji,
-          threadTs: useThreadTs,
-        });
-        outputSentToUser = true;
+          threadTs: lastThreadTs,
+        })?.catch((err) => logger.warn({ err }, 'Verbose message failed'));
+        return;
       }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
+      if (result.type === 'thinking' && result.result) {
+        channel.sendVerboseMessage?.(chatJid, result.result, 'thinking', {
+          displayName: group.displayName,
+          displayEmoji: group.displayEmoji,
+          threadTs: lastThreadTs,
+        })?.catch((err) => logger.warn({ err }, 'Thinking message failed'));
+        return;
+      }
 
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
+      if (result.result) {
+        const raw =
+          typeof result.result === 'string'
+            ? result.result
+            : JSON.stringify(result.result);
+        // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
+        let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+        // Agent can wrap output in <channel>...</channel> to post top-level instead of threading
+        const channelMatch = text.match(/^<channel>([\s\S]*)<\/channel>$/);
+        const useThreadTs = channelMatch ? undefined : lastThreadTs;
+        if (channelMatch) text = channelMatch[1].trim();
+        logger.info(
+          { group: group.name },
+          `Agent output: ${raw.slice(0, 200)}`,
+        );
+        if (text) {
+          await channel.sendMessage(chatJid, text, {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            threadTs: useThreadTs,
+          });
+          outputSentToUser = true;
+        }
+        // Only reset idle timer on actual results, not session-update markers (result: null)
+        resetIdleTimer();
+      }
 
-    if (result.status === 'error') {
-      hadError = true;
-    }
-  }, toggleState);
+      if (result.status === 'success') {
+        queue.notifyIdle(chatJid);
+      }
+
+      if (result.status === 'error') {
+        hadError = true;
+      }
+    },
+    toggleState,
+  );
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -668,8 +697,12 @@ async function startMessageLoop(): Promise<void> {
 
           // Download file attachments before formatting (needed for both IPC and new container paths)
           const pipeFiles = messagesToSend.flatMap((m) => m.files || []);
-          const pipeFileAnnotation = await downloadFiles(pipeFiles, group.folder);
-          const formatted = formatMessages(messagesToSend, TIMEZONE) + pipeFileAnnotation;
+          const pipeFileAnnotation = await downloadFiles(
+            pipeFiles,
+            group.folder,
+          );
+          const formatted =
+            formatMessages(messagesToSend, TIMEZONE) + pipeFileAnnotation;
 
           // DMs skip IPC pipe to avoid cross-contamination with main group's container
           if (!isDm && queue.sendMessage(chatJid, formatted)) {
@@ -785,12 +818,17 @@ async function main(): Promise<void> {
       if (!msg.is_from_me && !msg.is_bot_message) {
         const channel = findChannel(channels, chatJid);
         if (channel) {
-          handleCommand(chatJid, msg, channel).then((consumed) => {
-            if (!consumed) storeMessage(msg);
-          }).catch((err) => {
-            logger.warn({ chatJid, err }, 'Command handler error, storing message');
-            storeMessage(msg);
-          });
+          handleCommand(chatJid, msg, channel)
+            .then((consumed) => {
+              if (!consumed) storeMessage(msg);
+            })
+            .catch((err) => {
+              logger.warn(
+                { chatJid, err },
+                'Command handler error, storing message',
+              );
+              storeMessage(msg);
+            });
           return;
         }
       }

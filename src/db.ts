@@ -175,7 +175,6 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
-
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
@@ -388,7 +387,9 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as (NewMessage & { files?: string })[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as (NewMessage & {
+    files?: string;
+  })[];
 
   let newTimestamp = lastTimestamp;
   const messages = rows.map((row) => {
@@ -421,7 +422,9 @@ export function getMessagesSince(
   `;
   const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as (NewMessage & { files?: string })[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as (NewMessage & {
+    files?: string;
+  })[];
   return rows.map((row) => ({
     ...row,
     files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,

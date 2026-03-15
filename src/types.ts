@@ -109,8 +109,18 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
-  sendVerboseMessage?(jid: string, text: string, type: "verbose" | "thinking", opts?: SendMessageOpts): Promise<void>;
-  sendBlocks?(jid: string, blocks: unknown[], fallbackText: string, opts?: SendMessageOpts): Promise<void>;
+  sendVerboseMessage?(
+    jid: string,
+    text: string,
+    type: 'verbose' | 'thinking',
+    opts?: SendMessageOpts,
+  ): Promise<void>;
+  sendBlocks?(
+    jid: string,
+    blocks: unknown[],
+    fallbackText: string,
+    opts?: SendMessageOpts,
+  ): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
 }

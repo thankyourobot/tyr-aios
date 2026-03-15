@@ -194,7 +194,6 @@ export class GroupQueue {
     }
   }
 
-
   /**
    * Stop the active container for a group.
    * Returns true if a container was stopped, false if nothing was running.
@@ -206,10 +205,14 @@ export class GroupQueue {
     if (state.containerName) {
       try {
         await new Promise<void>((resolve, reject) => {
-          exec(stopContainer(state.containerName!), { timeout: 15000 }, (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
+          exec(
+            stopContainer(state.containerName!),
+            { timeout: 15000 },
+            (err) => {
+              if (err) reject(err);
+              else resolve();
+            },
+          );
         });
       } catch (err) {
         // Fallback to process kill
