@@ -118,6 +118,13 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
 
+  // Add files column if it doesn't exist (migration for file attachment support)
+  try {
+    database.exec(`ALTER TABLE messages ADD COLUMN files TEXT`);
+  } catch {
+    /* column already exists */
+  }
+
   // Add is_main column if it doesn't exist (migration for existing DBs)
   try {
     database.exec(
@@ -151,6 +158,23 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+
+  // Add verbose_default and thinking_default columns (migration for toggle system)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN verbose_default INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN thinking_default INTEGER DEFAULT 0`,
+    );
+  } catch {
+    /* column already exists */
+  }
+
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
@@ -295,7 +319,7 @@ export function setLastGroupSync(): void {
  */
 export function storeMessage(msg: NewMessage): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts, files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -306,6 +330,7 @@ export function storeMessage(msg: NewMessage): void {
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
     msg.threadTs ?? null,
+    msg.files ? JSON.stringify(msg.files) : null,
   );
 }
 
@@ -322,9 +347,10 @@ export function storeMessageDirect(msg: {
   is_from_me: boolean;
   is_bot_message?: boolean;
   threadTs?: string;
+  files?: unknown[];
 }): void {
   db.prepare(
-    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts, files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     msg.id,
     msg.chat_jid,
@@ -335,6 +361,7 @@ export function storeMessageDirect(msg: {
     msg.is_from_me ? 1 : 0,
     msg.is_bot_message ? 1 : 0,
     msg.threadTs ?? null,
+    msg.files ? JSON.stringify(msg.files) : null,
   );
 }
 
@@ -349,7 +376,7 @@ export function getNewMessages(
   const placeholders = jids.map(() => '?').join(',');
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_ts AS threadTs
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_ts AS threadTs, files
       FROM messages
       WHERE timestamp > ? AND chat_jid IN (${placeholders})
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -361,14 +388,18 @@ export function getNewMessages(
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as (NewMessage & { files?: string })[];
 
   let newTimestamp = lastTimestamp;
-  for (const row of rows) {
+  const messages = rows.map((row) => {
     if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
-  }
+    return {
+      ...row,
+      files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
+    };
+  });
 
-  return { messages: rows, newTimestamp };
+  return { messages, newTimestamp };
 }
 
 export function getMessagesSince(
@@ -379,7 +410,7 @@ export function getMessagesSince(
 ): NewMessage[] {
   const sql = `
     SELECT * FROM (
-      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_ts AS threadTs
+      SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, thread_ts AS threadTs, files
       FROM messages
       WHERE chat_jid = ? AND timestamp > ?
         AND is_bot_message = 0 AND content NOT LIKE ?
@@ -388,9 +419,13 @@ export function getMessagesSince(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  return db
+  const rows = db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as (NewMessage & { files?: string })[];
+  return rows.map((row) => ({
+    ...row,
+    files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
+  }));
 }
 
 export function createTask(
@@ -580,6 +615,8 @@ export function getRegisteredGroup(
         display_name: string | null;
         display_emoji: string | null;
         assistant_name: string | null;
+        verbose_default: number | null;
+        thinking_default: number | null;
       }
     | undefined;
   if (!row) return undefined;
@@ -605,6 +642,8 @@ export function getRegisteredGroup(
     displayName: row.display_name ?? undefined,
     displayEmoji: row.display_emoji ?? undefined,
     assistantName: row.assistant_name ?? undefined,
+    verboseDefault: row.verbose_default === 1 ? true : undefined,
+    thinkingDefault: row.thinking_default === 1 ? true : undefined,
   };
 }
 
@@ -613,8 +652,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, assistant_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, assistant_name, verbose_default, thinking_default)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -627,6 +666,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.displayName ?? null,
     group.displayEmoji ?? null,
     group.assistantName ?? null,
+    group.verboseDefault ? 1 : 0,
+    group.thinkingDefault ? 1 : 0,
   );
 }
 
@@ -643,6 +684,8 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     display_name: string | null;
     display_emoji: string | null;
     assistant_name: string | null;
+    verbose_default: number | null;
+    thinking_default: number | null;
   }>;
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
@@ -667,6 +710,8 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       displayName: row.display_name ?? undefined,
       displayEmoji: row.display_emoji ?? undefined,
       assistantName: row.assistant_name ?? undefined,
+      verboseDefault: row.verbose_default === 1 ? true : undefined,
+      thinkingDefault: row.thinking_default === 1 ? true : undefined,
     };
   }
   return result;

@@ -43,6 +43,7 @@ import {
   storeMessage,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
+import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
@@ -55,6 +56,7 @@ import {
 import { startSchedulerLoop } from './task-scheduler.js';
 import {
   Channel,
+  FileAttachment,
   NewMessage,
   RegisteredGroup,
   SendMessageOpts,
@@ -72,6 +74,172 @@ let messageLoopRunning = false;
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+// Per-thread toggle overrides (ephemeral — resets on restart)
+const threadToggles = new Map<string, { verbose: boolean; thinking: boolean }>();
+
+function getToggleState(
+  jid: string,
+  threadTs?: string,
+): { verbose: boolean; thinking: boolean } {
+  // Check per-thread override first
+  if (threadTs) {
+    const key = `${jid}:${threadTs}`;
+    const override = threadToggles.get(key);
+    if (override) return override;
+  }
+  // Fall back to group defaults
+  const group = registeredGroups[jid];
+  return {
+    verbose: group?.verboseDefault === true,
+    thinking: group?.thinkingDefault === true,
+  };
+}
+
+// Read bot token and filebrowser URL from .env for file downloads
+let slackBotToken: string | undefined;
+let filebrowserBaseUrl: string | undefined;
+
+function loadEnvVars(): void {
+  try {
+    const env = readEnvFile(['SLACK_BOT_TOKEN', 'FILEBROWSER_BASE_URL']);
+    slackBotToken = env.SLACK_BOT_TOKEN;
+    filebrowserBaseUrl = env.FILEBROWSER_BASE_URL;
+  } catch {
+    // Non-fatal — file downloads and filebrowser links won't work
+  }
+}
+
+/**
+ * Download Slack file attachments to the group's uploads directory.
+ * Returns prompt annotations for the downloaded files.
+ */
+async function downloadFiles(
+  files: FileAttachment[],
+  groupFolder: string,
+): Promise<string> {
+  if (!slackBotToken || files.length === 0) return '';
+
+  const uploadsDir = path.join(resolveGroupFolderPath(groupFolder), 'uploads');
+  fs.mkdirSync(uploadsDir, { recursive: true });
+
+  const annotations: string[] = [];
+  for (const file of files) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const filename = `${timestamp}-${file.name}`;
+    const filePath = path.join(uploadsDir, filename);
+
+    try {
+      const response = await fetch(file.url, {
+        headers: { Authorization: `Bearer ${slackBotToken}` },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+      fs.writeFileSync(filePath, buffer);
+
+      const sizeKB = Math.round(file.size / 1024);
+      const hint = file.mimetype.startsWith('image/') ? ' \u2014 use Read tool to view' : '';
+      annotations.push(
+        `- /workspace/group/uploads/${filename} (${file.mimetype}, ${sizeKB}KB)${hint}`,
+      );
+      logger.info({ file: filename, size: file.size }, 'Downloaded Slack file attachment');
+    } catch (err) {
+      logger.warn({ file: file.name, err }, 'Failed to download Slack file');
+      annotations.push(`- [File download failed: ${file.name} \u2014 ${err instanceof Error ? err.message : String(err)}]`);
+    }
+  }
+
+  return annotations.length > 0
+    ? `\n[Files attached to this message]\n${annotations.join('\n')}\n`
+    : '';
+}
+
+/**
+ * Check if a message is a toggle/stop command.
+ * Returns true if the message was consumed (should not be stored or forwarded).
+ */
+async function handleCommand(
+  chatJid: string,
+  msg: NewMessage,
+  channel: Channel,
+): Promise<boolean> {
+  const text = msg.content.trim();
+  const group = registeredGroups[chatJid];
+
+  // /stop command
+  if (text === '*stop') {
+    const stopped = await queue.stopGroup(chatJid);
+    const displayOpts: SendMessageOpts = {
+      displayName: group?.displayName,
+      displayEmoji: group?.displayEmoji,
+      threadTs: msg.threadTs,
+    };
+    if (stopped) {
+      await channel.sendMessage(chatJid, `Stopped ${group?.name || 'agent'}`, displayOpts);
+    } else {
+      await channel.sendMessage(chatJid, 'No active agent to stop', displayOpts);
+    }
+    return true;
+  }
+
+  // /verbose and /thinking toggle commands
+  const verboseMatch = text.match(/^\*verbose(?:\s+(on|off))?$/);
+  const thinkingMatch = text.match(/^\*thinking(?:\s+(on|off))?$/);
+
+  if (verboseMatch || thinkingMatch) {
+    const isVerbose = !!verboseMatch;
+    const mode = isVerbose ? 'verbose' : 'thinking';
+    const arg = (verboseMatch || thinkingMatch)![1]; // 'on', 'off', or undefined (toggle)
+
+    const inThread = !!msg.threadTs;
+    const toggleKey = inThread ? `${chatJid}:${msg.threadTs}` : null;
+
+    let newValue: boolean;
+
+    if (inThread && toggleKey) {
+      // Per-thread override
+      const current = threadToggles.get(toggleKey) || getToggleState(chatJid, msg.threadTs);
+      if (arg === 'on') newValue = true;
+      else if (arg === 'off') newValue = false;
+      else newValue = isVerbose ? !current.verbose : !current.thinking;
+
+      const updated = { ...current };
+      if (isVerbose) updated.verbose = newValue;
+      else updated.thinking = newValue;
+      threadToggles.set(toggleKey, updated);
+    } else {
+      // Global default toggle
+      if (!group) return false;
+      const currentDefault = isVerbose
+        ? group.verboseDefault === true
+        : group.thinkingDefault === true;
+      if (arg === 'on') newValue = true;
+      else if (arg === 'off') newValue = false;
+      else newValue = !currentDefault;
+
+      if (isVerbose) group.verboseDefault = newValue;
+      else group.thinkingDefault = newValue;
+      // Persist to DB
+      setRegisteredGroup(chatJid, group);
+    }
+
+    const scope = inThread ? 'this thread' : `${group?.name || 'group'} (default)`;
+    const stateStr = newValue ? 'ON' : 'OFF';
+    await channel.sendMessage(
+      chatJid,
+      `${mode.charAt(0).toUpperCase() + mode.slice(1)} mode: ${stateStr} for ${scope}`,
+      {
+        displayName: group?.displayName,
+        displayEmoji: group?.displayEmoji,
+        threadTs: msg.threadTs,
+      },
+    );
+    return true;
+  }
+
+  return false;
+}
+
 
 /**
  * Find the main group (isMain=true) from registered groups.
@@ -200,7 +368,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // Download file attachments from messages
+  const allFiles = missedMessages.flatMap((m) => m.files || []);
+  const fileAnnotation = await downloadFiles(allFiles, group.folder);
+
+  const prompt = formatMessages(missedMessages, TIMEZONE) + fileAnnotation;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -232,8 +404,30 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let hadError = false;
   let outputSentToUser = false;
 
+  // Get toggle state for this thread
+  const toggleState = getToggleState(chatJid, lastThreadTs);
+
   const output = await runAgent(group, prompt, chatJid, async (result) => {
     // Streaming output callback — called for each agent result
+
+    // Route verbose/thinking output to dedicated methods
+    if (result.type === 'verbose' && result.result) {
+      await channel.sendVerboseMessage?.(chatJid, result.result, 'verbose', {
+        displayName: group.displayName,
+        displayEmoji: group.displayEmoji,
+        threadTs: lastThreadTs,
+      });
+      return;
+    }
+    if (result.type === 'thinking' && result.result) {
+      await channel.sendVerboseMessage?.(chatJid, result.result, 'thinking', {
+        displayName: group.displayName,
+        displayEmoji: group.displayEmoji,
+        threadTs: lastThreadTs,
+      });
+      return;
+    }
+
     if (result.result) {
       const raw =
         typeof result.result === 'string'
@@ -265,7 +459,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (result.status === 'error') {
       hadError = true;
     }
-  });
+  }, toggleState);
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
@@ -298,6 +492,7 @@ async function runAgent(
   prompt: string,
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
+  toggleState?: { verbose: boolean; thinking: boolean },
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
   const sessionId = sessions[group.folder];
@@ -338,6 +533,9 @@ async function runAgent(
       }
     : undefined;
 
+  // Use toggle state passed from caller (with thread context), fall back to group default
+  const effectiveToggle = toggleState || getToggleState(chatJid);
+
   try {
     const output = await runContainerAgent(
       group,
@@ -348,6 +546,10 @@ async function runAgent(
         chatJid,
         isMain,
         assistantName: group.assistantName || ASSISTANT_NAME,
+        verbose: effectiveToggle.verbose,
+        thinking: effectiveToggle.thinking,
+        maxThinkingTokens: effectiveToggle.thinking ? 10000 : undefined,
+        filebrowserBaseUrl: filebrowserBaseUrl || undefined,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -463,7 +665,11 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
+
+          // Download file attachments before formatting (needed for both IPC and new container paths)
+          const pipeFiles = messagesToSend.flatMap((m) => m.files || []);
+          const pipeFileAnnotation = await downloadFiles(pipeFiles, group.folder);
+          const formatted = formatMessages(messagesToSend, TIMEZONE) + pipeFileAnnotation;
 
           // DMs skip IPC pipe to avoid cross-contamination with main group's container
           if (!isDm && queue.sendMessage(chatJid, formatted)) {
@@ -537,6 +743,7 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  loadEnvVars();
 
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
@@ -571,6 +778,19 @@ async function main(): Promise<void> {
               'sender-allowlist: dropping message (drop mode)',
             );
           }
+          return;
+        }
+      }
+      // Intercept toggle/stop commands before storing
+      if (!msg.is_from_me && !msg.is_bot_message) {
+        const channel = findChannel(channels, chatJid);
+        if (channel) {
+          handleCommand(chatJid, msg, channel).then((consumed) => {
+            if (!consumed) storeMessage(msg);
+          }).catch((err) => {
+            logger.warn({ chatJid, err }, 'Command handler error, storing message');
+            storeMessage(msg);
+          });
           return;
         }
       }

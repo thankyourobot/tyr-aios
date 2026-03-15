@@ -8,6 +8,7 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  FileAttachment,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -83,12 +84,13 @@ export class SlackChannel implements Channel {
       // Bolt's event type is the full MessageEvent union (17+ subtypes).
       // We filter on subtype first, then narrow to the two types we handle.
       const subtype = (event as { subtype?: string }).subtype;
-      if (subtype && subtype !== 'bot_message') return;
+      if (subtype && subtype !== 'bot_message' && subtype !== 'file_share') return;
 
       // After filtering, event is either GenericMessageEvent or BotMessageEvent
       const msg = event as HandledMessageEvent;
 
-      if (!msg.text) return;
+      // Allow messages with files but no text
+      if (!msg.text && !(event as { files?: unknown[] }).files?.length) return;
 
       // Capture thread_ts for thread reply support
       const threadTs = (event as { thread_ts?: string }).thread_ts || undefined;
@@ -125,7 +127,8 @@ export class SlackChannel implements Channel {
       // Translate Slack <@UBOTID> mentions into TRIGGER_PATTERN format.
       // Slack encodes @mentions as <@U12345>, which won't match TRIGGER_PATTERN
       // (e.g., ^@<ASSISTANT_NAME>\b), so we prepend the trigger when the bot is @mentioned.
-      let content = msg.text;
+      let content = msg.text || '';
+      // content is now guaranteed to be a string (empty if file-only message)
       if (this.botUserId && !isBotMessage) {
         const mentionPattern = `<@${this.botUserId}>`;
         if (
@@ -136,16 +139,27 @@ export class SlackChannel implements Channel {
         }
       }
 
+      // Extract file attachments from Slack event
+      const eventFiles = (event as { files?: Array<{ id: string; name: string; mimetype: string; size: number; url_private_download: string }> }).files;
+      const files: FileAttachment[] | undefined = eventFiles?.map(f => ({
+        id: f.id,
+        name: f.name,
+        mimetype: f.mimetype,
+        size: f.size,
+        url: f.url_private_download,
+      }));
+
       this.opts.onMessage(targetJid, {
         id: msg.ts,
         chat_jid: targetJid,
         sender: msg.user || msg.bot_id || '',
         sender_name: senderName,
-        content,
+        content: content || '',
         timestamp,
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
         threadTs,
+        files,
       });
 
       // Track message context for typing indicator
@@ -227,6 +241,58 @@ export class SlackChannel implements Channel {
         { jid, err, queueSize: this.outgoingQueue.length },
         'Failed to send Slack message, queued',
       );
+    }
+  }
+
+
+  async sendVerboseMessage(
+    jid: string,
+    text: string,
+    type: 'verbose' | 'thinking',
+    opts?: SendMessageOpts,
+  ): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    const prefix = type === 'thinking' ? '💭 ' : '';
+    const blocks = [{ type: 'context', elements: [{ type: 'mrkdwn', text: `${prefix}${text}` }] }];
+    const fallback = `${prefix}${text}`;
+    try {
+      const postOpts: Record<string, string> = {};
+      if (opts?.displayName) postOpts.username = opts.displayName;
+      if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
+
+      await this.app.client.chat.postMessage({
+        channel: channelId,
+        text: fallback,
+        blocks: blocks as any,
+        ...postOpts,
+      });
+    } catch (err) {
+      logger.warn({ jid, type, err }, 'Failed to send verbose message');
+    }
+  }
+
+  async sendBlocks(
+    jid: string,
+    blocks: unknown[],
+    fallbackText: string,
+    opts?: SendMessageOpts,
+  ): Promise<void> {
+    const channelId = jid.replace(/^slack:/, '');
+    try {
+      const postOpts: Record<string, string> = {};
+      if (opts?.displayName) postOpts.username = opts.displayName;
+      if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
+
+      await this.app.client.chat.postMessage({
+        channel: channelId,
+        text: fallbackText,
+        blocks: blocks as any,
+        ...postOpts,
+      });
+    } catch (err) {
+      logger.warn({ jid, err }, 'Failed to send blocks message');
     }
   }
 

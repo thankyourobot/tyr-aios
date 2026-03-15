@@ -1,8 +1,9 @@
-import { ChildProcess } from 'child_process';
+import { ChildProcess, exec } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
 import { DATA_DIR, MAX_CONCURRENT_CONTAINERS } from './config.js';
+import { stopContainer } from './container-runtime.js';
 import { logger } from './logger.js';
 
 interface QueuedTask {
@@ -191,6 +192,45 @@ export class GroupQueue {
     } catch {
       // ignore
     }
+  }
+
+
+  /**
+   * Stop the active container for a group.
+   * Returns true if a container was stopped, false if nothing was running.
+   */
+  async stopGroup(groupJid: string): Promise<boolean> {
+    const state = this.groups.get(groupJid);
+    if (!state || !state.active) return false;
+
+    if (state.containerName) {
+      try {
+        await new Promise<void>((resolve, reject) => {
+          exec(stopContainer(state.containerName!), { timeout: 15000 }, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      } catch (err) {
+        // Fallback to process kill
+        if (state.process && !state.process.killed) {
+          state.process.kill('SIGKILL');
+        }
+      }
+    } else if (state.process && !state.process.killed) {
+      state.process.kill('SIGKILL');
+    }
+
+    state.active = false;
+    state.process = null;
+    state.containerName = null;
+    state.groupFolder = null;
+    state.idleWaiting = false;
+    // Do NOT clear pendingMessages or pendingTasks — preserve the queue
+    this.activeCount--;
+    this.drainWaiting();
+
+    return true;
   }
 
   private async runForGroup(

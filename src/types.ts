@@ -43,6 +43,16 @@ export interface RegisteredGroup {
   displayName?: string; // Per-group display name in Slack (e.g., "Builder")
   displayEmoji?: string; // Per-group emoji in Slack (e.g., "hammer_and_wrench")
   assistantName?: string; // Per-group assistant name for container (e.g., "Builder")
+  verboseDefault?: boolean;
+  thinkingDefault?: boolean;
+}
+
+export interface FileAttachment {
+  id: string;
+  name: string;
+  mimetype: string;
+  size: number;
+  url: string;
 }
 
 export interface NewMessage {
@@ -55,6 +65,7 @@ export interface NewMessage {
   is_from_me?: boolean;
   is_bot_message?: boolean;
   threadTs?: string; // Slack thread timestamp for thread reply support
+  files?: FileAttachment[];
 }
 
 export interface SendMessageOpts {
@@ -98,6 +109,8 @@ export interface Channel {
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
+  sendVerboseMessage?(jid: string, text: string, type: "verbose" | "thinking", opts?: SendMessageOpts): Promise<void>;
+  sendBlocks?(jid: string, blocks: unknown[], fallbackText: string, opts?: SendMessageOpts): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
 }

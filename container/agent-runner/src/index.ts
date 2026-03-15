@@ -27,11 +27,16 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  verbose?: boolean;
+  thinking?: boolean;
+  maxThinkingTokens?: number;
+  filebrowserBaseUrl?: string;
 }
 
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
+  type?: 'result' | 'verbose' | 'thinking';
   newSessionId?: string;
   error?: string;
 }
@@ -329,6 +334,51 @@ function waitForIpcMessage(): Promise<string | null> {
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
  */
+
+/**
+ * Format a tool use summary for verbose output.
+ */
+function formatToolUseSummary(
+  toolName: string,
+  input: Record<string, unknown>,
+  filebrowserBaseUrl?: string,
+  groupFolder?: string,
+): string {
+  let summary: string;
+  const filePath = (input.file_path || input.path || '') as string;
+
+  switch (toolName) {
+    case 'Read':
+      summary = `\ud83d\udd27 Read: ${filePath}`;
+      break;
+    case 'Write':
+      summary = `\ud83d\udd27 Write: ${filePath}`;
+      break;
+    case 'Edit':
+      summary = `\ud83d\udd27 Edit: ${filePath}`;
+      break;
+    case 'Bash':
+      summary = `\ud83d\udd27 Bash: ${String(input.command || '').slice(0, 200)}`;
+      break;
+    case 'Grep':
+      summary = `\ud83d\udd27 Grep: ${input.pattern || ''}`;
+      break;
+    case 'Glob':
+      summary = `\ud83d\udd27 Glob: ${input.pattern || ''}`;
+      break;
+    default:
+      summary = `\ud83d\udd27 ${toolName}: ${JSON.stringify(input).slice(0, 200)}`;
+  }
+
+  // Add FileBrowser link if available
+  if (filebrowserBaseUrl && groupFolder && filePath.startsWith('/workspace/group/')) {
+    const relativePath = filePath.replace('/workspace/group/', '');
+    summary += ` \u2014 <${filebrowserBaseUrl}/${groupFolder}/${relativePath}|view>`;
+  }
+
+  return summary;
+}
+
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
@@ -389,9 +439,16 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Track seen tool_use IDs to deduplicate (includePartialMessages yields intermediate snapshots)
+  const seenToolUseIds = new Set<string>();
+  let thinkingBuffer = '';
+  let thinkingBlockIndex: number | null = null;
+
   for await (const message of query({
     prompt: stream,
     options: {
+      ...(containerInput.thinking ? { maxThinkingTokens: containerInput.maxThinkingTokens || 10000 } : {}),
+      ...(containerInput.thinking ? { includePartialMessages: true } : {}),
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -436,6 +493,42 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+    }
+
+    // Verbose mode: emit tool_use summaries
+    if (message.type === 'assistant' && containerInput.verbose) {
+      const assistantContent = (message as { message?: { content?: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
+      if (Array.isArray(assistantContent)) {
+        for (const block of assistantContent) {
+          if (block.type === 'tool_use' && block.id && !seenToolUseIds.has(block.id)) {
+            seenToolUseIds.add(block.id);
+            const summary = formatToolUseSummary(
+              block.name || 'unknown',
+              (block.input || {}) as Record<string, unknown>,
+              containerInput.filebrowserBaseUrl,
+              containerInput.groupFolder,
+            );
+            writeOutput({ status: 'success', result: summary, type: 'verbose' });
+          }
+        }
+      }
+    }
+
+    // Thinking mode: capture from raw stream events
+    if ((message as { type: string }).type === 'stream_event' && containerInput.thinking) {
+      const streamEvent = (message as { event: { type: string; index?: number; content_block?: { type: string }; delta?: { type: string; thinking?: string } } }).event;
+      if (streamEvent.type === 'content_block_start' && streamEvent.content_block?.type === 'thinking') {
+        thinkingBuffer = '';
+        thinkingBlockIndex = streamEvent.index ?? null;
+      }
+      if (streamEvent.type === 'content_block_delta' && streamEvent.delta?.type === 'thinking_delta') {
+        thinkingBuffer += streamEvent.delta.thinking || '';
+      }
+      if (streamEvent.type === 'content_block_stop' && streamEvent.index === thinkingBlockIndex && thinkingBuffer.length > 0) {
+        writeOutput({ status: 'success', result: thinkingBuffer, type: 'thinking' });
+        thinkingBuffer = '';
+        thinkingBlockIndex = null;
+      }
     }
 
     if (message.type === 'system' && message.subtype === 'init') {

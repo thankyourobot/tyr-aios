@@ -41,11 +41,16 @@ export interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
+  verbose?: boolean;
+  thinking?: boolean;
+  maxThinkingTokens?: number;
+  filebrowserBaseUrl?: string;
 }
 
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
+  type?: 'result' | 'verbose' | 'thinking';
   newSessionId?: string;
   error?: string;
 }
@@ -84,6 +89,18 @@ function buildVolumeMounts(
         hostPath: '/dev/null',
         containerPath: '/workspace/project/.env',
         readonly: true,
+      });
+    }
+
+    // Global skills directory — writable so main can deploy/update skills
+    // that get synced to all groups on container launch.
+    // This overlays the read-only project root mount on this specific subpath.
+    const containerSkillsDir = path.join(projectRoot, 'container', 'skills');
+    if (fs.existsSync(containerSkillsDir)) {
+      mounts.push({
+        hostPath: containerSkillsDir,
+        containerPath: '/workspace/project/container/skills',
+        readonly: false,
       });
     }
 
