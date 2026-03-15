@@ -41,6 +41,10 @@ import {
   setSession,
   storeChatMetadata,
   storeMessage,
+  getThreadSession,
+  setThreadSession,
+  storeResponseUuid,
+  getThreadResponseUuids,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { readEnvFile } from './env.js';
@@ -111,6 +115,10 @@ function loadEnvVars(): void {
   } catch {
     // Non-fatal — file downloads and filebrowser links won't work
   }
+}
+
+function formatTokens(tokens: number): string {
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : `${tokens}`;
 }
 
 /**
@@ -258,6 +266,33 @@ async function handleCommand(
     return true;
   }
 
+  // *rewind command — trigger rewind flow via channel
+  if (text === "*rewind") {
+    if (!msg.threadTs) {
+      await channel.sendMessage(chatJid, "Rewind works in threads \u2014 start a conversation first.", {
+        displayName: group?.displayName,
+        displayEmoji: group?.displayEmoji,
+      });
+      return true;
+    }
+
+    const uuids = getThreadResponseUuids(group?.folder || "", msg.threadTs);
+    if (uuids.length === 0) {
+      await channel.sendMessage(chatJid, "No rewind points available \u2014 this thread predates rewind tracking.", {
+        displayName: group?.displayName,
+        displayEmoji: group?.displayEmoji,
+        threadTs: msg.threadTs,
+      });
+      return true;
+    }
+
+    // Post ephemeral with button — the channel handles this
+    if (channel.postRewindButton) {
+      await channel.postRewindButton(chatJid, msg.sender, msg.threadTs, group?.folder || "");
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -373,6 +408,15 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Group messages by thread for thread-aware session routing
+  const messagesByThread = new Map<string | undefined, NewMessage[]>();
+  for (const msg of missedMessages) {
+    const tts = msg.threadTs; // undefined = channel root
+    const bucket = messagesByThread.get(tts);
+    if (bucket) bucket.push(msg);
+    else messagesByThread.set(tts, [msg]);
+  }
+
   // Default to threading: reply in existing thread, or start a new thread on the triggering message
   const lastMsg = missedMessages[missedMessages.length - 1];
   const lastThreadTs = lastMsg.threadTs || lastMsg.id;
@@ -427,6 +471,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Get toggle state for this thread
   const toggleState = getToggleState(chatJid, lastThreadTs);
 
+  // Set active thread for IPC routing
+  queue.setActiveThreadTs(chatJid, lastThreadTs !== lastMsg.id ? lastThreadTs : null);
+
   const output = await runAgent(
     group,
     prompt,
@@ -436,19 +483,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
       // Route verbose/thinking output to dedicated methods
       if (result.type === 'verbose' && result.result) {
-        channel.sendVerboseMessage?.(chatJid, result.result, 'verbose', {
-          displayName: group.displayName,
-          displayEmoji: group.displayEmoji,
-          threadTs: lastThreadTs,
-        })?.catch((err) => logger.warn({ err }, 'Verbose message failed'));
+        channel
+          .sendVerboseMessage?.(chatJid, result.result, 'verbose', {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            threadTs: lastThreadTs,
+          })
+          ?.catch((err) => logger.warn({ err }, 'Verbose message failed'));
         return;
       }
       if (result.type === 'thinking' && result.result) {
-        channel.sendVerboseMessage?.(chatJid, result.result, 'thinking', {
-          displayName: group.displayName,
-          displayEmoji: group.displayEmoji,
-          threadTs: lastThreadTs,
-        })?.catch((err) => logger.warn({ err }, 'Thinking message failed'));
+        channel
+          .sendVerboseMessage?.(chatJid, result.result, 'thinking', {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            threadTs: lastThreadTs,
+          })
+          ?.catch((err) => logger.warn({ err }, 'Thinking message failed'));
         return;
       }
 
@@ -472,8 +523,44 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
             threadTs: useThreadTs,
+            onPosted: (postedSlackTs: string) => {
+              if (result.lastAssistantUuid && lastThreadTs) {
+                storeResponseUuid(group.folder, lastThreadTs, postedSlackTs, result.lastAssistantUuid);
+              }
+            },
           });
           outputSentToUser = true;
+        }
+
+        // Context window display (when verbose mode is enabled)
+        if (result.contextUsage && result.contextUsage.contextWindow > 0 && toggleState.verbose) {
+          const cu = result.contextUsage;
+          const totalUsed = cu.inputTokens;
+          const pct = Math.round((totalUsed / cu.contextWindow) * 100);
+          const contextLine = `_Context: ${formatTokens(totalUsed)}/${formatTokens(cu.contextWindow)} (${pct}%)_`;
+          await channel.sendMessage(chatJid, contextLine, {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            threadTs: useThreadTs,
+          });
+        }
+
+        // Compaction notification (always shown, regardless of verbose)
+        if (result.compaction) {
+          let compactLine: string;
+          if (result.contextUsage && result.contextUsage.contextWindow > 0) {
+            const postTokens = result.contextUsage.inputTokens;
+            const cw = result.contextUsage.contextWindow;
+            const pct = Math.round((postTokens / cw) * 100);
+            compactLine = `_Compacted: ${formatTokens(result.compaction.preTokens)} \u2192 ${formatTokens(postTokens)}/${formatTokens(cw)} (${pct}%)_`;
+          } else {
+            compactLine = `_Compacted from ${formatTokens(result.compaction.preTokens)} tokens_`;
+          }
+          await channel.sendMessage(chatJid, compactLine, {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            threadTs: useThreadTs,
+          });
         }
         // Only reset idle timer on actual results, not session-update markers (result: null)
         resetIdleTimer();
@@ -488,6 +575,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       }
     },
     toggleState,
+    lastThreadTs !== lastMsg.id ? lastThreadTs : undefined,
   );
 
   await channel.setTyping?.(chatJid, false);
@@ -522,9 +610,17 @@ async function runAgent(
   chatJid: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
   toggleState?: { verbose: boolean; thinking: boolean },
+  threadTs?: string,
+  rewindOpts?: { sourceSessionId: string; resumeSessionAt: string },
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  // Thread-aware session routing
+  const threadSessionId = threadTs ? getThreadSession(group.folder, threadTs) : undefined;
+  const isNewThread = !!threadTs && !threadSessionId;
+  const parentSessionId = sessions[group.folder];
+  // For rewind: use the source session with fork, not the current thread session
+  const sessionId = rewindOpts ? rewindOpts.sourceSessionId : (threadSessionId || parentSessionId);
+  const shouldFork = rewindOpts ? true : isNewThread;
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -555,8 +651,14 @@ async function runAgent(
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
         if (output.newSessionId) {
-          sessions[group.folder] = output.newSessionId;
-          setSession(group.folder, output.newSessionId);
+          if (threadTs && (isNewThread || rewindOpts)) {
+            // New thread fork or rewind — store thread session
+            setThreadSession(group.folder, threadTs, output.newSessionId, rewindOpts?.sourceSessionId || parentSessionId);
+          } else if (!threadTs) {
+            // Channel root — update as before
+            sessions[group.folder] = output.newSessionId;
+            setSession(group.folder, output.newSessionId);
+          }
         }
         await onOutput(output);
       }
@@ -579,6 +681,9 @@ async function runAgent(
         thinking: effectiveToggle.thinking,
         maxThinkingTokens: effectiveToggle.thinking ? 10000 : undefined,
         filebrowserBaseUrl: filebrowserBaseUrl || undefined,
+        threadTs,
+        forkFromSession: shouldFork,
+        resumeSessionAt: rewindOpts?.resumeSessionAt,
       },
       (proc, containerName) =>
         queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -586,8 +691,12 @@ async function runAgent(
     );
 
     if (output.newSessionId) {
-      sessions[group.folder] = output.newSessionId;
-      setSession(group.folder, output.newSessionId);
+      if (threadTs && (isNewThread || rewindOpts)) {
+        setThreadSession(group.folder, threadTs, output.newSessionId, rewindOpts?.sourceSessionId || parentSessionId);
+      } else if (!threadTs) {
+        sessions[group.folder] = output.newSessionId;
+        setSession(group.folder, output.newSessionId);
+      }
     }
 
     if (output.status === 'error') {
@@ -602,6 +711,65 @@ async function runAgent(
   } catch (err) {
     logger.error({ group: group.name, err }, 'Agent error');
     return 'error';
+  }
+}
+
+async function rewindSession(params: {
+  groupFolder: string;
+  chatJid: string;
+  sourceThreadTs: string;
+  newThreadTs: string;
+  sdkUuid: string;
+}): Promise<void> {
+  const { groupFolder, chatJid, sourceThreadTs, newThreadTs, sdkUuid } = params;
+
+  // Get source session (thread session or channel root)
+  const sourceSessionId = getThreadSession(groupFolder, sourceThreadTs) || sessions[groupFolder];
+  if (!sourceSessionId) {
+    logger.error({ groupFolder, sourceThreadTs }, "No source session found for rewind");
+    return;
+  }
+
+  const group = Object.values(registeredGroups).find(g => g.folder === groupFolder);
+  if (!group) {
+    logger.error({ groupFolder }, "No group found for rewind");
+    return;
+  }
+
+  const channel = findChannel(channels, chatJid);
+  if (!channel) {
+    logger.error({ chatJid }, "No channel found for rewind");
+    return;
+  }
+
+  try {
+    logger.info({ groupFolder, sourceThreadTs, newThreadTs, sdkUuid }, "Starting rewind");
+
+    // Run agent with fork parameters — the container will fork the session
+    const result = await runAgent(
+      group,
+      "[Session forked from previous thread. Continue from where we left off.]",
+      chatJid,
+      async (output) => {
+        if (output.result) {
+          const text = output.result.replace(/<internal>[\s\S]*?<\/internal>/g, "").trim();
+          if (text) {
+            await channel.sendMessage(chatJid, text, {
+              displayName: group.displayName,
+              displayEmoji: group.displayEmoji,
+              threadTs: newThreadTs,
+            });
+          }
+        }
+      },
+      getToggleState(chatJid, newThreadTs),
+      newThreadTs,
+      { sourceSessionId, resumeSessionAt: sdkUuid },
+    );
+
+    logger.info({ groupFolder, newThreadTs, result }, "Rewind completed");
+  } catch (err) {
+    logger.error({ err, groupFolder, sourceThreadTs }, "Failed to rewind session");
   }
 }
 
@@ -705,7 +873,11 @@ async function startMessageLoop(): Promise<void> {
             formatMessages(messagesToSend, TIMEZONE) + pipeFileAnnotation;
 
           // DMs skip IPC pipe to avoid cross-contamination with main group's container
-          if (!isDm && queue.sendMessage(chatJid, formatted)) {
+          // Check thread match — only pipe if the message's thread matches the active container's thread
+          const activeThread = queue.getActiveThreadTs(chatJid);
+          const msgThread = messagesToSend[messagesToSend.length - 1].threadTs || null;
+          const threadMatch = activeThread === msgThread || (activeThread === null && msgThread === null);
+          if (!isDm && threadMatch && queue.sendMessage(chatJid, formatted)) {
             logger.debug(
               { chatJid, count: messagesToSend.length },
               'Piped messages to active container',
@@ -842,6 +1014,7 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    onRewind: rewindSession,
   };
 
   // Create and connect all registered channels.

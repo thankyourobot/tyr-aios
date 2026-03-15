@@ -25,6 +25,7 @@ interface GroupState {
   process: ChildProcess | null;
   containerName: string | null;
   groupFolder: string | null;
+  activeThreadTs: string | null;
   retryCount: number;
 }
 
@@ -49,6 +50,7 @@ export class GroupQueue {
         process: null,
         containerName: null,
         groupFolder: null,
+        activeThreadTs: null,
         retryCount: 0,
       };
       this.groups.set(groupJid, state);
@@ -128,6 +130,14 @@ export class GroupQueue {
     this.runTask(groupJid, { id: taskId, groupJid, fn }).catch((err) =>
       logger.error({ groupJid, taskId, err }, 'Unhandled error in runTask'),
     );
+  }
+
+  getActiveThreadTs(groupJid: string): string | null {
+    return this.getGroup(groupJid).activeThreadTs;
+  }
+
+  setActiveThreadTs(groupJid: string, threadTs: string | null): void {
+    this.getGroup(groupJid).activeThreadTs = threadTs;
   }
 
   registerProcess(
@@ -228,6 +238,7 @@ export class GroupQueue {
     state.process = null;
     state.containerName = null;
     state.groupFolder = null;
+    state.activeThreadTs = null;
     state.idleWaiting = false;
     // Do NOT clear pendingMessages or pendingTasks — preserve the queue
     this.activeCount--;
@@ -244,6 +255,7 @@ export class GroupQueue {
     state.active = true;
     state.idleWaiting = false;
     state.isTaskContainer = false;
+    state.activeThreadTs = null;
     state.pendingMessages = false;
     this.activeCount++;
 

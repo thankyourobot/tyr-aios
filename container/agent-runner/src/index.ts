@@ -31,6 +31,9 @@ interface ContainerInput {
   thinking?: boolean;
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
+  threadTs?: string;
+  forkFromSession?: boolean;
+  resumeSessionAt?: string;
 }
 
 interface ContainerOutput {
@@ -38,6 +41,17 @@ interface ContainerOutput {
   result: string | null;
   type?: 'result' | 'verbose' | 'thinking';
   newSessionId?: string;
+  lastAssistantUuid?: string;
+  contextUsage?: {
+    inputTokens: number;
+    cacheCreationTokens: number;
+    cacheReadTokens: number;
+    contextWindow: number;
+  };
+  compaction?: {
+    preTokens: number;
+    trigger: 'manual' | 'auto';
+  };
   error?: string;
 }
 
@@ -439,6 +453,10 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Track context usage from assistant messages
+  let lastContextUsage: ContainerOutput['contextUsage'] | undefined;
+  let lastCompaction: ContainerOutput['compaction'] | undefined;
+
   // Track seen tool_use IDs to deduplicate (includePartialMessages yields intermediate snapshots)
   const seenToolUseIds = new Set<string>();
   let thinkingBuffer = '';
@@ -452,7 +470,8 @@ async function runQuery(
       cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
-      resumeSessionAt: resumeAt,
+      resumeSessionAt: containerInput.resumeSessionAt || resumeAt,
+      ...(containerInput.forkFromSession ? { forkSession: true } : {}),
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
@@ -493,6 +512,17 @@ async function runQuery(
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
+      // Capture context usage from non-sidechain assistant messages
+      const msgObj = message as { message?: { usage?: { input_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number } }; parent_tool_use_id?: string | null };
+      if (!msgObj.parent_tool_use_id && msgObj.message?.usage) {
+        const u = msgObj.message.usage;
+        lastContextUsage = {
+          inputTokens: u.input_tokens || 0,
+          cacheCreationTokens: u.cache_creation_input_tokens || 0,
+          cacheReadTokens: u.cache_read_input_tokens || 0,
+          contextWindow: 0,
+        };
+      }
     }
 
     // Verbose mode: emit tool_use summaries
@@ -544,6 +574,17 @@ async function runQuery(
       }
     }
 
+    // Detect compaction events
+    if (message.type === 'system' && (message as { subtype?: string }).subtype === 'compact_boundary') {
+      const compactMsg = message as { compact_metadata?: { pre_tokens?: number; trigger?: string } };
+      if (compactMsg.compact_metadata) {
+        lastCompaction = {
+          preTokens: compactMsg.compact_metadata.pre_tokens || 0,
+          trigger: (compactMsg.compact_metadata.trigger as 'manual' | 'auto') || 'auto',
+        };
+      }
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
       log(`Session initialized: ${newSessionId}`);
@@ -557,12 +598,25 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
+      // Extract contextWindow from modelUsage
+      const modelUsage = (message as { modelUsage?: Record<string, { contextWindow?: number }> }).modelUsage;
+      if (modelUsage && lastContextUsage) {
+        const firstModel = Object.values(modelUsage)[0];
+        if (firstModel?.contextWindow) {
+          lastContextUsage.contextWindow = firstModel.contextWindow;
+        }
+      }
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
-        newSessionId
+        newSessionId,
+        lastAssistantUuid,
+        contextUsage: lastContextUsage,
+        compaction: lastCompaction,
       });
+      // Reset compaction after emitting (one-shot)
+      lastCompaction = undefined;
     }
   }
 

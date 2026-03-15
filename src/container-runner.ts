@@ -45,6 +45,9 @@ export interface ContainerInput {
   thinking?: boolean;
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
+  threadTs?: string;
+  forkFromSession?: boolean;
+  resumeSessionAt?: string;
 }
 
 export interface ContainerOutput {
@@ -52,6 +55,17 @@ export interface ContainerOutput {
   result: string | null;
   type?: 'result' | 'verbose' | 'thinking';
   newSessionId?: string;
+  lastAssistantUuid?: string;
+  contextUsage?: {
+    inputTokens: number;
+    cacheCreationTokens: number;
+    cacheReadTokens: number;
+    contextWindow: number;
+  };
+  compaction?: {
+    preTokens: number;
+    trigger: 'manual' | 'auto';
+  };
   error?: string;
 }
 

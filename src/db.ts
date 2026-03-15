@@ -75,6 +75,22 @@ function createSchema(database: Database.Database): void {
       group_folder TEXT PRIMARY KEY,
       session_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS thread_sessions (
+      group_folder TEXT NOT NULL,
+      thread_ts TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      parent_session_id TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (group_folder, thread_ts)
+    );
+    CREATE TABLE IF NOT EXISTS response_uuids (
+      group_folder TEXT NOT NULL,
+      thread_ts TEXT NOT NULL,
+      slack_ts TEXT NOT NULL,
+      sdk_uuid TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (group_folder, thread_ts, slack_ts)
+    );
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -718,6 +734,51 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     };
   }
   return result;
+}
+
+
+export function getThreadSession(groupFolder: string, threadTs: string): string | undefined {
+  const row = db
+    .prepare('SELECT session_id FROM thread_sessions WHERE group_folder = ? AND thread_ts = ?')
+    .get(groupFolder, threadTs) as { session_id: string } | undefined;
+  return row?.session_id;
+}
+
+export function setThreadSession(groupFolder: string, threadTs: string, sessionId: string, parentSessionId?: string): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO thread_sessions (group_folder, thread_ts, session_id, parent_session_id, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(groupFolder, threadTs, sessionId, parentSessionId ?? null, new Date().toISOString());
+}
+
+export function getAllThreadSessions(groupFolder: string): Record<string, string> {
+  const rows = db
+    .prepare('SELECT thread_ts, session_id FROM thread_sessions WHERE group_folder = ?')
+    .all(groupFolder) as Array<{ thread_ts: string; session_id: string }>;
+  const result: Record<string, string> = {};
+  for (const row of rows) {
+    result[row.thread_ts] = row.session_id;
+  }
+  return result;
+}
+
+export function storeResponseUuid(groupFolder: string, threadTs: string, slackTs: string, sdkUuid: string): void {
+  db.prepare(
+    'INSERT OR REPLACE INTO response_uuids (group_folder, thread_ts, slack_ts, sdk_uuid, created_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(groupFolder, threadTs, slackTs, sdkUuid, new Date().toISOString());
+}
+
+export function getResponseUuid(groupFolder: string, threadTs: string, slackTs: string): string | undefined {
+  const row = db
+    .prepare('SELECT sdk_uuid FROM response_uuids WHERE group_folder = ? AND thread_ts = ? AND slack_ts = ?')
+    .get(groupFolder, threadTs, slackTs) as { sdk_uuid: string } | undefined;
+  return row?.sdk_uuid;
+}
+
+export function getThreadResponseUuids(groupFolder: string, threadTs: string): Array<{slackTs: string, sdkUuid: string}> {
+  const rows = db
+    .prepare('SELECT slack_ts, sdk_uuid FROM response_uuids WHERE group_folder = ? AND thread_ts = ? ORDER BY created_at')
+    .all(groupFolder, threadTs) as Array<{ slack_ts: string; sdk_uuid: string }>;
+  return rows.map(r => ({ slackTs: r.slack_ts, sdkUuid: r.sdk_uuid }));
 }
 
 function migrateJsonState(): void {

@@ -2,7 +2,7 @@ import { App, LogLevel } from '@slack/bolt';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
-import { updateChatName } from '../db.js';
+import { updateChatName, getThreadResponseUuids, getResponseUuid, getMessagesSince, getThreadSession } from '../db.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -28,6 +28,13 @@ export interface SlackChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  onRewind?: (params: {
+    groupFolder: string;
+    chatJid: string;
+    sourceThreadTs: string;
+    newThreadTs: string;
+    sdkUuid: string;
+  }) => Promise<void>;
 }
 
 export class SlackChannel implements Channel {
@@ -78,6 +85,131 @@ export class SlackChannel implements Channel {
   }
 
   private setupEventHandlers(): void {
+    // Rewind button action handler
+    this.app.action("rewind_open_modal", async ({ ack, body, client }) => {
+      await ack();
+      try {
+        const action = (body as any).actions[0];
+        const { threadTs, groupFolder, channelId } = JSON.parse(action.value);
+        const triggerId = (body as any).trigger_id;
+
+        // Get assistant messages with UUID mappings for the picker
+        const uuids = getThreadResponseUuids(groupFolder, threadTs);
+        if (uuids.length === 0) {
+          await client.chat.postEphemeral({
+            channel: channelId,
+            user: (body as any).user.id,
+            text: "No rewind points available.",
+          });
+          return;
+        }
+
+        // Get message content for display
+        const jid = `slack:${channelId}`;
+        const messages = getMessagesSince(jid, "", ASSISTANT_NAME, 200);
+
+        // Build radio button options — assistant messages with UUIDs
+        const options = uuids.map((u) => {
+          const msg = messages.find((m) => m.id === u.slackTs);
+          const content = msg ? msg.content.slice(0, 75) : "(message)";
+          const ts = new Date(parseFloat(u.slackTs) * 1000);
+          const timeStr = ts.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+          return {
+            text: { type: "plain_text" as const, text: `${timeStr}: ${content}...` },
+            value: u.slackTs,
+          };
+        }).reverse().slice(0, 10); // Most recent first, limit 10
+
+        await client.views.open({
+          trigger_id: triggerId,
+          view: {
+            type: "modal",
+            callback_id: "rewind_modal",
+            title: { type: "plain_text", text: "Rewind conversation" },
+            submit: { type: "plain_text", text: "Rewind" },
+            close: { type: "plain_text", text: "Cancel" },
+            private_metadata: JSON.stringify({ channelId, threadTs, groupFolder }),
+            blocks: [
+              {
+                type: "section",
+                text: { type: "mrkdwn", text: "Select a point to rewind to. A new thread will be created with context up to that message." },
+              },
+              {
+                type: "input",
+                block_id: "rewind_point",
+                label: { type: "plain_text", text: "Rewind to" },
+                element: {
+                  type: "radio_buttons",
+                  action_id: "selected_message",
+                  initial_option: options[0],
+                  options,
+                },
+              },
+            ],
+          } as any,
+        });
+      } catch (err) {
+        logger.warn({ err }, "Failed to open rewind modal");
+      }
+    });
+
+    // Rewind modal submission handler
+    this.app.view("rewind_modal", async ({ ack, body, view, client }) => {
+      await ack();
+      try {
+        const { channelId, threadTs, groupFolder } = JSON.parse(view.private_metadata);
+        const selectedSlackTs = view.state.values.rewind_point.selected_message.selected_option?.value;
+        if (!selectedSlackTs) {
+          logger.warn({}, "No message selected in rewind modal");
+          return;
+        }
+
+        // Look up SDK UUID
+        const sdkUuid = getResponseUuid(groupFolder, threadTs, selectedSlackTs);
+        if (!sdkUuid) {
+          logger.warn({ groupFolder, threadTs, selectedSlackTs }, "No SDK UUID found for rewind point");
+          return;
+        }
+
+        // Get the message content for the back-link
+        const jid = `slack:${channelId}`;
+        const messages = getMessagesSince(jid, "", ASSISTANT_NAME, 200);
+        const selectedMsg = messages.find((m) => m.id === selectedSlackTs);
+        const msgPreview = selectedMsg ? selectedMsg.content.slice(0, 100) : "(message)";
+
+        // Create thread link
+        const threadLink = `https://thankyourobot.slack.com/archives/${channelId}/p${threadTs.replace(".", "")}`;
+
+        // Post a new top-level message to create the rewind thread
+        const group = this.opts.registeredGroups()[jid];
+        const postResult = await client.chat.postMessage({
+          channel: channelId,
+          text: `Rewound from <${threadLink}|source thread>. Continuing from: \"${msgPreview}\"`,
+          ...(group?.displayName ? { username: group.displayName } : {}),
+          ...(group?.displayEmoji ? { icon_emoji: `:${group.displayEmoji}:` } : {}),
+        });
+
+        const newThreadTs = postResult.ts;
+        if (!newThreadTs) {
+          logger.warn("Failed to get ts from rewind thread creation");
+          return;
+        }
+
+        // Trigger the rewind via callback
+        if (this.opts.onRewind) {
+          await this.opts.onRewind({
+            groupFolder,
+            chatJid: jid,
+            sourceThreadTs: threadTs,
+            newThreadTs,
+            sdkUuid,
+          });
+        }
+      } catch (err) {
+        logger.warn({ err }, "Failed to process rewind submission");
+      }
+    });
+
     // Use app.event('message') instead of app.message() to capture all
     // message subtypes including bot_message (needed to track our own output)
     this.app.event('message', async ({ event }) => {
@@ -231,11 +363,14 @@ export class SlackChannel implements Channel {
 
       // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        await this.app.client.chat.postMessage({
+        const postResult = await this.app.client.chat.postMessage({
           channel: channelId,
           text,
           ...postOpts,
         });
+        if (opts?.onPosted && postResult.ts) {
+          opts.onPosted(postResult.ts);
+        }
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
           await this.app.client.chat.postMessage({
@@ -322,6 +457,29 @@ export class SlackChannel implements Channel {
   async disconnect(): Promise<void> {
     this.connected = false;
     await this.app.stop();
+  }
+
+  async postRewindButton(jid: string, userId: string, threadTs: string, groupFolder: string): Promise<void> {
+    const channelId = jid.replace(/^slack:/, "");
+    try {
+      await this.app.client.chat.postEphemeral({
+        channel: channelId,
+        user: userId,
+        text: "Select a rewind point",
+        blocks: [{
+          type: "section",
+          text: { type: "mrkdwn", text: "*Rewind conversation* \u2014 select a point to fork from:" },
+          accessory: {
+            type: "button",
+            text: { type: "plain_text", text: "Choose rewind point" },
+            action_id: "rewind_open_modal",
+            value: JSON.stringify({ threadTs, groupFolder, channelId }),
+          },
+        }] as any,
+      });
+    } catch (err) {
+      logger.warn({ jid, err }, "Failed to post rewind button");
+    }
   }
 
   async setTyping(jid: string, isTyping: boolean): Promise<void> {
