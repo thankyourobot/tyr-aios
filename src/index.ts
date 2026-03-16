@@ -524,9 +524,9 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
         let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
         // Agent can wrap output in <channel>...</channel> to post top-level instead of threading
-        const channelMatch = text.match(/^<channel>([\s\S]*)<\/channel>$/);
-        const useThreadTs = channelMatch ? undefined : lastThreadTs;
-        if (channelMatch) text = channelMatch[1].trim();
+        const hasChannelTags = /<channel>/.test(text);
+        const useThreadTs = hasChannelTags ? undefined : lastThreadTs;
+        if (hasChannelTags) text = text.replace(/<\/?channel>/g, '').trim();
         logger.info(
           { group: group.name },
           `Agent output: ${raw.slice(0, 200)}`,
