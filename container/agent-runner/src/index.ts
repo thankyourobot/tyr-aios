@@ -468,6 +468,7 @@ async function runQuery(
       ...(containerInput.thinking ? { maxThinkingTokens: containerInput.maxThinkingTokens || 10000 } : {}),
       ...(containerInput.thinking ? { includePartialMessages: true } : {}),
       cwd: '/workspace/group',
+      betas: ['context-1m-2025-08-07'],
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: containerInput.resumeSessionAt || resumeAt,

@@ -736,23 +736,42 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
   return result;
 }
 
-
-export function getThreadSession(groupFolder: string, threadTs: string): string | undefined {
+export function getThreadSession(
+  groupFolder: string,
+  threadTs: string,
+): string | undefined {
   const row = db
-    .prepare('SELECT session_id FROM thread_sessions WHERE group_folder = ? AND thread_ts = ?')
+    .prepare(
+      'SELECT session_id FROM thread_sessions WHERE group_folder = ? AND thread_ts = ?',
+    )
     .get(groupFolder, threadTs) as { session_id: string } | undefined;
   return row?.session_id;
 }
 
-export function setThreadSession(groupFolder: string, threadTs: string, sessionId: string, parentSessionId?: string): void {
+export function setThreadSession(
+  groupFolder: string,
+  threadTs: string,
+  sessionId: string,
+  parentSessionId?: string,
+): void {
   db.prepare(
     'INSERT OR REPLACE INTO thread_sessions (group_folder, thread_ts, session_id, parent_session_id, created_at) VALUES (?, ?, ?, ?, ?)',
-  ).run(groupFolder, threadTs, sessionId, parentSessionId ?? null, new Date().toISOString());
+  ).run(
+    groupFolder,
+    threadTs,
+    sessionId,
+    parentSessionId ?? null,
+    new Date().toISOString(),
+  );
 }
 
-export function getAllThreadSessions(groupFolder: string): Record<string, string> {
+export function getAllThreadSessions(
+  groupFolder: string,
+): Record<string, string> {
   const rows = db
-    .prepare('SELECT thread_ts, session_id FROM thread_sessions WHERE group_folder = ?')
+    .prepare(
+      'SELECT thread_ts, session_id FROM thread_sessions WHERE group_folder = ?',
+    )
     .all(groupFolder) as Array<{ thread_ts: string; session_id: string }>;
   const result: Record<string, string> = {};
   for (const row of rows) {
@@ -761,24 +780,63 @@ export function getAllThreadSessions(groupFolder: string): Record<string, string
   return result;
 }
 
-export function storeResponseUuid(groupFolder: string, threadTs: string, slackTs: string, sdkUuid: string): void {
+export function storeResponseUuid(
+  groupFolder: string,
+  threadTs: string,
+  slackTs: string,
+  sdkUuid: string,
+): void {
   db.prepare(
     'INSERT OR REPLACE INTO response_uuids (group_folder, thread_ts, slack_ts, sdk_uuid, created_at) VALUES (?, ?, ?, ?, ?)',
   ).run(groupFolder, threadTs, slackTs, sdkUuid, new Date().toISOString());
 }
 
-export function getResponseUuid(groupFolder: string, threadTs: string, slackTs: string): string | undefined {
+export function getResponseUuid(
+  groupFolder: string,
+  threadTs: string,
+  slackTs: string,
+): string | undefined {
   const row = db
-    .prepare('SELECT sdk_uuid FROM response_uuids WHERE group_folder = ? AND thread_ts = ? AND slack_ts = ?')
+    .prepare(
+      'SELECT sdk_uuid FROM response_uuids WHERE group_folder = ? AND thread_ts = ? AND slack_ts = ?',
+    )
     .get(groupFolder, threadTs, slackTs) as { sdk_uuid: string } | undefined;
   return row?.sdk_uuid;
 }
 
-export function getThreadResponseUuids(groupFolder: string, threadTs: string): Array<{slackTs: string, sdkUuid: string}> {
+export function getThreadResponseUuids(
+  groupFolder: string,
+  threadTs: string,
+): Array<{ slackTs: string; sdkUuid: string }> {
   const rows = db
-    .prepare('SELECT slack_ts, sdk_uuid FROM response_uuids WHERE group_folder = ? AND thread_ts = ? ORDER BY created_at')
-    .all(groupFolder, threadTs) as Array<{ slack_ts: string; sdk_uuid: string }>;
-  return rows.map(r => ({ slackTs: r.slack_ts, sdkUuid: r.sdk_uuid }));
+    .prepare(
+      'SELECT slack_ts, sdk_uuid FROM response_uuids WHERE group_folder = ? AND thread_ts = ? ORDER BY created_at',
+    )
+    .all(groupFolder, threadTs) as Array<{
+    slack_ts: string;
+    sdk_uuid: string;
+  }>;
+  return rows.map((r) => ({ slackTs: r.slack_ts, sdkUuid: r.sdk_uuid }));
+}
+
+export function getThreadMessages(
+  chatJid: string,
+  threadTs: string,
+): Array<{ id: string; content: string; sender_name: string; is_bot_message: number; timestamp: string }> {
+  return db
+    .prepare(
+      `SELECT id, content, sender_name, is_bot_message, timestamp
+      FROM messages
+      WHERE chat_jid = ? AND thread_ts = ?
+      ORDER BY timestamp`,
+    )
+    .all(chatJid, threadTs) as Array<{
+    id: string;
+    content: string;
+    sender_name: string;
+    is_bot_message: number;
+    timestamp: string;
+  }>;
 }
 
 function migrateJsonState(): void {

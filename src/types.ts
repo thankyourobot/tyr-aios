@@ -125,7 +125,12 @@ export interface Channel {
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
   // Optional: post rewind button for *rewind command
-  postRewindButton?(jid: string, userId: string, threadTs: string, groupFolder: string): Promise<void>;
+  postRewindButton?(
+    jid: string,
+    userId: string,
+    threadTs: string,
+    groupFolder: string,
+  ): Promise<void>;
 }
 
 // Callback type that channels use to deliver inbound messages

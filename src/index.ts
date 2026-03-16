@@ -556,7 +556,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (
           result.contextUsage &&
           result.contextUsage.contextWindow > 0 &&
-          toggleState.verbose
+          getToggleState(chatJid, lastThreadTs).verbose
         ) {
           const cu = result.contextUsage;
           const totalUsed = cu.inputTokens;
