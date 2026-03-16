@@ -485,10 +485,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const toggleState = getToggleState(chatJid, lastThreadTs);
 
   // Set active thread for IPC routing
-  queue.setActiveThreadTs(
-    chatJid,
-    lastThreadTs,
-  );
+  queue.setActiveThreadTs(chatJid, lastThreadTs);
 
   const output = await runAgent(
     group,
@@ -551,6 +548,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
             },
           });
           outputSentToUser = true;
+          // Clear typing indicator after sending output (don't wait for container exit)
+          channel.setTyping?.(chatJid, false)?.catch(() => {});
         }
 
         // Context window display (when verbose mode is enabled)
@@ -948,7 +947,16 @@ async function startMessageLoop(): Promise<void> {
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
-            // No active container — enqueue for a new one
+            // Thread mismatch or no active container — enqueue for a new one.
+            // If a container IS active but serving a different thread, close it
+            // so the queued messages get processed without waiting for idle timeout.
+            if (activeThread && !threadMatch) {
+              logger.debug(
+                { chatJid, activeThread, msgThread },
+                'Thread mismatch, closing current container to process new thread',
+              );
+              queue.closeStdin(chatJid);
+            }
             queue.enqueueMessageCheck(chatJid);
           }
         }
