@@ -822,7 +822,13 @@ export function getThreadResponseUuids(
 export function getThreadMessages(
   chatJid: string,
   threadTs: string,
-): Array<{ id: string; content: string; sender_name: string; is_bot_message: number; timestamp: string }> {
+): Array<{
+  id: string;
+  content: string;
+  sender_name: string;
+  is_bot_message: number;
+  timestamp: string;
+}> {
   return db
     .prepare(
       `SELECT id, content, sender_name, is_bot_message, timestamp

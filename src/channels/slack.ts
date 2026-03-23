@@ -239,7 +239,10 @@ export class SlackChannel implements Channel {
             agentResponseText = agentMsg.text;
           }
         } catch (err) {
-          logger.warn({ err }, 'Failed to fetch agent response for rewind context');
+          logger.warn(
+            { err },
+            'Failed to fetch agent response for rewind context',
+          );
         }
 
         // Post a new top-level message to create the rewind thread
@@ -264,9 +267,10 @@ export class SlackChannel implements Channel {
 
         // Post the agent's last response as the first reply in the new thread with a link
         if (agentResponseText) {
-          const contextText = agentResponseText.length > 500
-            ? agentResponseText.slice(0, 500) + '...'
-            : agentResponseText;
+          const contextText =
+            agentResponseText.length > 500
+              ? agentResponseText.slice(0, 500) + '...'
+              : agentResponseText;
           await client.chat.postMessage({
             channel: channelId,
             thread_ts: newThreadTs,
