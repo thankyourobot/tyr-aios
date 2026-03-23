@@ -379,6 +379,12 @@ export class SlackChannel implements Channel {
         url: f.url_private_download,
       }));
 
+      // If no text but files attached, hint the agent about the shared files
+      if (!content && files && files.length > 0) {
+        const names = files.map((f) => f.name).join(', ');
+        content = `[shared: ${names}]`;
+      }
+
       this.opts.onMessage(targetJid, {
         id: msg.ts,
         chat_jid: targetJid,

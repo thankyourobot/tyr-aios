@@ -87,7 +87,6 @@ function buildVolumeMounts(
     // Main gets the project root read-write so Robot can modify NanoClaw source.
     // .env is shadowed below to protect secrets. Changes take effect on restart.
 
-
     mounts.push({
       hostPath: projectRoot,
       containerPath: '/workspace/project',
