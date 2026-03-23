@@ -81,11 +81,3 @@ When the agent believes it has worked through the five pillars and is ready to o
 
 This is a natural handoff — a chance to surface anything missed before moving into normal operations. If the chain of command has nothing to add, the agent closes the onboarding task and proceeds. If they do, the agent works through it and checks in again when done.
 
-## Session Orientation (Not Onboarding)
-
-Every session should begin with a lightweight check — not a full onboarding run:
-
-1. **Check the queue** — open tasks in `tasks.db` + any external data sources relevant to those tasks
-2. **Act or stand down** — push forward what's actionable, stay silent if there's nothing to do
-
-Re-read reference files only when working in an unfamiliar area or when something in the domain has changed.
