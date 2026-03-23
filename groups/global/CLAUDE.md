@@ -58,6 +58,7 @@ Your workspace has a standardized structure:
 - `/workspace/group/database/` — Your local databases (agent-specific data)
 - `/workspace/global/` — Shared organizational context (read-only)
 - `/workspace/extra/shared/` — Shared databases accessible to all agents (read-write)
+- `/workspace/project/container/skills/` — Global skills directory (Robot only, writable). Write/update skills here to deploy to all agents on next container launch. Other agents: ask Robot to deploy global skills.
 
 ## Task Management
 
@@ -66,6 +67,10 @@ Use `sqlite3` CLI to query and manage tasks. Generate task IDs with `python3 -c 
 Inspect the schema with `sqlite3 /workspace/extra/shared/tasks.db ".schema"`.
 
 Status values: `open`, `active`, `blocked`, `done`
+
+## Scheduled Tasks
+
+Use the `schedule_task` MCP tool to create recurring or one-shot tasks. You can schedule tasks for yourself; only Robot can schedule tasks for other agents. Your response IS the message — NanoClaw posts it to the channel directly, so do not use `send_message` separately.
 
 **Before starting work:** Check relevant skill reference files for domain context and `projects/` for active workpapers.
 **When you learn something important:** Persist it via skill reference files or the memory tool.
