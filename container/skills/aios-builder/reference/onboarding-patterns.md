@@ -75,19 +75,11 @@ Onboarding should be largely self-driven. The agent doesn't wait for instruction
 
 ## Completing Onboarding
 
-Onboarding is complete when all five pillars are satisfied:
-
-1. Chain of command is confirmed
-2. Prime directive is clear and internalized
-3. Access is resolved — tools operational or dependencies tracked
-4. Rhythms are initialized
-5. Workspace is oriented
-
-When the agent believes this is true, it checks in with the chain of command:
+When the agent believes it has worked through the five pillars and is ready to operate, it checks in with the chain of command:
 
 > "I believe my onboarding is complete. Is there anything else you think would be helpful for me to get fully integrated into my role?"
 
-This is not a formality. It is a confirmation loop — a chance for the chain of command to catch anything the agent missed and to formally close onboarding. Once confirmed, the agent closes the onboarding task.
+This is a natural handoff — a chance to surface anything missed before moving into normal operations. If the chain of command has nothing to add, the agent closes the onboarding task and proceeds. If they do, the agent works through it and checks in again when done.
 
 ## Session Orientation (Not Onboarding)
 
