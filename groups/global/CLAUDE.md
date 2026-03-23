@@ -52,7 +52,7 @@ When you decide not to respond, wrap your reasoning in `<internal>` tags and out
 
 Your workspace has a standardized structure:
 - `/workspace/group/CLAUDE.md` — Your identity and instructions (you are reading this)
-- `/workspace/group/.claude/skills/` — Skills, domain knowledge, and procedures (loaded by Claude Code)
+- `/workspace/group/.claude/skills/` — Skills, domain knowledge, and procedures (loaded by Claude Code) Edit these, NOT the session copies at /home/node/.claude/skills/ (those are synced copies that may be overwritten).
 - `/workspace/group/projects/` — Active workpapers (your current work in progress)
 - `/workspace/group/memory/` — Your persistent memory (managed by memory tool)
 - `/workspace/group/database/` — Your local databases (agent-specific data)
