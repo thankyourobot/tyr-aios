@@ -1,6 +1,6 @@
 # Workpaper: Onboarding Patterns Reference File
 
-**Status:** In progress — spec phase
+**Status:** Complete
 **Complexity:** Medium
 **Date:** 2026-03-23
 **Authoritative source:** Conversation with Jeremiah, Mar 16 + Mar 23 2026
@@ -91,12 +91,12 @@ Valid principle but doesn't suppress the completion check-in. No noise for its o
 
 ## Acceptance Criteria
 
-- [ ] `onboarding-patterns.md` captures all five pillars from Jeremiah's employee analogy
-- [ ] Mechanical trigger (task in tasks.db, picked up by heartbeat) is documented
-- [ ] Completion check-in with chain of command is documented
-- [ ] Session orientation is clearly distinguished from onboarding
-- [ ] Autonomy principles are documented
-- [ ] No re-onboarding concept
-- [ ] Spec adversarially reviewed
-- [ ] build-agent.md Part 4 updated to reference onboarding-patterns.md and document Robot's build-time responsibilities
-- [ ] Deliverables adversarially reviewed
+- [x] `onboarding-patterns.md` captures all five pillars from Jeremiah's employee analogy
+- [x] Mechanical trigger (task in tasks.db, picked up by heartbeat) is documented
+- [x] Completion check-in with chain of command is documented
+- [x] Session orientation is clearly distinguished from onboarding (distinction in intro; separate section removed as redundant)
+- [x] Autonomy principles are documented
+- [x] No re-onboarding concept
+- [x] Spec adversarially reviewed (via Jeremiah feedback — completion signal framing corrected, session orientation section cut)
+- [x] build-agent.md Part 4 updated to reference onboarding-patterns.md and document Robot's build-time responsibilities
+- [x] Deliverables adversarially reviewed
