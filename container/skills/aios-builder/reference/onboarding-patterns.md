@@ -1,76 +1,99 @@
 # Onboarding Patterns
 
-How agents get operational — and stay that way.
+How a new agent gets from deployed to fully operational.
 
-## Two Distinct Modes
+## What Onboarding Is (and Isn't)
 
-**Onboarding** and **session orientation** are different things and should not be conflated.
+**Onboarding** is the process by which a new agent establishes its footing — confirming its directive, getting its tools working, orienting its workspace, and reaching a state where it can operate autonomously. It is explicitly triggered, has a defined outcome, and ends with a confirmation from the chain of command.
 
-**Onboarding** is explicitly triggered — by a human, a task, or a significant change in the agent's scope or directive. It's a deliberate process with a defined outcome: the agent has a confirmed prime directive, functional tools, an initialized workspace, and a clear picture of what's in front of it. Because it's explicit, it's stable — agents don't re-onboard spontaneously or on every launch.
+**Session orientation** is different. It happens automatically at the start of every session and is lightweight: check the queue, act on what's there, stay silent if there's nothing. Not onboarding. Don't conflate the two.
 
-**Session orientation** is lightweight and automatic — a quick check at the start of any session to pick up where things left off. It's not onboarding; it's just situational awareness.
+## How It's Triggered
 
-## Onboarding: Core Principles
+When Robot builds a new agent, it creates an onboarding task in `tasks.db` assigned to the new agent. The task should include a pointer to this document and confirm the chain of command. The agent's standard heartbeat picks it up and drives progress — on each heartbeat invocation, the agent checks whether the onboarding task is open and moves it forward. The task stays open until onboarding is complete and confirmed.
 
-**1. Explicit trigger only.**
-Onboarding runs when invoked — by a human, a deployment task, or a directive change. It does not run automatically on every launch. This keeps it stable and prevents agents from re-initializing themselves or creating duplicate artifacts in normal operation.
+Onboarding is a one-time process. If something significant comes up later that requires additional integration, the chain of command creates a new task for it. There is no "re-onboarding."
 
-**2. Establish the prime directive first.**
-The most important outcome of onboarding is a confirmed, internalized prime directive. Everything else — skills, rhythms, workspace setup — flows from it. An agent that completes onboarding without clarity on its prime directive is not fully onboarded.
+## The Five Pillars
 
-**3. Push forward autonomously; surface blockers clearly.**
-An agent should resolve as much of its own onboarding as possible. Judgment calls should be made and documented. Stop for human input only when genuinely blocked — missing credentials, unresolvable scope ambiguity, decisions that require human authority. When blocked, be specific: what's the blocker, what's needed, what's already done.
+### 1. Chain of Command
 
-**4. Onboarding is idempotent.**
-Running onboarding twice should produce the same result as running it once. Check before creating — don't duplicate tasks, files, or messages. The system should tolerate re-onboarding gracefully.
+Before anything else: who does this agent report to, and who do they go to when stuck?
 
-**5. Self-contained by default.**
-A well-built agent should be able to onboard from scratch with no human hand-holding. If it can't, that's a signal the documentation or skill structure is incomplete — not that the human needs to fill the gap.
+- Check CLAUDE.md first. If not there, check the onboarding task.
+- If chain of command is not documented anywhere, this is a blocker — surface it to whoever created the agent before proceeding.
+- Chain of command defines the escalation path for the rest of onboarding and beyond.
 
-**6. Minimal footprint.**
-Onboarding should leave no trace unless something was actually accomplished. No "I'm online!" announcements, no placeholder tasks, no status pings for their own sake. The agent's presence is demonstrated through action, not declaration.
+### 2. Clarity
 
-## Onboarding Steps
+Does the agent know what it's here to accomplish?
 
-**1. Load identity**
-Read CLAUDE.md (local + global). Confirm prime directive, domain, channels, and boundaries. If the prime directive is unclear or missing, resolve it before proceeding — this is a blocker.
+- Confirm the prime directive is clear and internalized.
+- Identify what success looks like — a definition of done, a metric, or a clear outcome.
+- If the prime directive is missing or ambiguous, resolve it with the chain of command before proceeding. Guessing here is expensive.
 
-**2. Load context**
-Read reference files for active domains. Check `projects/` for in-flight work. Get a complete picture of what the agent is responsible for.
+### 3. Access
 
-**3. Verify tools**
-Confirm skills are loaded and integrations are functional. Initialize databases, config, or workspace structure if missing.
+What tools, skills, and resources does this agent need to do its job?
 
-**4. Check the queue**
-Query open tasks assigned to this agent. Review any external data sources that impact those tasks. If there's something actionable, push it forward. If not, stay silent.
+- Take inventory: what's needed vs. what's already provisioned and functional.
+- For anything not yet accessible: identify the owner, the expected timeline, and what the agent can do in the meantime.
+- Output: either a fully operational toolkit, or a tracked dependencies list with owners and timelines.
 
-**5. Confirm readiness**
-The agent is onboarded when: prime directive is clear, tools are functional, workspace is initialized, and the task queue has been reviewed.
+Don't block all of onboarding on an access dependency. Document it, move forward on everything else.
+
+### 4. Rhythms
+
+The standard heartbeat is already running — Robot set it up at build time. The agent doesn't need to do this.
+
+What the agent needs to do:
+- Determine whether any domain-specific rhythms are needed beyond the standard heartbeat (e.g., a weekly report, a daily sync, a monitoring check).
+- Create those scheduled tasks via the `schedule_task` MCP tool if applicable.
+
+### 5. Workspace Orientation
+
+Get a picture of the agent's environment before diving into active work.
+
+- Check `projects/` for in-flight workpapers or prior work.
+- Check `memory/` for persisted context from previous sessions.
+- Confirm any databases in `database/` are initialized.
+- Know what channels this agent is bound to and how it's expected to communicate in each.
+
+## Autonomy Principles
+
+Onboarding should be largely self-driven. The agent doesn't wait for instructions — it works through the pillars and makes judgment calls.
+
+**Solve problems proactively.** When something is unclear, look for the answer in the available files before asking. Reach out only when genuinely blocked.
+
+**Surface blockers clearly.** When you do need help: be specific. What exactly is needed, from whom, and what has already been tried or found.
+
+**Patient, not passive.** If waiting on a dependency or a response from the chain of command, keep moving on everything else. Check back at a reasonable cadence — not constantly, not never.
+
+**Break it down further.** If blocked externally, ask: is there a smaller piece I can move independently? Can I prepare so the external dependency takes less time when it arrives?
+
+**Document judgment calls.** Decisions made during onboarding should be recorded — in a workpaper, a task note, or memory. Future sessions and the chain of command should be able to understand what was decided and why.
+
+## Completing Onboarding
+
+Onboarding is complete when all five pillars are satisfied:
+
+1. Chain of command is confirmed
+2. Prime directive is clear and internalized
+3. Access is resolved — tools operational or dependencies tracked
+4. Rhythms are initialized
+5. Workspace is oriented
+
+When the agent believes this is true, it checks in with the chain of command:
+
+> "I believe my onboarding is complete. Is there anything else you think would be helpful for me to get fully integrated into my role?"
+
+This is not a formality. It is a confirmation loop — a chance for the chain of command to catch anything the agent missed and to formally close onboarding. Once confirmed, the agent closes the onboarding task.
 
 ## Session Orientation (Not Onboarding)
 
-Every session should begin with a lightweight orientation — not a full onboarding:
+Every session should begin with a lightweight check — not a full onboarding run:
 
-1. **Check the queue** — Query open tasks. Review relevant external data.
-2. **Act or stand down** — Push forward what's actionable. Stay silent if there's nothing to do.
+1. **Check the queue** — open tasks in `tasks.db` + any external data sources relevant to those tasks
+2. **Act or stand down** — push forward what's actionable, stay silent if there's nothing to do
 
-That's it. Re-read reference files only when working in an unfamiliar area or when something in the domain has changed.
-
-## What Good Onboarding Produces
-
-A well-onboarded agent:
-- Has a confirmed, internalized prime directive
-- Has functional tools and an initialized workspace
-- Has reviewed its open task queue and knows what's in front of it
-- Is ready to work autonomously without further prompting
-- Has stayed silent if there was nothing to act on
-
-## What Bad Onboarding Looks Like
-
-- Agent onboards itself repeatedly without being asked
-- Agent announces itself without doing anything
-- Agent asks for instructions it could have found in its own files
-- Agent creates tasks or artifacts it already created in a previous session
-- Agent is active but disconnected from its actual task queue
-- Agent waits for human confirmation before taking any step
-- Agent completes setup without establishing a clear prime directive
+Re-read reference files only when working in an unfamiliar area or when something in the domain has changed.
