@@ -385,11 +385,17 @@ function formatToolUseSummary(
   }
 
   // Add FileBrowser link if available
-  if (filebrowserBaseUrl && groupFolder && filePath.startsWith('/workspace/group/')) {
-    const relativePath = filePath.replace('/workspace/group/', '');
-    summary += ` \u2014 <${filebrowserBaseUrl}/files/agent-workspaces/${groupFolder}/${relativePath}|view>`;
+  if (filebrowserBaseUrl && filePath) {
+    let fbPath: string | null = null;
+    if (groupFolder && filePath.startsWith(`/workspace/group/`)) {
+      fbPath = `agent-workspaces/${groupFolder}/${filePath.replace(`/workspace/group/`, ``)}`;
+    } else if (filePath.startsWith(`/workspace/project/container/skills/`)) {
+      fbPath = `global-skills/${filePath.replace(`/workspace/project/container/skills/`, ``)}`;
+    }
+    if (fbPath) {
+      summary += ` — <${filebrowserBaseUrl}/files/${fbPath}|view>`;
+    }
   }
-
   return summary;
 }
 
