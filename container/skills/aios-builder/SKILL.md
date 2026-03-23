@@ -38,6 +38,7 @@ Load on demand — when the agent needs specific guidance during work.
 | Database Patterns | `reference/database-patterns.md` | Before designing a database — schema conventions, initialization, location |
 | Adversarial Review | `reference/adversarial-review.md` | Before running an adversarial review — reviewer protocol, invocation, resolution |
 | Multi-Tenant Example | `reference/multi-tenant-example.md` | Before building a multi-tenant skill — annotated case study of the three-tier pattern |
+| Onboarding Patterns | `reference/onboarding-patterns.md` | Before designing an agent's onboarding path or first-launch behavior |
 
 ## Templates
 
