@@ -642,7 +642,7 @@ function dispatchMessage(chatJid: string, msg: NewMessage): void {
       ? buildThreadJid(`slack:${parseSlackJid(channelJid).channelId}`, threadTs)
       : channelJid;
     const groupJid = buildGroupJid(baseJid, group.folder);
-    const formatted = formatMessages([msg], TIMEZONE);
+    const formatted = formatMessages([msg], TIMEZONE, true);
     if (!queue.sendMessage(groupJid, formatted)) {
       queue.enqueueMessageCheck(groupJid);
     } else {
@@ -831,7 +831,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
   const prompt =
     threadParentContext +
-    formatMessages(missedMessages, TIMEZONE) +
+    formatMessages(missedMessages, TIMEZONE, !!groupFolder) +
     fileAnnotation;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
