@@ -95,7 +95,8 @@ let messageLoopRunning = false;
 
 // Multi-agent index maps
 let groupsByJid: Map<string, RegisteredGroup[]> = new Map();
-let groupsByFolder: Map<string, { jid: string; group: RegisteredGroup }> = new Map();
+let groupsByFolder: Map<string, { jid: string; group: RegisteredGroup }> =
+  new Map();
 let groupsByBotUserId: Map<string, RegisteredGroup> = new Map();
 
 const channels: Channel[] = [];
@@ -343,7 +344,8 @@ async function handleCommand(
       threadTs: msg.threadTs,
     };
     if (!channelGroups || channelGroups.length <= 1) {
-      const name = group?.assistantName || group?.displayName || group?.name || 'Unknown';
+      const name =
+        group?.assistantName || group?.displayName || group?.name || 'Unknown';
       await channel.sendMessage(
         chatJid,
         `Agents in this channel:\n  ${name} (director)`,
@@ -416,7 +418,8 @@ function rebuildGroupIndexes(): void {
       }
     }
     // registeredGroups: pick director, fallback to first
-    const director = groups.find((g) => g.channelRole === 'director') || groups[0];
+    const director =
+      groups.find((g) => g.channelRole === 'director') || groups[0];
     registeredGroups[jid] = director;
   }
 }
@@ -432,10 +435,15 @@ function escapeRegex(str: string): string {
  * For directors with own Slack apps: check for native <@U_BOT_ID> mentions.
  * For technicians/fallback: check for text-based @Name mentions.
  */
-function parseMentions(content: string, channelGroups: RegisteredGroup[]): string[] {
+function parseMentions(
+  content: string,
+  channelGroups: RegisteredGroup[],
+): string[] {
   const mentioned: string[] = [];
   // Strip code blocks to avoid false positives
-  const stripped = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`]+`/g, '');
+  const stripped = content
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/`[^`]+`/g, '');
 
   for (const group of channelGroups) {
     // Director with own app: check for native Slack mention <@U_BOT_ID>
@@ -545,7 +553,10 @@ function resolveTargetGroups(
       }
       // Directors: auto-join only if no @mentions, or if they're @mentioned
       for (const group of channelGroups) {
-        if (group.channelRole === 'director' && !members.includes(group.folder)) {
+        if (
+          group.channelRole === 'director' &&
+          !members.includes(group.folder)
+        ) {
           const directorMentioned = mentionedFolders.includes(group.folder);
           const noMentionsAtAll = mentionedFolders.length === 0;
           if (directorMentioned || noMentionsAtAll) {
@@ -621,7 +632,11 @@ function dispatchMessage(chatJid: string, msg: NewMessage): void {
   }
 
   // Multi-group channel: dispatch to target groups
-  const targets = resolveTargetGroups(channelJid, threadTs || msg.threadTs, msg);
+  const targets = resolveTargetGroups(
+    channelJid,
+    threadTs || msg.threadTs,
+    msg,
+  );
   for (const group of targets) {
     const baseJid = threadTs
       ? buildThreadJid(`slack:${parseSlackJid(channelJid).channelId}`, threadTs)
@@ -646,7 +661,11 @@ function dispatchBotMessage(chatJid: string, msg: NewMessage): void {
 
   if (!isMultiGroupChannel(channelJid)) return;
 
-  const targets = resolveTargetGroups(channelJid, threadTs || msg.threadTs, msg);
+  const targets = resolveTargetGroups(
+    channelJid,
+    threadTs || msg.threadTs,
+    msg,
+  );
   if (targets.length === 0) return;
 
   for (const group of targets) {
@@ -758,7 +777,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const isMainGroup = group.isMain === true;
 
   // Use baseJid for message retrieval (messages stored under base JID)
-  const sinceTimestamp = lastAgentTimestamp[chatJid] || lastAgentTimestamp[baseJid] || '';
+  const sinceTimestamp =
+    lastAgentTimestamp[chatJid] || lastAgentTimestamp[baseJid] || '';
   // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation
   const missedMessages = groupFolder
     ? getMessagesSinceIncludingBots(baseJid, sinceTimestamp)
@@ -1249,7 +1269,11 @@ async function startMessageLoop(): Promise<void> {
           // Multi-group channel: dispatch via resolveTargetGroups
           if (isMultiGroupChannel(chatJid)) {
             const lastGroupMsg = groupMessages[groupMessages.length - 1];
-            const targets = resolveTargetGroups(chatJid, lastGroupMsg.threadTs, lastGroupMsg);
+            const targets = resolveTargetGroups(
+              chatJid,
+              lastGroupMsg.threadTs,
+              lastGroupMsg,
+            );
             for (const target of targets) {
               const groupJid = buildGroupJid(chatJid, target.folder);
               queue.enqueueMessageCheck(groupJid);
@@ -1488,7 +1512,10 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
-    resolveBotSenderName: (botId: string, username?: string): string | undefined => {
+    resolveBotSenderName: (
+      botId: string,
+      username?: string,
+    ): string | undefined => {
       // Look up bot_id against known agent bot user IDs
       if (botId) {
         const group = groupsByBotUserId.get(botId);
@@ -1498,12 +1525,112 @@ async function main(): Promise<void> {
       if (username) {
         for (const [, entry] of groupsByFolder) {
           const name = entry.group.assistantName || entry.group.displayName;
-          if (name && name.toLowerCase() === username.toLowerCase()) return name;
+          if (name && name.toLowerCase() === username.toLowerCase())
+            return name;
         }
       }
       return undefined;
     },
     onRewind: rewindSession,
+    onSlashCommand: async (params: {
+      command: string;
+      text: string;
+      channelId: string;
+      userId: string;
+      threadTs?: string;
+      triggerId: string;
+    }): Promise<string | null> => {
+      const channelJid = `slack:${params.channelId}`;
+      const group = resolveGroup(channelJid);
+
+      switch (params.command) {
+        case 'aios-stop': {
+          const stopped = await queue.stopGroup(channelJid);
+          return stopped
+            ? `Stopped ${group?.name || 'agent'}`
+            : 'No active agent to stop';
+        }
+
+        case 'verbose':
+        case 'thinking': {
+          const isVerbose = params.command === 'verbose';
+          const arg = params.text.trim().toLowerCase();
+          const inThread = !!params.threadTs;
+          const toggleKey = inThread
+            ? `${channelJid}:${params.threadTs}`
+            : null;
+
+          let newValue: boolean;
+          if (inThread && toggleKey) {
+            const current =
+              threadToggles.get(toggleKey) ||
+              getToggleState(channelJid, params.threadTs);
+            if (arg === 'on') newValue = true;
+            else if (arg === 'off') newValue = false;
+            else newValue = isVerbose ? !current.verbose : !current.thinking;
+            const updated = { ...current };
+            if (isVerbose) updated.verbose = newValue;
+            else updated.thinking = newValue;
+            threadToggles.set(toggleKey, updated);
+          } else {
+            if (!group) return 'No group found for this channel';
+            const currentDefault = isVerbose
+              ? group.verboseDefault === true
+              : group.thinkingDefault === true;
+            if (arg === 'on') newValue = true;
+            else if (arg === 'off') newValue = false;
+            else newValue = !currentDefault;
+            if (isVerbose) group.verboseDefault = newValue;
+            else group.thinkingDefault = newValue;
+            setRegisteredGroup(channelJid, group);
+          }
+
+          const scope = inThread
+            ? 'this thread'
+            : `${group?.name || 'group'} (default)`;
+          const mode = params.command;
+          return `${mode.charAt(0).toUpperCase() + mode.slice(1)} mode: ${newValue ? 'ON' : 'OFF'} for ${scope}`;
+        }
+
+        case 'rewind': {
+          if (!params.threadTs) {
+            return 'Rewind works in threads — start a conversation first.';
+          }
+          const channel = findChannel(channels, channelJid);
+          if (channel?.postRewindButton) {
+            await channel.postRewindButton(
+              channelJid,
+              params.userId,
+              params.threadTs,
+              group?.folder || '',
+            );
+          }
+          return null; // rewind button handles the response
+        }
+
+        case 'agents': {
+          const chJid = channelJid;
+          const channelGroups = groupsByJid.get(chJid);
+          if (!channelGroups || channelGroups.length <= 1) {
+            const name =
+              group?.assistantName ||
+              group?.displayName ||
+              group?.name ||
+              'Unknown';
+            return `Agents in this channel:\n  ${name} (director)`;
+          }
+          const lines = channelGroups.map((g) => {
+            const name = g.assistantName || g.displayName || g.name;
+            const role = g.channelRole || 'director';
+            return `  ${name} (${role})`;
+          });
+          return `Agents in this channel:\n${lines.join('\n')}`;
+        }
+
+        default:
+          return `Unknown command: ${params.command}`;
+      }
+    },
   };
 
   // Create and connect all registered channels.
@@ -1578,13 +1705,16 @@ async function main(): Promise<void> {
   recoverPendingMessages();
 
   // Daily cleanup of old thread membership data (every 24 hours)
-  setInterval(() => {
-    try {
-      cleanupOldThreadData(30);
-    } catch (err) {
-      logger.warn({ err }, 'Thread data cleanup error');
-    }
-  }, 24 * 60 * 60 * 1000);
+  setInterval(
+    () => {
+      try {
+        cleanupOldThreadData(30);
+      } catch (err) {
+        logger.warn({ err }, 'Thread data cleanup error');
+      }
+    },
+    24 * 60 * 60 * 1000,
+  );
   // Run once at startup
   cleanupOldThreadData(30);
 

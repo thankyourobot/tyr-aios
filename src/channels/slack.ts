@@ -37,7 +37,10 @@ export interface SlackChannelOpts {
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
   /** Resolve a bot user ID to the agent's display name. Used for multi-agent sender identification. */
-  resolveBotSenderName?: (botId: string, username?: string) => string | undefined;
+  resolveBotSenderName?: (
+    botId: string,
+    username?: string,
+  ) => string | undefined;
   onRewind?: (params: {
     groupFolder: string;
     chatJid: string;
@@ -45,6 +48,15 @@ export interface SlackChannelOpts {
     newThreadTs: string;
     sdkUuid: string;
   }) => Promise<void>;
+  /** Handle slash commands. Returns the response text (shown ephemerally). */
+  onSlashCommand?: (params: {
+    command: string;
+    text: string;
+    channelId: string;
+    userId: string;
+    threadTs?: string;
+    triggerId: string;
+  }) => Promise<string | null>;
 }
 
 export class SlackChannel implements Channel {
@@ -303,6 +315,44 @@ export class SlackChannel implements Channel {
         logger.warn({ err }, 'Failed to process rewind submission');
       }
     });
+
+    // --- Slash command handlers ---
+    const slashCommands = [
+      'aios-stop',
+      'verbose',
+      'thinking',
+      'rewind',
+      'agents',
+    ];
+    for (const cmd of slashCommands) {
+      this.app.command(`/${cmd}`, async ({ command, ack }) => {
+        await ack();
+        if (!this.opts.onSlashCommand) return;
+        try {
+          const response = await this.opts.onSlashCommand({
+            command: cmd,
+            text: command.text || '',
+            channelId: command.channel_id,
+            userId: command.user_id,
+            threadTs: (command as any).thread_ts || undefined,
+            triggerId: command.trigger_id,
+          });
+          if (response) {
+            // Post ephemeral response (only the user sees it)
+            await this.app.client.chat.postEphemeral({
+              channel: command.channel_id,
+              user: command.user_id,
+              text: response,
+              ...(command as any).thread_ts
+                ? { thread_ts: (command as any).thread_ts }
+                : {},
+            });
+          }
+        } catch (err) {
+          logger.warn({ cmd, err }, 'Slash command handler error');
+        }
+      });
+    }
 
     // Use app.event('message') instead of app.message() to capture all
     // message subtypes including bot_message (needed to track our own output)
@@ -636,7 +686,11 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async addReaction(jid: string, messageTs: string, emoji: string): Promise<void> {
+  async addReaction(
+    jid: string,
+    messageTs: string,
+    emoji: string,
+  ): Promise<void> {
     const { channelId } = parseSlackJid(jid);
     try {
       await this.app.client.reactions.add({
