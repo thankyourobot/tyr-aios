@@ -58,7 +58,30 @@ The boundary is simple: if it applies to every agent, it's global. If it's speci
 Each agent maps to exactly one group in NanoClaw. The group provides:
 - Isolated workspace (files, databases, memory)
 - Channel binding (Slack channels routed to this agent)
-- Display identity (name and emoji in Slack)
+- Display identity (name, emoji, portrait in Slack)
+- Per-agent Slack app with dedicated bot user ID (for directors)
 - Container isolation (each execution is sandboxed)
 
-Multiple channels can route to the same agent (e.g., Robot handles #strategy and #all-thank-you-robot). The agent's workspace is shared across all its channels.
+Multiple channels can route to the same agent. The agent's workspace is shared across all its channels.
+
+## Multi-Agent Channels
+
+A channel can have multiple agents registered with different roles:
+
+**Director** (`channel_role = 'director'`) — The default responder. Processes human messages with no @mentions, or messages that @mention them specifically. Skips messages that exclusively target other agents. A channel typically has one director.
+
+**Member** (`channel_role = 'member'`) — Requires an @mention to enter a thread. Once mentioned, the agent joins the thread and receives all future human messages in it.
+
+This maps to how humans work in Slack: there's usually one person "on point" for a channel (the director), and others get pulled in when needed.
+
+**Thread membership:** The `thread_members` table tracks which agents have been pulled into which threads. Membership is acquired by @mention, and persists for the life of the thread. Agents don't need to be re-mentioned after joining.
+
+**Anti-loop:** Bot messages only trigger processing for agents explicitly @mentioned in that specific message. Being a thread member is not sufficient for bot messages — this prevents infinite agent-to-agent chains. The `thread_bot_triggers` table provides rate limiting as a safety net.
+
+Current channel registrations and roles: `SELECT jid, folder, channel_role, bot_user_id FROM registered_groups ORDER BY jid`.
+
+## Director vs. Technician Agents
+
+**Directors** get their own Slack app with a dedicated bot user ID. This enables native `<@U_BOT_ID>` mentions with Slack autocomplete and trivial sender identification.
+
+**Technicians** are specialist sub-agents that share their director's Slack app. They post with `username`/`icon_emoji` overrides and are mentioned via text-based `@TechName` parsing. Technician names should be longer and more distinctive to avoid false positives.
