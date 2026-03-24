@@ -46,6 +46,8 @@ export interface RegisteredGroup {
   assistantName?: string; // Per-group assistant name for container (e.g., "Builder")
   verboseDefault?: boolean;
   thinkingDefault?: boolean;
+  channelRole?: 'director' | 'member'; // Default: 'director'
+  botUserId?: string; // Slack bot user ID (for directors with own app)
 }
 
 export interface FileAttachment {
@@ -126,6 +128,8 @@ export interface Channel {
   ): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: add emoji reaction to a message
+  addReaction?(jid: string, messageTs: string, emoji: string): Promise<void>;
   // Optional: post rewind button for *rewind command
   postRewindButton?(
     jid: string,

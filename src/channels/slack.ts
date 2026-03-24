@@ -36,6 +36,8 @@ export interface SlackChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  /** Resolve a bot user ID to the agent's display name. Used for multi-agent sender identification. */
+  resolveBotSenderName?: (botId: string, username?: string) => string | undefined;
   onRewind?: (params: {
     groupFolder: string;
     chatJid: string;
@@ -349,7 +351,12 @@ export class SlackChannel implements Channel {
 
       let senderName: string;
       if (isBotMessage) {
-        senderName = ASSISTANT_NAME;
+        // Multi-agent: identify which agent sent this bot message
+        const resolvedName = this.opts.resolveBotSenderName?.(
+          msg.bot_id || '',
+          (msg as any).username,
+        );
+        senderName = resolvedName || ASSISTANT_NAME;
       } else {
         senderName =
           (msg.user ? await this.resolveUserName(msg.user) : undefined) ||
@@ -465,7 +472,8 @@ export class SlackChannel implements Channel {
       const postOpts: Record<string, string> = {};
       if (opts?.displayName) postOpts.username = opts.displayName;
       if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
-      else if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      else if (opts?.displayEmoji)
+        postOpts.icon_emoji = `:${opts.displayEmoji}:`;
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       // Slack limits messages to ~4000 characters; split if needed
@@ -516,7 +524,8 @@ export class SlackChannel implements Channel {
       const postOpts: Record<string, string> = {};
       if (opts?.displayName) postOpts.username = opts.displayName;
       if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
-      else if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      else if (opts?.displayEmoji)
+        postOpts.icon_emoji = `:${opts.displayEmoji}:`;
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       await this.app.client.chat.postMessage({
@@ -541,7 +550,8 @@ export class SlackChannel implements Channel {
       const postOpts: Record<string, string> = {};
       if (opts?.displayName) postOpts.username = opts.displayName;
       if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
-      else if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      else if (opts?.displayEmoji)
+        postOpts.icon_emoji = `:${opts.displayEmoji}:`;
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       await this.app.client.chat.postMessage({
@@ -626,6 +636,20 @@ export class SlackChannel implements Channel {
     }
   }
 
+  async addReaction(jid: string, messageTs: string, emoji: string): Promise<void> {
+    const { channelId } = parseSlackJid(jid);
+    try {
+      await this.app.client.reactions.add({
+        channel: channelId,
+        timestamp: messageTs,
+        name: emoji.replace(/:/g, ''),
+      });
+      logger.debug({ jid, messageTs, emoji }, 'Reaction added');
+    } catch (err) {
+      logger.warn({ jid, messageTs, emoji, err }, 'Failed to add reaction');
+    }
+  }
+
   /**
    * Sync channel metadata from Slack.
    * Fetches channels the bot is a member of and stores their names in the DB.
@@ -690,7 +714,8 @@ export class SlackChannel implements Channel {
         const { channelId } = parseSlackJid(item.jid);
         const postOpts: Record<string, string> = {};
         if (item.opts?.displayName) postOpts.username = item.opts.displayName;
-        if (item.opts?.displayIconUrl) postOpts.icon_url = item.opts.displayIconUrl;
+        if (item.opts?.displayIconUrl)
+          postOpts.icon_url = item.opts.displayIconUrl;
         else if (item.opts?.displayEmoji)
           postOpts.icon_emoji = `:${item.opts.displayEmoji}:`;
         if (item.opts?.threadTs) postOpts.thread_ts = item.opts.threadTs;

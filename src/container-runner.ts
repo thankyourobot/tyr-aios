@@ -62,6 +62,7 @@ export interface ContainerOutput {
     cacheReadTokens: number;
     contextWindow: number;
   };
+  model?: string;
   compaction?: {
     preTokens: number;
     trigger: 'manual' | 'auto';

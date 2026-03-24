@@ -48,6 +48,7 @@ interface ContainerOutput {
     cacheReadTokens: number;
     contextWindow: number;
   };
+  model?: string;
   compaction?: {
     preTokens: number;
     trigger: 'manual' | 'auto';
@@ -391,6 +392,8 @@ function formatToolUseSummary(
       fbPath = `agent-workspaces/${groupFolder}/${filePath.replace(`/workspace/group/`, ``)}`;
     } else if (filePath.startsWith(`/workspace/project/container/skills/`)) {
       fbPath = `global-skills/${filePath.replace(`/workspace/project/container/skills/`, ``)}`;
+    } else if (filePath.startsWith(`/home/node/.claude/skills/`)) {
+      fbPath = `global-skills/${filePath.replace(`/home/node/.claude/skills/`, ``)}`;
     }
     if (fbPath) {
       summary += ` — <${filebrowserBaseUrl}/files/${fbPath}|view>`;
@@ -474,6 +477,7 @@ async function runQuery(
       ...(containerInput.thinking ? { maxThinkingTokens: containerInput.maxThinkingTokens || 10000 } : {}),
       ...(containerInput.thinking ? { includePartialMessages: true } : {}),
       cwd: '/workspace/group',
+      model: 'claude-opus-4-6',
       betas: ['context-1m-2025-08-07'],
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
@@ -613,12 +617,14 @@ async function runQuery(
           lastContextUsage.contextWindow = firstModel.contextWindow;
         }
       }
+      const modelName = modelUsage ? Object.keys(modelUsage)[0] : undefined;
       log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
       writeOutput({
         status: 'success',
         result: textResult || null,
         newSessionId,
         lastAssistantUuid,
+        model: modelName,
         contextUsage: lastContextUsage,
         compaction: lastCompaction,
       });

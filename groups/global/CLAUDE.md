@@ -68,6 +68,26 @@ Inspect the schema with `sqlite3 /workspace/extra/shared/tasks.db ".schema"`.
 
 Status values: `open`, `active`, `blocked`, `done`
 
+## Inter-Agent Communication
+
+Agents communicate with each other via Slack @mentions, the same way human employees do.
+
+**How to mention another agent:** @mention them using Slack's native mention (for directors) or write `@{AgentName}` in your message. For example:
+- `@Sherlock, can you review this strategy?`
+- `@Tom, please deploy the latest changes.`
+
+**When you're mentioned:** You'll see the message in your conversation context. Apply the same judgment as with human messages — respond when you can add value, stay silent otherwise.
+
+**Thread participation:** Once you're @mentioned in a thread (or you started it), you'll receive all future messages in that thread. You don't need to be @mentioned again.
+
+**Emoji reactions:** Use reactions to acknowledge messages without cluttering the conversation. Write a JSON file to `/workspace/ipc/messages/` with:
+```json
+{ "type": "reaction", "chatJid": "slack:CHANNEL_ID", "messageTs": "MESSAGE_TS", "emoji": "eyes" }
+```
+Prefer reactions over "Got it" or "Acknowledged" messages.
+
+**Anti-loop rule:** When responding to another agent, do NOT @mention them back unless you need them to take a specific new action. Your response goes to the thread — they'll see it. Mentioning them would trigger re-processing unnecessarily.
+
 ## Scheduled Tasks
 
 Use the `schedule_task` MCP tool to create recurring or one-shot tasks. You can schedule tasks for yourself; only Robot can schedule tasks for other agents. Your response IS the message — NanoClaw posts it to the channel directly, so do not use `send_message` separately.

@@ -29,10 +29,12 @@ import {
 import {
   getAllChats,
   getAllRegisteredGroups,
+  getAllRegisteredGroupsMulti,
   getAllSessions,
   getAllTasks,
   getMessageById,
   getMessagesSince,
+  getMessagesSinceIncludingBots,
   getNewMessages,
   getRegisteredGroup,
   getRouterState,
@@ -46,10 +48,23 @@ import {
   setThreadSession,
   storeResponseUuid,
   getThreadResponseUuids,
+  getThreadMembers,
+  addThreadMember,
+  recordBotTrigger,
+  countBotTriggers,
+  cleanupOldThreadData,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { readEnvFile } from './env.js';
-import { buildThreadJid, getParentJid, isSyntheticThreadJid } from './jid.js';
+import {
+  buildThreadJid,
+  buildGroupJid,
+  getParentJid,
+  getBaseJid,
+  getGroupFolder,
+  isSyntheticThreadJid,
+  parseSlackJid,
+} from './jid.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
@@ -77,6 +92,11 @@ let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
 let messageLoopRunning = false;
+
+// Multi-agent index maps
+let groupsByJid: Map<string, RegisteredGroup[]> = new Map();
+let groupsByFolder: Map<string, { jid: string; group: RegisteredGroup }> = new Map();
+let groupsByBotUserId: Map<string, RegisteredGroup> = new Map();
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
@@ -312,6 +332,38 @@ async function handleCommand(
     return true;
   }
 
+  // /who command — list agents in the current channel
+  if (text === '*who') {
+    const channelJid = getParentJid(chatJid) || chatJid;
+    const channelGroups = groupsByJid.get(channelJid);
+    const displayOpts: SendMessageOpts = {
+      displayName: group?.displayName,
+      displayEmoji: group?.displayEmoji,
+      displayIconUrl: group?.displayIconUrl,
+      threadTs: msg.threadTs,
+    };
+    if (!channelGroups || channelGroups.length <= 1) {
+      const name = group?.assistantName || group?.displayName || group?.name || 'Unknown';
+      await channel.sendMessage(
+        chatJid,
+        `Agents in this channel:\n  ${name} (director)`,
+        displayOpts,
+      );
+    } else {
+      const lines = channelGroups.map((g) => {
+        const name = g.assistantName || g.displayName || g.name;
+        const role = g.channelRole || 'director';
+        return `  ${name} (${role})`;
+      });
+      await channel.sendMessage(
+        chatJid,
+        `Agents in this channel:\n${lines.join('\n')}`,
+        displayOpts,
+      );
+    }
+    return true;
+  }
+
   return false;
 }
 
@@ -327,10 +379,16 @@ function getMainGroup(): { jid: string; group: RegisteredGroup } | null {
 }
 
 /**
- * Resolve a group from a JID, handling synthetic thread JIDs.
- * Tries direct lookup, then parent channel JID, then main group fallback.
+ * Resolve a group from a JID, handling synthetic thread JIDs and group-qualified JIDs.
+ * Tries group folder from :g: suffix, then direct lookup, then parent channel JID, then main group fallback.
  */
 function resolveGroup(chatJid: string): RegisteredGroup | null {
+  // Group-qualified JID: extract folder directly
+  const gf = getGroupFolder(chatJid);
+  if (gf) {
+    const entry = groupsByFolder.get(gf);
+    return entry?.group ?? null;
+  }
   let group = registeredGroups[chatJid];
   if (group) return group;
   const parentJid = getParentJid(chatJid);
@@ -338,6 +396,266 @@ function resolveGroup(chatJid: string): RegisteredGroup | null {
   if (group) return group;
   const main = getMainGroup();
   return main?.group ?? null;
+}
+
+/**
+ * Rebuild the multi-agent index maps from the database.
+ * Called on startup and after group registration changes.
+ */
+function rebuildGroupIndexes(): void {
+  groupsByJid.clear();
+  groupsByFolder.clear();
+  groupsByBotUserId.clear();
+  const allGroups = getAllRegisteredGroupsMulti();
+  for (const [jid, groups] of allGroups) {
+    groupsByJid.set(jid, groups);
+    for (const g of groups) {
+      groupsByFolder.set(g.folder, { jid, group: g });
+      if (g.botUserId) {
+        groupsByBotUserId.set(g.botUserId, g);
+      }
+    }
+    // registeredGroups: pick director, fallback to first
+    const director = groups.find((g) => g.channelRole === 'director') || groups[0];
+    registeredGroups[jid] = director;
+  }
+}
+
+// --- Multi-agent @mention dispatch ---
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Parse @mentions from message text.
+ * For directors with own Slack apps: check for native <@U_BOT_ID> mentions.
+ * For technicians/fallback: check for text-based @Name mentions.
+ */
+function parseMentions(content: string, channelGroups: RegisteredGroup[]): string[] {
+  const mentioned: string[] = [];
+  // Strip code blocks to avoid false positives
+  const stripped = content.replace(/```[\s\S]*?```/g, '').replace(/`[^`]+`/g, '');
+
+  for (const group of channelGroups) {
+    // Director with own app: check for native Slack mention <@U_BOT_ID>
+    if (group.botUserId) {
+      if (stripped.includes(`<@${group.botUserId}>`)) {
+        mentioned.push(group.folder);
+        continue;
+      }
+    }
+    // Fallback: text-based @Name mention (for technicians or legacy)
+    const name = group.assistantName || group.displayName;
+    if (!name) continue;
+    const pattern = new RegExp(`(?:^|\\s)@${escapeRegex(name)}\\b`, 'i');
+    if (pattern.test(stripped)) {
+      mentioned.push(group.folder);
+    }
+  }
+  return mentioned;
+}
+
+/**
+ * Identify which agent sent a bot message.
+ * Uses bot_id lookup against known agent bot user IDs, falls back to sender_name.
+ */
+function resolveSenderFolder(msg: NewMessage): string | null {
+  // Check sender against known agent bot user IDs
+  if (msg.sender) {
+    const group = groupsByBotUserId.get(msg.sender);
+    if (group) return group.folder;
+  }
+  // Fallback: match sender_name against known agents
+  if (msg.sender_name) {
+    for (const [folder, entry] of groupsByFolder) {
+      const name = entry.group.assistantName || entry.group.displayName;
+      if (name && name.toLowerCase() === msg.sender_name.toLowerCase()) {
+        return folder;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Determine which groups should process a message in a multi-group channel.
+ * Handles @mention dispatch, thread membership, director defaults, and anti-loop.
+ */
+function resolveTargetGroups(
+  channelJid: string,
+  threadTs: string | undefined,
+  msg: NewMessage,
+): RegisteredGroup[] {
+  const channelGroups = groupsByJid.get(channelJid);
+
+  // Single-group channel: existing behavior (always that group)
+  if (!channelGroups || channelGroups.length <= 1) {
+    const group = resolveGroup(channelJid);
+    return group ? [group] : [];
+  }
+
+  // Multi-group channel: dispatch based on mentions and membership
+  const targets: RegisteredGroup[] = [];
+  const isBotMsg = msg.is_bot_message === true;
+
+  // Parse @mentions from message text
+  const mentionedFolders = parseMentions(msg.content, channelGroups);
+
+  // Determine sender's folder (for bot messages, to prevent self-triggering)
+  const senderFolder = isBotMsg ? resolveSenderFolder(msg) : null;
+
+  if (threadTs) {
+    // Thread message: check membership + mentions
+    const members = getThreadMembers(channelJid, threadTs);
+
+    if (isBotMsg) {
+      // Bot message: ONLY explicitly @mentioned agents (that aren't the sender)
+      for (const folder of mentionedFolders) {
+        if (folder !== senderFolder) {
+          const group = channelGroups.find((g) => g.folder === folder);
+          if (group) {
+            // Rate limit: max 3 bot-triggered invocations per 5 minutes per thread
+            if (countBotTriggers(channelJid, threadTs, folder, 5) >= 3) {
+              logger.warn(
+                { channelJid, threadTs, folder },
+                'Bot trigger rate limit reached, skipping',
+              );
+              continue;
+            }
+            addThreadMember(channelJid, threadTs, folder);
+            recordBotTrigger(channelJid, threadTs, folder);
+            targets.push(group);
+          }
+        }
+      }
+    } else {
+      // Human message: all thread members + newly @mentioned + directors (selective)
+      for (const folder of members) {
+        const group = channelGroups.find((g) => g.folder === folder);
+        if (group) targets.push(group);
+      }
+      // Add newly mentioned agents that aren't already members
+      for (const folder of mentionedFolders) {
+        if (!members.includes(folder)) {
+          addThreadMember(channelJid, threadTs, folder);
+          const group = channelGroups.find((g) => g.folder === folder);
+          if (group) targets.push(group);
+        }
+      }
+      // Directors: auto-join only if no @mentions, or if they're @mentioned
+      for (const group of channelGroups) {
+        if (group.channelRole === 'director' && !members.includes(group.folder)) {
+          const directorMentioned = mentionedFolders.includes(group.folder);
+          const noMentionsAtAll = mentionedFolders.length === 0;
+          if (directorMentioned || noMentionsAtAll) {
+            addThreadMember(channelJid, threadTs, group.folder);
+            if (!targets.find((t) => t.folder === group.folder)) {
+              targets.push(group);
+            }
+          }
+        }
+      }
+    }
+  } else {
+    // Channel-root message (new thread)
+    if (isBotMsg) {
+      // Bot message at root: only @mentioned agents (not the sender)
+      for (const folder of mentionedFolders) {
+        if (folder !== senderFolder) {
+          const group = channelGroups.find((g) => g.folder === folder);
+          if (group) targets.push(group);
+        }
+      }
+    } else {
+      // Human message at root: directors (unless message exclusively targets others) + @mentioned
+      const hasExplicitMentions = mentionedFolders.length > 0;
+      for (const group of channelGroups) {
+        if (group.channelRole === 'director') {
+          const directorMentioned = mentionedFolders.includes(group.folder);
+          if (!hasExplicitMentions || directorMentioned) {
+            targets.push(group);
+          }
+        }
+      }
+      // Add explicitly @mentioned non-directors
+      for (const folder of mentionedFolders) {
+        const group = channelGroups.find((g) => g.folder === folder);
+        if (group && !targets.find((t) => t.folder === folder)) {
+          targets.push(group);
+        }
+      }
+    }
+  }
+
+  return targets;
+}
+
+/**
+ * Check if a JID is a multi-group channel (more than 1 group registered).
+ */
+function isMultiGroupChannel(channelJid: string): boolean {
+  const groups = groupsByJid.get(channelJid);
+  return !!groups && groups.length > 1;
+}
+
+/**
+ * Dispatch a human message to target groups in a multi-group channel.
+ */
+function dispatchMessage(chatJid: string, msg: NewMessage): void {
+  const channelJid = getParentJid(chatJid) || chatJid;
+  const { threadTs } = parseSlackJid(chatJid);
+
+  if (!isMultiGroupChannel(channelJid)) {
+    // Single-group: existing behavior (IPC pipe or enqueue)
+    if (isSyntheticThreadJid(chatJid)) {
+      const formatted = formatMessages([msg], TIMEZONE);
+      if (!queue.sendMessage(chatJid, formatted)) {
+        queue.enqueueMessageCheck(chatJid);
+      } else {
+        lastAgentTimestamp[chatJid] = msg.timestamp;
+        saveState();
+      }
+    }
+    return;
+  }
+
+  // Multi-group channel: dispatch to target groups
+  const targets = resolveTargetGroups(channelJid, threadTs || msg.threadTs, msg);
+  for (const group of targets) {
+    const baseJid = threadTs
+      ? buildThreadJid(`slack:${parseSlackJid(channelJid).channelId}`, threadTs)
+      : channelJid;
+    const groupJid = buildGroupJid(baseJid, group.folder);
+    const formatted = formatMessages([msg], TIMEZONE);
+    if (!queue.sendMessage(groupJid, formatted)) {
+      queue.enqueueMessageCheck(groupJid);
+    } else {
+      lastAgentTimestamp[groupJid] = msg.timestamp;
+      saveState();
+    }
+  }
+}
+
+/**
+ * Dispatch a bot message that contains @mentions to target agents.
+ */
+function dispatchBotMessage(chatJid: string, msg: NewMessage): void {
+  const channelJid = getParentJid(chatJid) || chatJid;
+  const { threadTs } = parseSlackJid(chatJid);
+
+  if (!isMultiGroupChannel(channelJid)) return;
+
+  const targets = resolveTargetGroups(channelJid, threadTs || msg.threadTs, msg);
+  if (targets.length === 0) return;
+
+  for (const group of targets) {
+    const baseJid = threadTs
+      ? buildThreadJid(`slack:${parseSlackJid(channelJid).channelId}`, threadTs)
+      : channelJid;
+    const groupJid = buildGroupJid(baseJid, group.folder);
+    queue.enqueueMessageCheck(groupJid);
+  }
 }
 
 function loadState(): void {
@@ -351,6 +669,7 @@ function loadState(): void {
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
+  rebuildGroupIndexes();
   logger.info(
     { groupCount: Object.keys(registeredGroups).length },
     'State loaded',
@@ -376,6 +695,7 @@ function registerGroup(jid: string, group: RegisteredGroup): void {
 
   registeredGroups[jid] = group;
   setRegisteredGroup(jid, group);
+  rebuildGroupIndexes();
 
   // Create group folder
   fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
@@ -416,10 +736,20 @@ export function _setRegisteredGroups(
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  const group = resolveGroup(chatJid);
+  // Handle group-qualified JIDs from multi-agent dispatch
+  const groupFolder = getGroupFolder(chatJid);
+  const baseJid = getBaseJid(chatJid);
+
+  let group: RegisteredGroup | null;
+  if (groupFolder) {
+    const entry = groupsByFolder.get(groupFolder);
+    group = entry?.group ?? null;
+  } else {
+    group = resolveGroup(chatJid);
+  }
   if (!group) return true;
 
-  const channel = findChannel(channels, chatJid);
+  const channel = findChannel(channels, baseJid);
   if (!channel) {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
     return true;
@@ -427,12 +757,12 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(
-    chatJid,
-    sinceTimestamp,
-    ASSISTANT_NAME,
-  );
+  // Use baseJid for message retrieval (messages stored under base JID)
+  const sinceTimestamp = lastAgentTimestamp[chatJid] || lastAgentTimestamp[baseJid] || '';
+  // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation
+  const missedMessages = groupFolder
+    ? getMessagesSinceIncludingBots(baseJid, sinceTimestamp)
+    : getMessagesSince(baseJid, sinceTimestamp, ASSISTANT_NAME);
 
   if (missedMessages.length === 0) return true;
 
@@ -510,7 +840,9 @@ ${formatMessages([parentMsg], TIMEZONE)}
     }, IDLE_TIMEOUT);
   };
 
-  await channel.setTyping?.(chatJid, true);
+  // Use baseJid for typing indicators so they appear in the correct channel
+  const typingJid = groupFolder ? baseJid : chatJid;
+  await channel.setTyping?.(typingJid, true);
   let hadError = false;
   let outputSentToUser = false;
 
@@ -582,7 +914,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           });
           outputSentToUser = true;
           // Clear typing indicator after sending output (don't wait for container exit)
-          channel.setTyping?.(chatJid, false)?.catch(() => {});
+          channel.setTyping?.(typingJid, false)?.catch(() => {});
         }
 
         // Context window display (when verbose mode is enabled)
@@ -640,7 +972,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
     lastThreadTs !== lastMsg.id ? lastThreadTs : undefined,
   );
 
-  await channel.setTyping?.(chatJid, false);
+  await channel.setTyping?.(typingJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
@@ -914,6 +1246,17 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
+          // Multi-group channel: dispatch via resolveTargetGroups
+          if (isMultiGroupChannel(chatJid)) {
+            const lastGroupMsg = groupMessages[groupMessages.length - 1];
+            const targets = resolveTargetGroups(chatJid, lastGroupMsg.threadTs, lastGroupMsg);
+            for (const target of targets) {
+              const groupJid = buildGroupJid(chatJid, target.folder);
+              queue.enqueueMessageCheck(groupJid);
+            }
+            continue;
+          }
+
           let group = registeredGroups[chatJid];
           const isDm = !group;
 
@@ -1101,8 +1444,12 @@ async function main(): Promise<void> {
             .then((consumed) => {
               if (!consumed) {
                 storeMessage(msg);
-                if (isSyntheticThreadJid(chatJid)) {
-                  // Try IPC pipe to active container first, fall back to enqueue
+                // Multi-group dispatch for human messages
+                const channelJid = getParentJid(chatJid) || chatJid;
+                if (isMultiGroupChannel(channelJid)) {
+                  dispatchMessage(chatJid, msg);
+                } else if (isSyntheticThreadJid(chatJid)) {
+                  // Single-group: existing IPC pipe behavior
                   const formatted = formatMessages([msg], TIMEZONE);
                   if (!queue.sendMessage(chatJid, formatted)) {
                     queue.enqueueMessageCheck(chatJid);
@@ -1123,6 +1470,14 @@ async function main(): Promise<void> {
           return;
         }
       }
+
+      // Bot message: store and check for @mentions to trigger cross-agent communication
+      if (msg.is_bot_message && !msg.is_from_me) {
+        storeMessage(msg);
+        dispatchBotMessage(chatJid, msg);
+        return;
+      }
+
       storeMessage(msg);
     },
     onChatMetadata: (
@@ -1133,6 +1488,21 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    resolveBotSenderName: (botId: string, username?: string): string | undefined => {
+      // Look up bot_id against known agent bot user IDs
+      if (botId) {
+        const group = groupsByBotUserId.get(botId);
+        if (group) return group.assistantName || group.displayName;
+      }
+      // Fallback: try username (for technicians sharing an app)
+      if (username) {
+        for (const [, entry] of groupsByFolder) {
+          const name = entry.group.assistantName || entry.group.displayName;
+          if (name && name.toLowerCase() === username.toLowerCase()) return name;
+        }
+      }
+      return undefined;
+    },
     onRewind: rewindSession,
   };
 
@@ -1192,9 +1562,32 @@ async function main(): Promise<void> {
     getAvailableGroups,
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
+    isGroupInChannel: (chatJid: string, groupFolder: string): boolean => {
+      const channelJid = getParentJid(chatJid) || chatJid;
+      const groups = groupsByJid.get(channelJid);
+      return !!groups?.some((g) => g.folder === groupFolder);
+    },
+    addReaction: async (jid: string, messageTs: string, emoji: string) => {
+      const channel = findChannel(channels, jid);
+      if (channel?.addReaction) {
+        await channel.addReaction(jid, messageTs, emoji);
+      }
+    },
   });
   queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
+
+  // Daily cleanup of old thread membership data (every 24 hours)
+  setInterval(() => {
+    try {
+      cleanupOldThreadData(30);
+    } catch (err) {
+      logger.warn({ err }, 'Thread data cleanup error');
+    }
+  }, 24 * 60 * 60 * 1000);
+  // Run once at startup
+  cleanupOldThreadData(30);
+
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);

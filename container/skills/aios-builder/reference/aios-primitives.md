@@ -103,19 +103,39 @@ Messages flow: Slack event → JID lookup (`slack:{channel_id}`) → registered 
 - **Threading:** Replies go in-thread by default. Agents can post top-level by wrapping output in `<channel>` tags.
 - **Silent mode:** Agents wrap reasoning in `<internal>` tags to stay silent (tags stripped, empty output = no Slack message).
 - **Trigger-free:** Agents see every message in their channels and decide when to respond.
-- **Bot messages are filtered:** Agents only process human messages. Bot messages (including those from other agents) are stored for conversation history but never trigger agent processing.
+- **Bot messages with @mentions:** Bot messages that @mention another agent trigger processing for that agent. Bot messages without @mentions are stored but not processed. This enables directed agent-to-agent communication while preventing loops.
 
-### Agent ↔ Agent: Shared Task Database
+### Agent ↔ Agent: @Mention Routing
 
-Cross-agent coordination happens exclusively through the shared `tasks.db`. Agents cannot trigger each other directly — there is no agent-to-agent messaging. When one agent needs another to do something, it creates a task in `tasks.db`. The target agent picks it up on its next invocation.
+Agents communicate via Slack @mentions. Director agents have their own Slack apps with dedicated bot user IDs, enabling native `<@U_BOT_ID>` mentions with autocomplete.
 
-This is by design: container isolation means agents run in separate ephemeral processes with no shared memory or direct communication channel.
+**How it works:**
+1. Agent A posts a message containing `@AgentB` (or `<@U_AGENT_B_BOT_ID>`)
+2. NanoClaw's dispatch layer detects the @mention and routes the message to Agent B
+3. Agent B processes the message and responds in the thread
+4. Agent A sees the response but does NOT re-process (no @mention = no trigger for bot messages)
+
+**Thread membership:** Once an agent is @mentioned in a thread, they receive all future human messages in that thread. Bot messages only trigger processing for explicitly @mentioned agents (prevents loops).
+
+**Channel roles:** Agents can be `director` (default responder) or `member` (requires @mention). Multiple agents can share a channel.
+
+### Shared Task Database
+
+The shared `tasks.db` remains available for asynchronous coordination when immediate attention isn't needed.
+
+### Emoji Reactions
+
+Agents can react to messages with emoji via IPC:
+```json
+{ "type": "reaction", "chatJid": "slack:CHANNEL_ID", "messageTs": "MESSAGE_TS", "emoji": "eyes" }
+```
+Write to `/workspace/ipc/messages/`. Prefer reactions over "Got it" text responses.
 
 ### MCP Tools
 
-Agents have access to NanoClaw MCP tools that bridge the container isolation boundary. These communicate with the NanoClaw host process to perform actions the container can't do directly (post to Slack, create scheduled tasks). Available tools are discoverable at runtime.
+Agents have access to NanoClaw MCP tools that bridge the container isolation boundary. These communicate with the NanoClaw host process to perform actions the container can't do directly (post to Slack, create scheduled tasks, add reactions). Available tools are discoverable at runtime.
 
-**Scope:** Non-main agents can only send messages to their own channel. The main group can send to any channel. No agent can trigger another agent via MCP — bot messages are filtered from the processing pipeline.
+**Scope:** Agents can send messages and reactions to channels where they are registered. The main group can send to any channel.
 
 ### IPC
 
