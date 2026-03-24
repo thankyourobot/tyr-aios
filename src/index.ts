@@ -842,7 +842,11 @@ ${formatMessages([parentMsg], TIMEZONE)}
   saveState();
 
   logger.info(
-    { group: group.name, folder: group.folder, messageCount: missedMessages.length },
+    {
+      group: group.name,
+      folder: group.folder,
+      messageCount: missedMessages.length,
+    },
     'Processing messages',
   );
 
@@ -1398,6 +1402,26 @@ async function startMessageLoop(): Promise<void> {
  */
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
+    // Multi-group channels: dispatch via resolveTargetGroups to avoid
+    // routing all pending messages to just the director/first group
+    if (isMultiGroupChannel(chatJid)) {
+      const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
+      const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+      if (pending.length > 0) {
+        const lastMsg = pending[pending.length - 1];
+        const targets = resolveTargetGroups(chatJid, lastMsg.threadTs, lastMsg);
+        for (const target of targets) {
+          const groupJid = buildGroupJid(chatJid, target.folder);
+          logger.info(
+            { group: target.name, folder: target.folder, pendingCount: pending.length },
+            'Recovery: found unprocessed multi-group messages',
+          );
+          queue.enqueueMessageCheck(groupJid);
+        }
+      }
+      continue;
+    }
+
     const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
     const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
     if (pending.length > 0) {
@@ -1414,6 +1438,8 @@ function recoverPendingMessages(): void {
   if (mainGroup) {
     for (const [chatJid, cursor] of Object.entries(lastAgentTimestamp)) {
       if (registeredGroups[chatJid]) continue;
+      // Skip group-qualified JIDs — they're handled by the multi-group recovery above
+      if (getGroupFolder(chatJid)) continue;
       const pending = getMessagesSince(chatJid, cursor, ASSISTANT_NAME);
       if (pending.length > 0) {
         const label = isSyntheticThreadJid(chatJid) ? 'thread' : 'DM';
