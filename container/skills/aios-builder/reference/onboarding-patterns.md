@@ -32,6 +32,8 @@ Does the agent know what it's here to accomplish?
 - Identify what success looks like — a definition of done, a metric, or a clear outcome.
 - If the prime directive is missing or ambiguous, resolve it with the chain of command before proceeding. Guessing here is expensive.
 
+**Director agents** — those responsible for improving a function over time, not just executing within it — should build a gap analysis as part of establishing clarity. Knowing the directive is not the same as knowing what excellent execution of that directive looks like. The gap analysis is how a director agent maps that territory and grounds Access and Rhythms decisions in something real. See `reference/gap-analysis.md`.
+
 ### 3. Access
 
 What tools, skills, and resources does this agent need to do its job?
