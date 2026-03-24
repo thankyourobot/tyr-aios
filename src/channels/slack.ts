@@ -318,7 +318,7 @@ export class SlackChannel implements Channel {
 
     // --- Slash command handlers ---
     const slashCommands = [
-      'aios-stop',
+      'stop',
       'verbose',
       'thinking',
       'rewind',
@@ -343,9 +343,9 @@ export class SlackChannel implements Channel {
               channel: command.channel_id,
               user: command.user_id,
               text: response,
-              ...(command as any).thread_ts
+              ...((command as any).thread_ts
                 ? { thread_ts: (command as any).thread_ts }
-                : {},
+                : {}),
             });
           }
         } catch (err) {

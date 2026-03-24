@@ -1544,7 +1544,7 @@ async function main(): Promise<void> {
       const group = resolveGroup(channelJid);
 
       switch (params.command) {
-        case 'aios-stop': {
+        case 'stop': {
           const stopped = await queue.stopGroup(channelJid);
           return stopped
             ? `Stopped ${group?.name || 'agent'}`
