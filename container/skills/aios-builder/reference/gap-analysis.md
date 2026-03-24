@@ -38,6 +38,8 @@ A gap analysis isn't a one-time deliverable. Three loops keep it alive and usefu
 
 **Domain research** gathers new information about the domain on a recurring cadence — what practitioners are doing, what's emerging, what's working. This is the outward signal: what does the world know about this function that the agent should incorporate? The cadence is domain-specific. Fast-moving domains (growth, product) warrant more frequent research than slower-moving ones.
 
+When researching, bias toward AI-native approaches — not just how human teams have traditionally structured this function, but how an AI-native organization might do it differently. AI agents are technicians: they execute consistently, scale without friction, run continuously. Humans are orchestrators: they provide judgment, taste, real-world access, and verification. A high-functioning AI-native domain is designed around this division — not just automating what humans used to do, but rethinking what the function looks like when execution is cheap and judgment is the scarce resource.
+
 **Execution signal** tracks how the current sub-functions are actually performing. What's working, what isn't, what gaps have closed, what new ones have emerged. This is the inward signal: how does current reality compare to the map?
 
 **Meta-loop synthesis** periodically combines both signals and asks: should anything change in the map itself? New information becomes a potential revision to what "good" looks like. This is slower and more deliberate than the research loop — not every data point justifies changing direction. Revisions to the gap analysis represent changes in theory and should be driven by patterns, not individual observations.
@@ -51,6 +53,12 @@ Complex systems that work evolved from simple systems that worked. The gap analy
 A v1 should cover the obvious sub-functions and no more. An over-specified map produces too many open gaps to act on, creates a false sense of completeness, and is hard to update. The meta-loop is where complexity gets earned — each revision is an opportunity to ask whether more specificity is actually needed, or whether it's just making things prettier.
 
 The gap analysis is a tool for action, not a planning artifact. If it's generating insight that drives work, it's working. If it's growing elaborate but not changing what the agent does, it's become overhead.
+
+## Going Deeper: Logic Models
+
+As sub-functions mature, a logic model becomes a useful next layer. Where the gap analysis maps *what* a domain needs to produce, a logic model maps *how* a specific sub-function produces it — tracing resources and activities through outputs to short, mid, and long-term outcomes.
+
+Logic models aren't for v1. Apply them when a sub-function is stable enough that the question shifts from "should this exist?" to "is this working as intended?" See `reference/logic-model.md`.
 
 ## Relationship to Onboarding
 

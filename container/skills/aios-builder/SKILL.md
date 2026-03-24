@@ -40,9 +40,11 @@ Load on demand — when the agent needs specific guidance during work.
 | Multi-Tenant Example | `reference/multi-tenant-example.md` | Before building a multi-tenant skill — annotated case study of the three-tier pattern |
 | Onboarding Patterns | `reference/onboarding-patterns.md` | Before designing an agent's onboarding path or first-launch behavior |
 | Gap Analysis | `reference/gap-analysis.md` | When building a director agent or designing its onboarding — how agents map their domain and stay proactive |
+| Logic Model | `reference/logic-model.md` | When a sub-function has matured enough to map its theory of change — resources → activities → outputs → outcomes |
 
 ## Templates
 
 | Template | File | Use When |
 |----------|------|----------|
 | Tech Spec | `templates/tech-spec-template.md` | Creating a workpaper for a medium+ complexity build |
+| Domain Model | `templates/domain-model-template.md` | Creating the domain-model.md register for a director agent's gap analysis |
