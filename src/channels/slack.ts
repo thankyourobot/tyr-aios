@@ -582,14 +582,17 @@ export class SlackChannel implements Channel {
     ];
     const fallback = `${prefix}${text}`;
     try {
+      const client = this.getClient(opts?.botToken);
       const postOpts: Record<string, string> = {};
-      if (opts?.displayName) postOpts.username = opts.displayName;
-      if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
-      else if (opts?.displayEmoji)
-        postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (!opts?.botToken) {
+        if (opts?.displayName) postOpts.username = opts.displayName;
+        if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
+        else if (opts?.displayEmoji)
+          postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      }
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
-      await this.app.client.chat.postMessage({
+      await client.chat.postMessage({
         channel: channelId,
         text: fallback,
         blocks: blocks as any,

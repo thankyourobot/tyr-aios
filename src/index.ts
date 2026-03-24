@@ -842,9 +842,15 @@ ${formatMessages([parentMsg], TIMEZONE)}
   saveState();
 
   logger.info(
-    { group: group.name, messageCount: missedMessages.length },
+    { group: group.name, folder: group.folder, messageCount: missedMessages.length },
     'Processing messages',
   );
+
+  // For multi-group channels: ensure this agent is a thread member so follow-ups route correctly
+  if (groupFolder && lastThreadTs) {
+    const channelJid = getParentJid(baseJid) || baseJid;
+    addThreadMember(channelJid, lastThreadTs, groupFolder);
+  }
 
   // Track idle timer for closing stdin when agent is idle
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
@@ -885,6 +891,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           .sendVerboseMessage?.(chatJid, result.result, 'verbose', {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
+            botToken: group.botToken,
             threadTs: lastThreadTs,
           })
           ?.catch((err) => logger.warn({ err }, 'Verbose message failed'));
@@ -895,6 +902,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           .sendVerboseMessage?.(chatJid, result.result, 'thinking', {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
+            botToken: group.botToken,
             threadTs: lastThreadTs,
           })
           ?.catch((err) => logger.warn({ err }, 'Thinking message failed'));
