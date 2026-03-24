@@ -1257,7 +1257,9 @@ async function startMessageLoop(): Promise<void> {
           (c) =>
             !c.is_group &&
             c.jid !== '__group_sync__' &&
-            !registeredGroups[c.jid],
+            !registeredGroups[c.jid] &&
+            !isSyntheticThreadJid(c.jid) &&
+            !getGroupFolder(c.jid),
         )
         .map((c) => c.jid);
       const jids = [...registeredJids, ...dmJids];
@@ -1413,7 +1415,11 @@ function recoverPendingMessages(): void {
         for (const target of targets) {
           const groupJid = buildGroupJid(chatJid, target.folder);
           logger.info(
-            { group: target.name, folder: target.folder, pendingCount: pending.length },
+            {
+              group: target.name,
+              folder: target.folder,
+              pendingCount: pending.length,
+            },
             'Recovery: found unprocessed multi-group messages',
           );
           queue.enqueueMessageCheck(groupJid);
