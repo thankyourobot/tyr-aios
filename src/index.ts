@@ -412,7 +412,10 @@ function rebuildGroupIndexes(): void {
   for (const [jid, groups] of allGroups) {
     groupsByJid.set(jid, groups);
     for (const g of groups) {
-      groupsByFolder.set(g.folder, { jid, group: g });
+      // Only store primary registration per folder — first one wins (directors before members)
+      if (!groupsByFolder.has(g.folder)) {
+        groupsByFolder.set(g.folder, { jid, group: g });
+      }
       if (g.botUserId) {
         groupsByBotUserId.set(g.botUserId, g);
       }
@@ -761,8 +764,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   let group: RegisteredGroup | null;
   if (groupFolder) {
-    const entry = groupsByFolder.get(groupFolder);
-    group = entry?.group ?? null;
+    // Prefer channel-specific registration (has correct settings for this channel)
+    const channelJid = getParentJid(baseJid) || baseJid;
+    const channelGroups = groupsByJid.get(channelJid);
+    const match = channelGroups?.find((g) => g.folder === groupFolder);
+    group = match ?? groupsByFolder.get(groupFolder)?.group ?? null;
   } else {
     group = resolveGroup(chatJid);
   }
