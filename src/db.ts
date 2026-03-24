@@ -208,9 +208,12 @@ function createSchema(database: Database.Database): void {
     /* column already exists */
   }
   try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN bot_user_id TEXT`,
-    );
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_user_id TEXT`);
+  } catch {
+    /* column already exists */
+  }
+  try {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_token TEXT`);
   } catch {
     /* column already exists */
   }
@@ -272,7 +275,9 @@ function createSchema(database: Database.Database): void {
  */
 function migrateRegisteredGroupsPK(database: Database.Database): void {
   // Check if migration is needed by inspecting the table schema
-  const tableInfo = database.prepare(`PRAGMA table_info(registered_groups)`).all() as Array<{
+  const tableInfo = database
+    .prepare(`PRAGMA table_info(registered_groups)`)
+    .all() as Array<{
     name: string;
     pk: number;
   }>;
@@ -298,6 +303,7 @@ function migrateRegisteredGroupsPK(database: Database.Database): void {
         thinking_default INTEGER DEFAULT 0,
         channel_role TEXT DEFAULT 'director',
         bot_user_id TEXT,
+        bot_token TEXT,
         PRIMARY KEY (jid, folder)
       );
       INSERT INTO registered_groups_new
@@ -754,9 +760,12 @@ interface RegisteredGroupRow {
   thinking_default: number | null;
   channel_role: string | null;
   bot_user_id: string | null;
+  bot_token: string | null;
 }
 
-function rowToRegisteredGroup(row: RegisteredGroupRow): RegisteredGroup & { jid: string } {
+function rowToRegisteredGroup(
+  row: RegisteredGroupRow,
+): RegisteredGroup & { jid: string } {
   return {
     jid: row.jid,
     name: row.name,
@@ -777,6 +786,7 @@ function rowToRegisteredGroup(row: RegisteredGroupRow): RegisteredGroup & { jid:
     thinkingDefault: row.thinking_default === 1 ? true : undefined,
     channelRole: (row.channel_role as 'director' | 'member') ?? 'director',
     botUserId: row.bot_user_id ?? undefined,
+    botToken: row.bot_token ?? undefined,
   };
 }
 
@@ -785,7 +795,9 @@ export function getRegisteredGroup(
 ): (RegisteredGroup & { jid: string }) | undefined {
   // With composite PK, a jid may have multiple rows — return the director (or first)
   const rows = db
-    .prepare('SELECT * FROM registered_groups WHERE jid = ? ORDER BY channel_role')
+    .prepare(
+      'SELECT * FROM registered_groups WHERE jid = ? ORDER BY channel_role',
+    )
     .all(jid) as RegisteredGroupRow[];
   if (rows.length === 0) return undefined;
   const row = rows.find((r) => r.channel_role === 'director') || rows[0];
@@ -804,8 +816,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, folder, name, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, display_icon_url, assistant_name, verbose_default, thinking_default, channel_role, bot_user_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, folder, name, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, display_icon_url, assistant_name, verbose_default, thinking_default, channel_role, bot_user_id, bot_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.folder,
@@ -823,6 +835,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.thinkingDefault ? 1 : 0,
     group.channelRole ?? 'director',
     group.botUserId ?? null,
+    group.botToken ?? null,
   );
 }
 
@@ -830,7 +843,9 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
  * Get all registered groups. Backward-compatible: returns one group per JID (director preferred).
  */
 export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
-  const rows = db.prepare('SELECT * FROM registered_groups ORDER BY channel_role').all() as RegisteredGroupRow[];
+  const rows = db
+    .prepare('SELECT * FROM registered_groups ORDER BY channel_role')
+    .all() as RegisteredGroupRow[];
   const result: Record<string, RegisteredGroup> = {};
   for (const row of rows) {
     if (!isValidGroupFolder(row.folder)) {
@@ -852,8 +867,13 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
  * Get all registered groups with multi-group support.
  * Returns all groups per JID, not just the director.
  */
-export function getAllRegisteredGroupsMulti(): Map<string, (RegisteredGroup & { jid: string })[]> {
-  const rows = db.prepare('SELECT * FROM registered_groups ORDER BY channel_role').all() as RegisteredGroupRow[];
+export function getAllRegisteredGroupsMulti(): Map<
+  string,
+  (RegisteredGroup & { jid: string })[]
+> {
+  const rows = db
+    .prepare('SELECT * FROM registered_groups ORDER BY channel_role')
+    .all() as RegisteredGroupRow[];
   const result = new Map<string, (RegisteredGroup & { jid: string })[]>();
   for (const row of rows) {
     if (!isValidGroupFolder(row.folder)) {
@@ -877,7 +897,9 @@ export function getAllRegisteredGroupsMulti(): Map<string, (RegisteredGroup & { 
 /**
  * Get a specific group by its folder name.
  */
-export function getGroupByFolder(folder: string): (RegisteredGroup & { jid: string }) | undefined {
+export function getGroupByFolder(
+  folder: string,
+): (RegisteredGroup & { jid: string }) | undefined {
   const row = db
     .prepare('SELECT * FROM registered_groups WHERE folder = ? LIMIT 1')
     .get(folder) as RegisteredGroupRow | undefined;
@@ -998,28 +1020,47 @@ export function getThreadMessages(
 
 // --- Thread membership for multi-agent @mention routing ---
 
-export function getThreadMembers(channelJid: string, threadTs: string): string[] {
+export function getThreadMembers(
+  channelJid: string,
+  threadTs: string,
+): string[] {
   const rows = db
-    .prepare('SELECT group_folder FROM thread_members WHERE channel_jid = ? AND thread_ts = ?')
+    .prepare(
+      'SELECT group_folder FROM thread_members WHERE channel_jid = ? AND thread_ts = ?',
+    )
     .all(channelJid, threadTs) as Array<{ group_folder: string }>;
   return rows.map((r) => r.group_folder);
 }
 
-export function addThreadMember(channelJid: string, threadTs: string, groupFolder: string): void {
+export function addThreadMember(
+  channelJid: string,
+  threadTs: string,
+  groupFolder: string,
+): void {
   db.prepare(
     'INSERT OR IGNORE INTO thread_members (channel_jid, thread_ts, group_folder, joined_at) VALUES (?, ?, ?, ?)',
   ).run(channelJid, threadTs, groupFolder, new Date().toISOString());
 }
 
-export function isThreadMember(channelJid: string, threadTs: string, groupFolder: string): boolean {
+export function isThreadMember(
+  channelJid: string,
+  threadTs: string,
+  groupFolder: string,
+): boolean {
   const row = db
-    .prepare('SELECT 1 FROM thread_members WHERE channel_jid = ? AND thread_ts = ? AND group_folder = ?')
+    .prepare(
+      'SELECT 1 FROM thread_members WHERE channel_jid = ? AND thread_ts = ? AND group_folder = ?',
+    )
     .get(channelJid, threadTs, groupFolder);
   return !!row;
 }
 
 /** Record a bot-triggered processing event for rate limiting. */
-export function recordBotTrigger(channelJid: string, threadTs: string, groupFolder: string): void {
+export function recordBotTrigger(
+  channelJid: string,
+  threadTs: string,
+  groupFolder: string,
+): void {
   db.prepare(
     'INSERT INTO thread_bot_triggers (channel_jid, thread_ts, group_folder, triggered_at) VALUES (?, ?, ?, ?)',
   ).run(channelJid, threadTs, groupFolder, new Date().toISOString());
@@ -1061,7 +1102,9 @@ export function getMessagesSinceIncludingBots(
       LIMIT ?
     ) ORDER BY timestamp
   `;
-  const rows = db.prepare(sql).all(chatJid, sinceTimestamp, limit) as (NewMessage & { files?: string })[];
+  const rows = db
+    .prepare(sql)
+    .all(chatJid, sinceTimestamp, limit) as (NewMessage & { files?: string })[];
   return rows.map((row) => ({
     ...row,
     files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
@@ -1070,12 +1113,21 @@ export function getMessagesSinceIncludingBots(
 
 /** Cleanup old thread membership and bot trigger data. */
 export function cleanupOldThreadData(maxAgeDays: number = 30): void {
-  const cutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000).toISOString();
-  const membersDeleted = db.prepare('DELETE FROM thread_members WHERE joined_at < ?').run(cutoff);
-  const triggersDeleted = db.prepare('DELETE FROM thread_bot_triggers WHERE triggered_at < ?').run(cutoff);
+  const cutoff = new Date(
+    Date.now() - maxAgeDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const membersDeleted = db
+    .prepare('DELETE FROM thread_members WHERE joined_at < ?')
+    .run(cutoff);
+  const triggersDeleted = db
+    .prepare('DELETE FROM thread_bot_triggers WHERE triggered_at < ?')
+    .run(cutoff);
   if (membersDeleted.changes > 0 || triggersDeleted.changes > 0) {
     logger.info(
-      { membersDeleted: membersDeleted.changes, triggersDeleted: triggersDeleted.changes },
+      {
+        membersDeleted: membersDeleted.changes,
+        triggersDeleted: triggersDeleted.changes,
+      },
       'Cleaned up old thread data',
     );
   }

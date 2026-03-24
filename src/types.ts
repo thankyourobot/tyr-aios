@@ -48,6 +48,7 @@ export interface RegisteredGroup {
   thinkingDefault?: boolean;
   channelRole?: 'director' | 'member'; // Default: 'director'
   botUserId?: string; // Slack bot user ID (for directors with own app)
+  botToken?: string; // Per-agent Slack bot token (for posting as this agent)
 }
 
 export interface FileAttachment {
@@ -77,6 +78,7 @@ export interface SendMessageOpts {
   displayIconUrl?: string; // Portrait URL (takes precedence over displayEmoji when set)
   threadTs?: string;
   onPosted?: (slackTs: string) => void;
+  botToken?: string; // Per-agent bot token — post as this agent's Slack app instead of the default
 }
 
 export interface ScheduledTask {

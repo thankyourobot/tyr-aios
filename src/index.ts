@@ -921,6 +921,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
             displayIconUrl: group.displayIconUrl,
+            botToken: group.botToken,
             threadTs: useThreadTs,
             onPosted: (postedSlackTs: string) => {
               if (result.lastAssistantUuid && lastThreadTs) {
@@ -954,6 +955,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
             displayIconUrl: group.displayIconUrl,
+            botToken: group.botToken,
             threadTs: useThreadTs,
           });
         }
@@ -976,6 +978,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
             displayIconUrl: group.displayIconUrl,
+            botToken: group.botToken,
             threadTs: useThreadTs,
           });
         }
@@ -1203,6 +1206,7 @@ async function rewindSession(params: {
               displayName: group.displayName,
               displayEmoji: group.displayEmoji,
               displayIconUrl: group.displayIconUrl,
+            botToken: group.botToken,
               threadTs: newThreadTs,
             });
           }

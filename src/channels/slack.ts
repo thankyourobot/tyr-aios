@@ -1,4 +1,5 @@
 import { App, LogLevel } from '@slack/bolt';
+import { WebClient } from '@slack/web-api';
 import type { GenericMessageEvent, BotMessageEvent } from '@slack/types';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
@@ -73,6 +74,7 @@ export class SlackChannel implements Channel {
   }> = [];
   private flushing = false;
   private userNameCache = new Map<string, string>();
+  private agentClients = new Map<string, WebClient>(); // per-agent bot token → WebClient
 
   // Track latest message context per JID for typing indicator
   private latestMessageContext = new Map<
@@ -522,16 +524,22 @@ export class SlackChannel implements Channel {
     }
 
     try {
+      // Use per-agent bot token if provided, otherwise default app client
+      const client = this.getClient(opts?.botToken);
       const postOpts: Record<string, string> = {};
-      if (opts?.displayName) postOpts.username = opts.displayName;
-      if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
-      else if (opts?.displayEmoji)
-        postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      // Only use username/icon overrides when posting via the default client
+      // (per-agent clients post as their own bot identity natively)
+      if (!opts?.botToken) {
+        if (opts?.displayName) postOpts.username = opts.displayName;
+        if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
+        else if (opts?.displayEmoji)
+          postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      }
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       // Slack limits messages to ~4000 characters; split if needed
       if (text.length <= MAX_MESSAGE_LENGTH) {
-        const postResult = await this.app.client.chat.postMessage({
+        const postResult = await client.chat.postMessage({
           channel: channelId,
           text,
           ...postOpts,
@@ -541,7 +549,7 @@ export class SlackChannel implements Channel {
         }
       } else {
         for (let i = 0; i < text.length; i += MAX_MESSAGE_LENGTH) {
-          await this.app.client.chat.postMessage({
+          await client.chat.postMessage({
             channel: channelId,
             text: text.slice(i, i + MAX_MESSAGE_LENGTH),
             ...postOpts,
@@ -739,6 +747,17 @@ export class SlackChannel implements Channel {
     } catch (err) {
       logger.error({ err }, 'Failed to sync Slack channel metadata');
     }
+  }
+
+  /** Get a WebClient for a per-agent bot token, or fall back to the default app client. */
+  private getClient(botToken?: string): WebClient {
+    if (!botToken) return this.app.client;
+    let client = this.agentClients.get(botToken);
+    if (!client) {
+      client = new WebClient(botToken);
+      this.agentClients.set(botToken, client);
+    }
+    return client;
   }
 
   private async resolveUserName(userId: string): Promise<string | undefined> {
