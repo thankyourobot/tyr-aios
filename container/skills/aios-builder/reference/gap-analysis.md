@@ -44,6 +44,8 @@ When researching, bias toward AI-native approaches — not just how human teams 
 
 **Meta-loop synthesis** periodically combines both signals and asks: should anything change in the map itself? New information becomes a potential revision to what "good" looks like. This is slower and more deliberate than the research loop — not every data point justifies changing direction. Revisions to the gap analysis represent changes in theory and should be driven by patterns, not individual observations.
 
+The meta-loop also reviews the loops themselves — not just the map. Are the cadences still calibrated to the domain? Is domain research actually running and returning useful signal? Is execution signal capturing what actually matters? If the loops are off, the map drifts regardless of how good the synthesis is.
+
 Meta-loop cadence scales with maturity. Early-stage: the map is rough and revision should be frequent. Mature: revision happens on meaningful triggers — a consistent pattern in research, a sub-function persistently underperforming, a significant external shift in the domain.
 
 ## Gaps as Tasks
@@ -56,7 +58,7 @@ Two types of work emerge from a gap analysis:
 
 **Recurring tasks** address gaps that require ongoing attention — a domain research cadence, a monitoring check, a periodic review. These become scheduled tasks via the `schedule_task` MCP tool.
 
-The meta-loop itself is a recurring task. Schedule it. A gap analysis review that only happens when someone thinks to do it isn't a loop — it's an intention.
+All three loops are recurring tasks. Schedule them. A loop that only runs when someone thinks to do it isn't a loop — it's an intention. Domain research and execution signal cadence scales with domain velocity — fast-moving functions (growth, product) warrant higher frequency; stable functions can run slower. Meta-loop cadence scales with maturity — earlier stages revisit the map more often; mature domains wait for meaningful triggers.
 
 A gap analysis that isn't generating tasks isn't working. If the map is growing but the task queue isn't moving, the map has become overhead.
 
