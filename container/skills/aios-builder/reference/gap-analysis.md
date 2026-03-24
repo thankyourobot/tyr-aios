@@ -79,3 +79,5 @@ Logic models aren't for v1. Apply them when a sub-function is stable enough that
 For director agents, the gap analysis is part of onboarding — not an optional follow-on. Access decisions (what tools does this function actually need?) and rhythm decisions (what cadences does this domain warrant?) are better made after the map exists.
 
 The v1 built during onboarding doesn't need to be complete. It needs to be good enough to act on. The loops take it from there.
+
+Before closing onboarding, the agent should write a brief operational note in `projects/gap-analysis/` — summarizing how its loops will run, what cadences are scheduled, and what to check first in future sessions. This note is for the agent's future self, not for documentation's sake. Future sessions won't re-read this reference file; they'll read the workspace.

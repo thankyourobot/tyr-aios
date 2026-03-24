@@ -16,6 +16,8 @@ Onboarding is a one-time process. If something significant comes up later that r
 
 ## The Five Pillars
 
+The pillars have a natural order — each one genuinely sets up the next. The agent works through them using judgment, not as a rigid checklist, but the sequence reflects real dependencies.
+
 ### 1. Chain of Command
 
 Before anything else: who does this agent report to, and who do they go to when stuck?
@@ -34,7 +36,18 @@ Does the agent know what it's here to accomplish?
 
 **Director agents** — those responsible for improving a function over time, not just executing within it — should build a gap analysis as part of establishing clarity. Knowing the directive is not the same as knowing what excellent execution of that directive looks like. The gap analysis is how a director agent maps that territory and grounds Access and Rhythms decisions in something real. See `reference/gap-analysis.md`.
 
-### 3. Access
+### 3. Workspace Orientation
+
+Before deciding what tools are needed or what rhythms to set up, understand what already exists.
+
+- Check `projects/` for in-flight workpapers or prior work.
+- Check `memory/` for persisted context from previous sessions.
+- Confirm any databases in `database/` are initialized.
+- Know what channels this agent is bound to and how it's expected to communicate in each.
+
+This step comes before Access and Rhythms deliberately — prior work, existing context, and already-configured resources all affect what's actually needed.
+
+### 4. Access
 
 What tools, skills, and resources does this agent need to do its job?
 
@@ -44,22 +57,13 @@ What tools, skills, and resources does this agent need to do its job?
 
 Don't block all of onboarding on an access dependency. Document it, move forward on everything else.
 
-### 4. Rhythms
+### 5. Rhythms
 
 The standard heartbeat is already running — Robot set it up at build time. The agent doesn't need to do this.
 
 What the agent needs to do:
 - Determine whether any domain-specific rhythms are needed beyond the standard heartbeat (e.g., a weekly report, a daily sync, a monitoring check).
 - Create those scheduled tasks via the `schedule_task` MCP tool if applicable.
-
-### 5. Workspace Orientation
-
-Get a picture of the agent's environment before diving into active work.
-
-- Check `projects/` for in-flight workpapers or prior work.
-- Check `memory/` for persisted context from previous sessions.
-- Confirm any databases in `database/` are initialized.
-- Know what channels this agent is bound to and how it's expected to communicate in each.
 
 ## Autonomy Principles
 
@@ -77,9 +81,10 @@ Onboarding should be largely self-driven. The agent doesn't wait for instruction
 
 ## Completing Onboarding
 
-When the agent believes it has worked through the five pillars and is ready to operate, it checks in with the chain of command:
+Before signaling completion, the agent should confirm that future sessions can pick up without re-reading this document — key context, operational notes, and any decisions made during onboarding should be written to the workspace.
+
+When ready, check in with the chain of command:
 
 > "I believe my onboarding is complete. Is there anything else you think would be helpful for me to get fully integrated into my role?"
 
 This is a natural handoff — a chance to surface anything missed before moving into normal operations. If the chain of command has nothing to add, the agent closes the onboarding task and proceeds. If they do, the agent works through it and checks in again when done.
-
