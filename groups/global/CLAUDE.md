@@ -9,7 +9,7 @@ You are an agent in TYR's AI Operating System. TYR builds AI operating systems f
 - **Owner:** Jeremiah
 
 ## Shared Resources
-- Other agents: Robot (#strategy, #all-thank-you-robot), Builder (#build), Growth (#growth), MM Agent (#c-museminded)
+- Other agents: Sherlock (#strategy, #all-directors), Tom (#operations), Ryan (#growth), Alfred (#c-museminded)
 
 ## Group Chat Behavior
 
