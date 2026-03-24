@@ -1206,7 +1206,7 @@ async function rewindSession(params: {
               displayName: group.displayName,
               displayEmoji: group.displayEmoji,
               displayIconUrl: group.displayIconUrl,
-            botToken: group.botToken,
+              botToken: group.botToken,
               threadTs: newThreadTs,
             });
           }
@@ -1478,9 +1478,17 @@ async function main(): Promise<void> {
                 storeMessage(msg);
                 // Multi-group dispatch for human messages
                 const channelJid = getParentJid(chatJid) || chatJid;
-                if (isMultiGroupChannel(channelJid)) {
+                if (
+                  isMultiGroupChannel(channelJid) &&
+                  isSyntheticThreadJid(chatJid)
+                ) {
+                  // Thread messages in multi-group channels: dispatch from realtime path
+                  // (polling loop won't see them since they're stored under synthetic JID)
                   dispatchMessage(chatJid, msg);
-                } else if (isSyntheticThreadJid(chatJid)) {
+                } else if (
+                  !isMultiGroupChannel(channelJid) &&
+                  isSyntheticThreadJid(chatJid)
+                ) {
                   // Single-group: existing IPC pipe behavior
                   const formatted = formatMessages([msg], TIMEZONE);
                   if (!queue.sendMessage(chatJid, formatted)) {
@@ -1506,7 +1514,11 @@ async function main(): Promise<void> {
       // Bot message: store and check for @mentions to trigger cross-agent communication
       if (msg.is_bot_message && !msg.is_from_me) {
         storeMessage(msg);
-        dispatchBotMessage(chatJid, msg);
+        // Only dispatch bot messages from realtime path for threads (channel-root
+        // messages are handled by the polling loop to avoid double-dispatch)
+        if (isSyntheticThreadJid(chatJid)) {
+          dispatchBotMessage(chatJid, msg);
+        }
         return;
       }
 
