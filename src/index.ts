@@ -31,6 +31,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getMessageById,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -48,6 +49,7 @@ import {
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { readEnvFile } from './env.js';
+import { buildThreadJid, getParentJid, isSyntheticThreadJid } from './jid.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
@@ -89,14 +91,17 @@ function getToggleState(
   jid: string,
   threadTs?: string,
 ): { verbose: boolean; thinking: boolean } {
-  // Check per-thread override first
-  if (threadTs) {
+  // Synthetic JID already encodes the thread
+  if (isSyntheticThreadJid(jid)) {
+    const override = threadToggles.get(jid);
+    if (override) return override;
+  } else if (threadTs) {
     const key = `${jid}:${threadTs}`;
     const override = threadToggles.get(key);
     if (override) return override;
   }
   // Fall back to group defaults
-  const group = registeredGroups[jid];
+  const group = resolveGroup(jid);
   return {
     verbose: group?.verboseDefault === true,
     thinking: group?.thinkingDefault === true,
@@ -182,7 +187,7 @@ async function handleCommand(
   channel: Channel,
 ): Promise<boolean> {
   const text = msg.content.trim();
-  const group = registeredGroups[chatJid];
+  const group = resolveGroup(chatJid);
 
   // /stop command
   if (text === '*stop') {
@@ -190,6 +195,7 @@ async function handleCommand(
     const displayOpts: SendMessageOpts = {
       displayName: group?.displayName,
       displayEmoji: group?.displayEmoji,
+      displayIconUrl: group?.displayIconUrl,
       threadTs: msg.threadTs,
     };
     if (stopped) {
@@ -320,6 +326,20 @@ function getMainGroup(): { jid: string; group: RegisteredGroup } | null {
   return null;
 }
 
+/**
+ * Resolve a group from a JID, handling synthetic thread JIDs.
+ * Tries direct lookup, then parent channel JID, then main group fallback.
+ */
+function resolveGroup(chatJid: string): RegisteredGroup | null {
+  let group = registeredGroups[chatJid];
+  if (group) return group;
+  const parentJid = getParentJid(chatJid);
+  if (parentJid) group = registeredGroups[parentJid];
+  if (group) return group;
+  const main = getMainGroup();
+  return main?.group ?? null;
+}
+
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
   const agentTs = getRouterState('last_agent_timestamp');
@@ -396,13 +416,8 @@ export function _setRegisteredGroups(
  * Called by the GroupQueue when it's this group's turn.
  */
 async function processGroupMessages(chatJid: string): Promise<boolean> {
-  let group = registeredGroups[chatJid];
-  if (!group) {
-    // DM or unknown JID — route through main group's config
-    const main = getMainGroup();
-    if (!main) return true;
-    group = main.group;
-  }
+  const group = resolveGroup(chatJid);
+  if (!group) return true;
 
   const channel = findChannel(channels, chatJid);
   if (!channel) {
@@ -449,7 +464,25 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const allFiles = missedMessages.flatMap((m) => m.files || []);
   const fileAnnotation = await downloadFiles(allFiles, group.folder);
 
-  const prompt = formatMessages(missedMessages, TIMEZONE) + fileAnnotation;
+  // Include thread parent message for context when replying in a thread
+  let threadParentContext = '';
+  if (lastThreadTs && missedMessages.some((m) => m.threadTs)) {
+    const parentMsg = getMessageById(
+      getParentJid(chatJid) || chatJid,
+      lastThreadTs,
+    );
+    if (parentMsg) {
+      threadParentContext = `<thread-parent>
+${formatMessages([parentMsg], TIMEZONE)}
+</thread-parent>
+`;
+    }
+  }
+
+  const prompt =
+    threadParentContext +
+    formatMessages(missedMessages, TIMEZONE) +
+    fileAnnotation;
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -559,9 +592,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           getToggleState(chatJid, lastThreadTs).verbose
         ) {
           const cu = result.contextUsage;
-          const totalUsed = cu.inputTokens;
+          const totalUsed =
+            cu.inputTokens + cu.cacheCreationTokens + cu.cacheReadTokens;
           const pct = Math.round((totalUsed / cu.contextWindow) * 100);
-          const contextLine = `_Context: ${formatTokens(totalUsed)}/${formatTokens(cu.contextWindow)} (${pct}%)_`;
+          const modelSuffix = result.model ? ` \u2014 ${result.model}` : '';
+          const contextLine = `_Context: ${formatTokens(totalUsed)}/${formatTokens(cu.contextWindow)} (${pct}%)${modelSuffix}_`;
           await channel.sendMessage(chatJid, contextLine, {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
@@ -573,7 +608,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         if (result.compaction) {
           let compactLine: string;
           if (result.contextUsage && result.contextUsage.contextWindow > 0) {
-            const postTokens = result.contextUsage.inputTokens;
+            const postTokens =
+              result.contextUsage.inputTokens +
+              result.contextUsage.cacheCreationTokens +
+              result.contextUsage.cacheReadTokens;
             const cw = result.contextUsage.contextWindow;
             const pct = Math.round((postTokens / cw) * 100);
             compactLine = `_Compacted: ${formatTokens(result.compaction.preTokens)} \u2192 ${formatTokens(postTokens)}/${formatTokens(cw)} (${pct}%)_`;
@@ -792,18 +830,21 @@ async function rewindSession(params: {
       'Starting rewind',
     );
 
+    // Use synthetic JID for the new thread so follow-up messages route correctly
+    const syntheticJid = buildThreadJid(chatJid, newThreadTs);
+
     // Run agent with fork parameters — the container will fork the session
     const result = await runAgent(
       group,
       '[Session forked from previous thread. Continue from where we left off.]',
-      chatJid,
+      syntheticJid,
       async (output) => {
         if (output.result) {
           const text = output.result
             .replace(/<internal>[\s\S]*?<\/internal>/g, '')
             .trim();
           if (text) {
-            await channel.sendMessage(chatJid, text, {
+            await channel.sendMessage(syntheticJid, text, {
               displayName: group.displayName,
               displayEmoji: group.displayEmoji,
               threadTs: newThreadTs,
@@ -811,7 +852,7 @@ async function rewindSession(params: {
           }
         }
       },
-      getToggleState(chatJid, newThreadTs),
+      getToggleState(syntheticJid, newThreadTs),
       newThreadTs,
       { sourceSessionId, resumeSessionAt: sdkUuid },
     );
@@ -985,16 +1026,17 @@ function recoverPendingMessages(): void {
     }
   }
 
-  // Recover DMs: check lastAgentTimestamp entries that are not registered groups
+  // Recover DMs and synthetic thread JIDs: check lastAgentTimestamp entries that are not registered groups
   const mainGroup = getMainGroup();
   if (mainGroup) {
     for (const [chatJid, cursor] of Object.entries(lastAgentTimestamp)) {
       if (registeredGroups[chatJid]) continue;
       const pending = getMessagesSince(chatJid, cursor, ASSISTANT_NAME);
       if (pending.length > 0) {
+        const label = isSyntheticThreadJid(chatJid) ? 'thread' : 'DM';
         logger.info(
           { chatJid, pendingCount: pending.length },
-          'Recovery: found unprocessed DM messages',
+          `Recovery: found unprocessed ${label} messages`,
         );
         queue.enqueueMessageCheck(chatJid);
       }
@@ -1035,11 +1077,12 @@ async function main(): Promise<void> {
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Sender allowlist drop mode: discard messages from denied senders before storing
-      if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
+      if (!msg.is_from_me && !msg.is_bot_message && resolveGroup(chatJid)) {
         const cfg = loadSenderAllowlist();
+        const allowlistJid = getParentJid(chatJid) || chatJid;
         if (
-          shouldDropMessage(chatJid, cfg) &&
-          !isSenderAllowed(chatJid, msg.sender, cfg)
+          shouldDropMessage(allowlistJid, cfg) &&
+          !isSenderAllowed(allowlistJid, msg.sender, cfg)
         ) {
           if (cfg.logDenied) {
             logger.debug(
@@ -1056,7 +1099,19 @@ async function main(): Promise<void> {
         if (channel) {
           handleCommand(chatJid, msg, channel)
             .then((consumed) => {
-              if (!consumed) storeMessage(msg);
+              if (!consumed) {
+                storeMessage(msg);
+                if (isSyntheticThreadJid(chatJid)) {
+                  // Try IPC pipe to active container first, fall back to enqueue
+                  const formatted = formatMessages([msg], TIMEZONE);
+                  if (!queue.sendMessage(chatJid, formatted)) {
+                    queue.enqueueMessageCheck(chatJid);
+                  } else {
+                    lastAgentTimestamp[chatJid] = msg.timestamp;
+                    saveState();
+                  }
+                }
+              }
             })
             .catch((err) => {
               logger.warn(

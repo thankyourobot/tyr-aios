@@ -190,6 +190,14 @@ function createSchema(database: Database.Database): void {
   } catch {
     /* column already exists */
   }
+  // Add display_icon_url column for portrait photo support (migration)
+  try {
+    database.exec(
+      `ALTER TABLE registered_groups ADD COLUMN display_icon_url TEXT`,
+    );
+  } catch {
+    /* column already exists */
+  }
 
   // Add channel and is_group columns if they don't exist (migration for existing DBs)
   try {
@@ -333,6 +341,10 @@ export function setLastGroupSync(): void {
  * Only call this for registered groups where message history is needed.
  */
 export function storeMessage(msg: NewMessage): void {
+  // Ensure chat exists for synthetic thread JIDs (FK constraint)
+  db.prepare(
+    `INSERT OR IGNORE INTO chats (jid, name, last_message_time) VALUES (?, ?, ?)`,
+  ).run(msg.chat_jid, msg.chat_jid, msg.timestamp);
   db.prepare(
     `INSERT OR REPLACE INTO messages (id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts, files) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
@@ -417,6 +429,22 @@ export function getNewMessages(
   });
 
   return { messages, newTimestamp };
+}
+
+export function getMessageById(
+  chatJid: string,
+  messageId: string,
+): NewMessage | undefined {
+  const row = db
+    .prepare(
+      'SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts AS threadTs, files FROM messages WHERE chat_jid = ? AND id = ?',
+    )
+    .get(chatJid, messageId) as (NewMessage & { files?: string }) | undefined;
+  if (!row) return undefined;
+  return {
+    ...row,
+    files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
+  };
 }
 
 export function getMessagesSince(
@@ -660,6 +688,7 @@ export function getRegisteredGroup(
     isMain: row.is_main === 1 ? true : undefined,
     displayName: row.display_name ?? undefined,
     displayEmoji: row.display_emoji ?? undefined,
+    displayIconUrl: (row as any).display_icon_url ?? undefined,
     assistantName: row.assistant_name ?? undefined,
     verboseDefault: row.verbose_default === 1 ? true : undefined,
     thinkingDefault: row.thinking_default === 1 ? true : undefined,
@@ -671,8 +700,8 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
   db.prepare(
-    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, assistant_name, verbose_default, thinking_default)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT OR REPLACE INTO registered_groups (jid, name, folder, trigger_pattern, added_at, container_config, requires_trigger, is_main, display_name, display_emoji, display_icon_url, assistant_name, verbose_default, thinking_default)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     jid,
     group.name,
@@ -684,6 +713,7 @@ export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
     group.isMain ? 1 : 0,
     group.displayName ?? null,
     group.displayEmoji ?? null,
+    group.displayIconUrl ?? null,
     group.assistantName ?? null,
     group.verboseDefault ? 1 : 0,
     group.thinkingDefault ? 1 : 0,
@@ -728,6 +758,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
       isMain: row.is_main === 1 ? true : undefined,
       displayName: row.display_name ?? undefined,
       displayEmoji: row.display_emoji ?? undefined,
+      displayIconUrl: (row as any).display_icon_url ?? undefined,
       assistantName: row.assistant_name ?? undefined,
       verboseDefault: row.verbose_default === 1 ? true : undefined,
       thinkingDefault: row.thinking_default === 1 ? true : undefined,
@@ -829,14 +860,16 @@ export function getThreadMessages(
   is_bot_message: number;
   timestamp: string;
 }> {
+  // Match both channel JID and synthetic thread JID for backward compatibility
+  const syntheticJid = `${chatJid}:t:${threadTs}`;
   return db
     .prepare(
       `SELECT id, content, sender_name, is_bot_message, timestamp
       FROM messages
-      WHERE chat_jid = ? AND thread_ts = ?
+      WHERE (chat_jid = ? OR chat_jid = ?) AND thread_ts = ?
       ORDER BY timestamp`,
     )
-    .all(chatJid, threadTs) as Array<{
+    .all(chatJid, syntheticJid, threadTs) as Array<{
     id: string;
     content: string;
     sender_name: string;

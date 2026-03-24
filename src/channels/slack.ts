@@ -11,6 +11,7 @@ import {
   getThreadMessages,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
+import { buildThreadJid, parseSlackJid } from '../jid.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -254,9 +255,11 @@ export class SlackChannel implements Channel {
           channel: channelId,
           text: rootText,
           ...(group?.displayName ? { username: group.displayName } : {}),
-          ...(group?.displayEmoji
-            ? { icon_emoji: `:${group.displayEmoji}:` }
-            : {}),
+          ...(group?.displayIconUrl
+            ? { icon_url: group.displayIconUrl }
+            : group?.displayEmoji
+              ? { icon_emoji: `:${group.displayEmoji}:` }
+              : {}),
         });
 
         const newThreadTs = postResult.ts;
@@ -276,9 +279,11 @@ export class SlackChannel implements Channel {
             thread_ts: newThreadTs,
             text: `<${msgLink}|Last response before fork>:\n\n${contextText}`,
             ...(group?.displayName ? { username: group.displayName } : {}),
-            ...(group?.displayEmoji
-              ? { icon_emoji: `:${group.displayEmoji}:` }
-              : {}),
+            ...(group?.displayIconUrl
+              ? { icon_url: group.displayIconUrl }
+              : group?.displayEmoji
+                ? { icon_emoji: `:${group.displayEmoji}:` }
+                : {}),
           });
         }
 
@@ -315,22 +320,30 @@ export class SlackChannel implements Channel {
       // Capture thread_ts for thread reply support
       const threadTs = (event as { thread_ts?: string }).thread_ts || undefined;
 
-      const jid = `slack:${msg.channel}`;
+      const channelJid = `slack:${msg.channel}`;
+      const targetJid = threadTs
+        ? buildThreadJid(channelJid, threadTs)
+        : channelJid;
       const timestamp = new Date(parseFloat(msg.ts) * 1000).toISOString();
       const isGroup = msg.channel_type !== 'im';
 
-      // Always report metadata for group discovery
-      this.opts.onChatMetadata(jid, timestamp, undefined, 'slack', isGroup);
+      // Always report metadata for group discovery (use channel JID, not synthetic)
+      this.opts.onChatMetadata(
+        channelJid,
+        timestamp,
+        undefined,
+        'slack',
+        isGroup,
+      );
 
       // Check if this JID is registered; if not, we'll let the message loop
       // handle it via main group fallback. Don't reroute — keep original JID
       // so replies go back to the correct channel (critical for DMs).
       const groups = this.opts.registeredGroups();
-      if (!groups[jid]) {
+      if (!groups[channelJid]) {
         const hasMain = Object.values(groups).some((g) => g.isMain);
         if (!hasMain) return; // No main group configured, drop message
       }
-      const targetJid = jid;
 
       const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
 
@@ -437,7 +450,7 @@ export class SlackChannel implements Channel {
     text: string,
     opts?: SendMessageOpts,
   ): Promise<void> {
-    const channelId = jid.replace(/^slack:/, '');
+    const { channelId } = parseSlackJid(jid);
 
     if (!this.connected) {
       this.outgoingQueue.push({ jid, text, opts });
@@ -451,7 +464,8 @@ export class SlackChannel implements Channel {
     try {
       const postOpts: Record<string, string> = {};
       if (opts?.displayName) postOpts.username = opts.displayName;
-      if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
+      else if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       // Slack limits messages to ~4000 characters; split if needed
@@ -489,7 +503,7 @@ export class SlackChannel implements Channel {
     type: 'verbose' | 'thinking',
     opts?: SendMessageOpts,
   ): Promise<void> {
-    const channelId = jid.replace(/^slack:/, '');
+    const { channelId } = parseSlackJid(jid);
     const prefix = type === 'thinking' ? '💭 ' : '';
     const blocks = [
       {
@@ -501,7 +515,8 @@ export class SlackChannel implements Channel {
     try {
       const postOpts: Record<string, string> = {};
       if (opts?.displayName) postOpts.username = opts.displayName;
-      if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
+      else if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       await this.app.client.chat.postMessage({
@@ -521,11 +536,12 @@ export class SlackChannel implements Channel {
     fallbackText: string,
     opts?: SendMessageOpts,
   ): Promise<void> {
-    const channelId = jid.replace(/^slack:/, '');
+    const { channelId } = parseSlackJid(jid);
     try {
       const postOpts: Record<string, string> = {};
       if (opts?.displayName) postOpts.username = opts.displayName;
-      if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
+      if (opts?.displayIconUrl) postOpts.icon_url = opts.displayIconUrl;
+      else if (opts?.displayEmoji) postOpts.icon_emoji = `:${opts.displayEmoji}:`;
       if (opts?.threadTs) postOpts.thread_ts = opts.threadTs;
 
       await this.app.client.chat.postMessage({
@@ -558,7 +574,7 @@ export class SlackChannel implements Channel {
     threadTs: string,
     groupFolder: string,
   ): Promise<void> {
-    const channelId = jid.replace(/^slack:/, '');
+    const { channelId } = parseSlackJid(jid);
     try {
       await this.app.client.chat.postEphemeral({
         channel: channelId,
@@ -671,10 +687,11 @@ export class SlackChannel implements Channel {
       );
       while (this.outgoingQueue.length > 0) {
         const item = this.outgoingQueue.shift()!;
-        const channelId = item.jid.replace(/^slack:/, '');
+        const { channelId } = parseSlackJid(item.jid);
         const postOpts: Record<string, string> = {};
         if (item.opts?.displayName) postOpts.username = item.opts.displayName;
-        if (item.opts?.displayEmoji)
+        if (item.opts?.displayIconUrl) postOpts.icon_url = item.opts.displayIconUrl;
+        else if (item.opts?.displayEmoji)
           postOpts.icon_emoji = `:${item.opts.displayEmoji}:`;
         if (item.opts?.threadTs) postOpts.thread_ts = item.opts.threadTs;
         await this.app.client.chat.postMessage({

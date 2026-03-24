@@ -42,6 +42,7 @@ export interface RegisteredGroup {
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
   displayName?: string; // Per-group display name in Slack (e.g., "Builder")
   displayEmoji?: string; // Per-group emoji in Slack (e.g., "hammer_and_wrench")
+  displayIconUrl?: string; // Per-group portrait URL (takes precedence over displayEmoji when set)
   assistantName?: string; // Per-group assistant name for container (e.g., "Builder")
   verboseDefault?: boolean;
   thinkingDefault?: boolean;
@@ -71,6 +72,7 @@ export interface NewMessage {
 export interface SendMessageOpts {
   displayName?: string;
   displayEmoji?: string;
+  displayIconUrl?: string; // Portrait URL (takes precedence over displayEmoji when set)
   threadTs?: string;
   onPosted?: (slackTs: string) => void;
 }
