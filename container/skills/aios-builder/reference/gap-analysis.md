@@ -46,6 +46,20 @@ When researching, bias toward AI-native approaches — not just how human teams 
 
 Meta-loop cadence scales with maturity. Early-stage: the map is rough and revision should be frequent. Mature: revision happens on meaningful triggers — a consistent pattern in research, a sub-function persistently underperforming, a significant external shift in the domain.
 
+## Gaps as Tasks
+
+The gap analysis has no value if it doesn't change what the agent does. Every meaningful gap should translate to work — tracked in `tasks.db` and driven to completion through the standard heartbeat loop.
+
+Two types of work emerge from a gap analysis:
+
+**One-off tasks** close a specific gap — build this process, configure this integration, deliver this artifact. Create them in `tasks.db` with enough context to act on. The heartbeat picks them up.
+
+**Recurring tasks** address gaps that require ongoing attention — a domain research cadence, a monitoring check, a periodic review. These become scheduled tasks via the `schedule_task` MCP tool.
+
+The meta-loop itself is a recurring task. Schedule it. A gap analysis review that only happens when someone thinks to do it isn't a loop — it's an intention.
+
+A gap analysis that isn't generating tasks isn't working. If the map is growing but the task queue isn't moving, the map has become overhead.
+
 ## Gall's Law
 
 Complex systems that work evolved from simple systems that worked. The gap analysis is no exception.
