@@ -64,6 +64,7 @@ export class SlackChannel implements Channel {
 
   private app: App;
   private botUserId: string | undefined;
+  private botId: string | undefined; // bot_id from auth.test (for distinguishing our bot from other agent bots)
   private connected = false;
   private outgoingQueue: Array<{
     jid: string;
@@ -317,13 +318,7 @@ export class SlackChannel implements Channel {
     });
 
     // --- Slash command handlers ---
-    const slashCommands = [
-      'stop',
-      'verbose',
-      'thinking',
-      'rewind',
-      'agents',
-    ];
+    const slashCommands = ['stop', 'verbose', 'thinking', 'rewind', 'agents'];
     for (const cmd of slashCommands) {
       this.app.command(`/${cmd}`, async ({ command, ack }) => {
         await ack();
@@ -398,6 +393,10 @@ export class SlackChannel implements Channel {
       }
 
       const isBotMessage = !!msg.bot_id || msg.user === this.botUserId;
+      // is_from_me: only true for THIS app's bot, not other agent bots
+      const isFromMe =
+        msg.user === this.botUserId ||
+        (!!msg.bot_id && msg.bot_id === this.botId);
 
       let senderName: string;
       if (isBotMessage) {
@@ -462,7 +461,7 @@ export class SlackChannel implements Channel {
         sender_name: senderName,
         content: content || '',
         timestamp,
-        is_from_me: isBotMessage,
+        is_from_me: isFromMe,
         is_bot_message: isBotMessage,
         threadTs,
         files,
@@ -488,7 +487,11 @@ export class SlackChannel implements Channel {
     try {
       const auth = await this.app.client.auth.test();
       this.botUserId = auth.user_id as string;
-      logger.info({ botUserId: this.botUserId }, 'Connected to Slack');
+      this.botId = auth.bot_id as string;
+      logger.info(
+        { botUserId: this.botUserId, botId: this.botId },
+        'Connected to Slack',
+      );
     } catch (err) {
       logger.warn({ err }, 'Connected to Slack but failed to get bot user ID');
     }
