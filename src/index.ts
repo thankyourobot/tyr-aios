@@ -920,6 +920,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           await channel.sendMessage(chatJid, text, {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
+            displayIconUrl: group.displayIconUrl,
             threadTs: useThreadTs,
             onPosted: (postedSlackTs: string) => {
               if (result.lastAssistantUuid && lastThreadTs) {
@@ -952,6 +953,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           await channel.sendMessage(chatJid, contextLine, {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
+            displayIconUrl: group.displayIconUrl,
             threadTs: useThreadTs,
           });
         }
@@ -973,6 +975,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           await channel.sendMessage(chatJid, compactLine, {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,
+            displayIconUrl: group.displayIconUrl,
             threadTs: useThreadTs,
           });
         }
@@ -1199,6 +1202,7 @@ async function rewindSession(params: {
             await channel.sendMessage(syntheticJid, text, {
               displayName: group.displayName,
               displayEmoji: group.displayEmoji,
+              displayIconUrl: group.displayIconUrl,
               threadTs: newThreadTs,
             });
           }
