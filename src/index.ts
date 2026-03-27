@@ -957,8 +957,9 @@ ${formatMessages([parentMsg], TIMEZONE)}
           channel.setTyping?.(typingJid, false)?.catch(() => {});
         }
 
-        // Context window display (when verbose mode is enabled)
+        // Context window display (when verbose mode is enabled and agent actually responded)
         if (
+          outputSentToUser &&
           result.contextUsage &&
           result.contextUsage.contextWindow > 0 &&
           getToggleState(chatJid, lastThreadTs).verbose
@@ -978,8 +979,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
           });
         }
 
-        // Compaction notification (always shown, regardless of verbose)
-        if (result.compaction) {
+        // Compaction notification (only when agent actually responded)
+        if (outputSentToUser && result.compaction) {
           let compactLine: string;
           if (result.contextUsage && result.contextUsage.contextWindow > 0) {
             const postTokens =
