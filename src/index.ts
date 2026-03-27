@@ -1582,8 +1582,14 @@ async function main(): Promise<void> {
     resolveBotSenderName: (
       botId: string,
       username?: string,
+      userId?: string,
     ): string | undefined => {
-      // Look up bot_id against known agent bot user IDs
+      // Look up bot user ID (U-prefix) against known agent bot user IDs
+      if (userId) {
+        const group = groupsByBotUserId.get(userId);
+        if (group) return group.assistantName || group.displayName;
+      }
+      // Try bot_id (B-prefix) — less reliable but covers edge cases
       if (botId) {
         const group = groupsByBotUserId.get(botId);
         if (group) return group.assistantName || group.displayName;

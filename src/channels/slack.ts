@@ -41,6 +41,7 @@ export interface SlackChannelOpts {
   resolveBotSenderName?: (
     botId: string,
     username?: string,
+    userId?: string,
   ) => string | undefined;
   onRewind?: (params: {
     groupFolder: string;
@@ -403,9 +404,11 @@ export class SlackChannel implements Channel {
       let senderName: string;
       if (isBotMessage) {
         // Multi-agent: identify which agent sent this bot message
+        // Pass bot_id (B-prefix), user (U-prefix bot user ID), and username override
         const resolvedName = this.opts.resolveBotSenderName?.(
           msg.bot_id || '',
           (msg as any).username,
+          msg.user,
         );
         senderName = resolvedName || ASSISTANT_NAME;
       } else {
