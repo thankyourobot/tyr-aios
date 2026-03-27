@@ -876,9 +876,21 @@ ${formatMessages([parentMsg], TIMEZONE)}
     }, IDLE_TIMEOUT);
   };
 
-  // Use baseJid for typing indicators so they appear in the correct channel
+  // Suppress typing for thread members who aren't explicitly mentioned in the triggering message
+  const triggeringMsg = missedMessages[missedMessages.length - 1];
+  const isMentioned =
+    !groupFolder ||
+    !triggeringMsg ||
+    (group.botUserId &&
+      triggeringMsg.content.includes(`<@${group.botUserId}>`)) ||
+    (group.assistantName &&
+      new RegExp(`(?:^|\\s)@${escapeRegex(group.assistantName)}\\b`, 'i').test(
+        triggeringMsg.content,
+      ));
   const typingJid = groupFolder ? baseJid : chatJid;
-  await channel.setTyping?.(typingJid, true, group.botToken);
+  if (isMentioned) {
+    await channel.setTyping?.(typingJid, true, group.botToken);
+  }
   let hadError = false;
   let outputSentToUser = false;
 
@@ -954,7 +966,9 @@ ${formatMessages([parentMsg], TIMEZONE)}
           });
           outputSentToUser = true;
           // Clear typing indicator after sending output (don't wait for container exit)
-          channel.setTyping?.(typingJid, false, group.botToken)?.catch(() => {});
+          channel
+            .setTyping?.(typingJid, false, group.botToken)
+            ?.catch(() => {});
         }
 
         // Context window display (when verbose mode is enabled and agent actually responded)
@@ -1017,7 +1031,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
     lastThreadTs !== lastMsg.id ? lastThreadTs : undefined,
   );
 
-  await channel.setTyping?.(typingJid, false, group.botToken);
+  if (isMentioned) await channel.setTyping?.(typingJid, false, group.botToken);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
