@@ -679,20 +679,25 @@ export class SlackChannel implements Channel {
     }
   }
 
-  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+  async setTyping(
+    jid: string,
+    isTyping: boolean,
+    botToken?: string,
+  ): Promise<void> {
     const ctx = this.latestMessageContext.get(jid);
     if (!ctx) return;
 
     try {
-      // Use Slack's assistant thread status API for native "is typing..." indicator
+      // Use per-agent token if provided, otherwise default app client
+      const client = this.getClient(botToken);
       if (isTyping) {
-        await this.app.client.apiCall('assistant.threads.setStatus', {
+        await client.apiCall('assistant.threads.setStatus', {
           channel_id: ctx.channel,
           thread_ts: ctx.threadTs,
           status: 'is thinking...',
         });
       } else {
-        await this.app.client.apiCall('assistant.threads.setStatus', {
+        await client.apiCall('assistant.threads.setStatus', {
           channel_id: ctx.channel,
           thread_ts: ctx.threadTs,
           status: '',

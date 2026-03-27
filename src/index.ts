@@ -878,7 +878,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
   // Use baseJid for typing indicators so they appear in the correct channel
   const typingJid = groupFolder ? baseJid : chatJid;
-  await channel.setTyping?.(typingJid, true);
+  await channel.setTyping?.(typingJid, true, group.botToken);
   let hadError = false;
   let outputSentToUser = false;
 
@@ -954,7 +954,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           });
           outputSentToUser = true;
           // Clear typing indicator after sending output (don't wait for container exit)
-          channel.setTyping?.(typingJid, false)?.catch(() => {});
+          channel.setTyping?.(typingJid, false, group.botToken)?.catch(() => {});
         }
 
         // Context window display (when verbose mode is enabled and agent actually responded)
@@ -1017,7 +1017,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
     lastThreadTs !== lastMsg.id ? lastThreadTs : undefined,
   );
 
-  await channel.setTyping?.(typingJid, false);
+  await channel.setTyping?.(typingJid, false, group.botToken);
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
