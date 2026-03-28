@@ -50,11 +50,11 @@ Meta-loop cadence scales with maturity. Early-stage: the map is rough and revisi
 
 ## Gaps as Tasks
 
-The gap analysis has no value if it doesn't change what the agent does. Every meaningful gap should translate to work — tracked in `tasks.db` and driven to completion through the standard heartbeat loop.
+The gap analysis has no value if it doesn't change what the agent does. Every meaningful gap should translate to work — tracked in `assignments.db` and driven to completion through the standard heartbeat loop.
 
 Two types of work emerge from a gap analysis:
 
-**One-off tasks** close a specific gap — build this process, configure this integration, deliver this artifact. Create them in `tasks.db` with enough context to act on. The heartbeat picks them up.
+**One-off tasks** close a specific gap — build this process, configure this integration, deliver this artifact. Create them in `assignments.db` with enough context to act on. The heartbeat picks them up.
 
 **Recurring tasks** address gaps that require ongoing attention — a domain research cadence, a monitoring check, a periodic review. These become scheduled tasks via the `schedule_task` MCP tool.
 

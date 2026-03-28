@@ -132,6 +132,8 @@ export interface Channel {
   syncGroups?(force: boolean): Promise<void>;
   // Optional: add emoji reaction to a message
   addReaction?(jid: string, messageTs: string, emoji: string): Promise<void>;
+  // Optional: remove emoji reaction from a message
+  removeReaction?(jid: string, messageTs: string, emoji: string): Promise<void>;
   // Optional: post rewind button for *rewind command
   postRewindButton?(
     jid: string,

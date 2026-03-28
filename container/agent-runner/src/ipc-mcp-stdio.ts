@@ -333,6 +333,92 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+server.tool(
+  'get_recent_activity',
+  'Get recent message activity across your channels. Shows messages from the last N minutes and which agents are currently running. Use during heartbeats to understand what is in flight before acting.',
+  {
+    lookback_minutes: z
+      .number()
+      .optional()
+      .describe(
+        'Filter to last N minutes (default: 30). Filters the pre-generated snapshot client-side.',
+      ),
+  },
+  async (args) => {
+    const activityFile = path.join(IPC_DIR, 'recent_activity.json');
+    if (!fs.existsSync(activityFile)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: 'No recent activity data available.',
+          },
+        ],
+      };
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(activityFile, 'utf-8'));
+      const lookback = args.lookback_minutes || data.lookback_minutes || 30;
+      const cutoff = new Date(
+        Date.now() - lookback * 60 * 1000,
+      ).toISOString();
+
+      const channels = data.channels
+        .map((ch: any) => ({
+          ...ch,
+          messages: ch.messages.filter(
+            (m: any) => m.timestamp >= cutoff,
+          ),
+        }))
+        .filter((ch: any) => ch.messages.length > 0);
+
+      if (
+        channels.length === 0 &&
+        !data.active_containers?.length
+      ) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `No activity in the last ${lookback} minutes.`,
+            },
+          ],
+        };
+      }
+
+      let output = `Activity snapshot (last ${lookback} min, generated ${data.generated_at}):\n\n`;
+      for (const ch of channels) {
+        output += `## ${ch.name} (${ch.role})\n`;
+        for (const msg of ch.messages) {
+          const botTag = msg.is_bot ? ' [bot]' : '';
+          const thread = msg.thread_ts ? ' (thread)' : '';
+          output += `  ${msg.timestamp} ${msg.sender_name}${botTag}${thread}: ${msg.content}\n`;
+        }
+        output += '\n';
+      }
+      if (data.active_containers?.length) {
+        output += '## Currently Running Agents\n';
+        for (const ac of data.active_containers) {
+          output += `  - ${ac.agent_name} (${ac.group_folder})\n`;
+        }
+      }
+      return {
+        content: [{ type: 'text' as const, text: output }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Error reading activity: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+      };
+    }
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -907,6 +907,35 @@ export function getGroupByFolder(
   return rowToRegisteredGroup(row);
 }
 
+/**
+ * Get all JIDs registered to a given folder (supports multi-channel agents).
+ */
+export function getJidsForFolder(
+  folder: string,
+): Array<{
+  jid: string;
+  name: string;
+  channelRole: string;
+  assistantName: string | null;
+}> {
+  const rows = db
+    .prepare(
+      'SELECT jid, name, channel_role, assistant_name FROM registered_groups WHERE folder = ?',
+    )
+    .all(folder) as Array<{
+    jid: string;
+    name: string;
+    channel_role: string;
+    assistant_name: string | null;
+  }>;
+  return rows.map((r) => ({
+    jid: r.jid,
+    name: r.name,
+    channelRole: r.channel_role,
+    assistantName: r.assistant_name,
+  }));
+}
+
 export function getThreadSession(
   groupFolder: string,
   threadTs: string,

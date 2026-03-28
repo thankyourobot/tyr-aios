@@ -726,6 +726,25 @@ export class SlackChannel implements Channel {
     }
   }
 
+  async removeReaction(
+    jid: string,
+    messageTs: string,
+    emoji: string,
+  ): Promise<void> {
+    const { channelId } = parseSlackJid(jid);
+    try {
+      await this.app.client.reactions.remove({
+        channel: channelId,
+        timestamp: messageTs,
+        name: emoji.replace(/:/g, ''),
+      });
+      logger.debug({ jid, messageTs, emoji }, 'Reaction removed');
+    } catch (err) {
+      // Ignore — reaction may already be removed
+      logger.debug({ jid, messageTs, emoji, err }, 'Failed to remove reaction');
+    }
+  }
+
   /**
    * Sync channel metadata from Slack.
    * Fetches channels the bot is a member of and stores their names in the DB.

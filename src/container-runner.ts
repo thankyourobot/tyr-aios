@@ -268,6 +268,11 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
+  // Request 1M context window — server currently rejects for OAuth/SDK subscriptions
+  // but will auto-activate when Anthropic enables it (no code change needed).
+  args.push('-e', 'ANTHROPIC_BETAS=context-1m-2025-08-07');
+  args.push('-e', 'ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6[1m]');
+
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
 
@@ -729,6 +734,46 @@ export function writeGroupsSnapshot(
       {
         groups: visibleGroups,
         lastSync: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+/**
+ * Write recent activity snapshot for the container to read.
+ * Gives agents awareness of recent channel activity and active containers.
+ */
+export function writeRecentActivitySnapshot(
+  groupFolder: string,
+  channels: Array<{
+    jid: string;
+    name: string;
+    role: string;
+    messages: Array<{
+      sender_name: string;
+      content: string;
+      timestamp: string;
+      is_bot: boolean;
+      thread_ts: string | null;
+    }>;
+  }>,
+  activeContainers: Array<{ group_folder: string; agent_name: string }>,
+  lookbackMinutes: number,
+): void {
+  const groupIpcDir = resolveGroupIpcPath(groupFolder);
+  fs.mkdirSync(groupIpcDir, { recursive: true });
+
+  const activityFile = path.join(groupIpcDir, 'recent_activity.json');
+  fs.writeFileSync(
+    activityFile,
+    JSON.stringify(
+      {
+        generated_at: new Date().toISOString(),
+        lookback_minutes: lookbackMinutes,
+        channels,
+        active_containers: activeContainers,
       },
       null,
       2,

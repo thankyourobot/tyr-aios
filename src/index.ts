@@ -19,6 +19,7 @@ import {
   ContainerOutput,
   runContainerAgent,
   writeGroupsSnapshot,
+  writeRecentActivitySnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
@@ -53,6 +54,8 @@ import {
   recordBotTrigger,
   countBotTriggers,
   cleanupOldThreadData,
+  getGroupByFolder,
+  getJidsForFolder,
 } from './db.js';
 import { GroupQueue } from './group-queue.js';
 import { readEnvFile } from './env.js';
@@ -101,6 +104,13 @@ let groupsByBotUserId: Map<string, RegisteredGroup> = new Map();
 
 const channels: Channel[] = [];
 const queue = new GroupQueue();
+
+// Track messages that got a "busy" reaction so we can remove it when processing starts
+const pendingBusyReactions = new Map<
+  string,
+  Array<{ jid: string; messageTs: string }>
+>();
+const BUSY_EMOJI = 'hourglass_flowing_sand';
 
 // Per-thread toggle overrides (ephemeral — resets on restart)
 const threadToggles = new Map<
@@ -774,6 +784,20 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   }
   if (!group) return true;
 
+  // Remove any "busy" reactions now that we're processing this group's messages
+  const busyReactions = pendingBusyReactions.get(chatJid);
+  if (busyReactions?.length) {
+    const channel_ = findChannel(channels, baseJid);
+    for (const { jid, messageTs } of busyReactions) {
+      channel_
+        ?.removeReaction?.(jid, messageTs, BUSY_EMOJI)
+        ?.catch((err) =>
+          logger.debug({ chatJid, err }, 'Failed to remove busy reaction'),
+        );
+    }
+    pendingBusyReactions.delete(chatJid);
+  }
+
   const channel = findChannel(channels, baseJid);
   if (!channel) {
     logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
@@ -1104,6 +1128,47 @@ async function runAgent(
     new Set(Object.keys(registeredGroups)),
   );
 
+  // Write recent activity snapshot for heartbeat awareness
+  const lookbackMinutes = 30;
+  const sinceTimestamp = new Date(
+    Date.now() - lookbackMinutes * 60 * 1000,
+  ).toISOString();
+  const agentJids = getJidsForFolder(group.folder);
+  const activityChannels = agentJids.map(({ jid, name, channelRole }) => {
+    const msgs = getMessagesSinceIncludingBots(jid, sinceTimestamp, 50);
+    return {
+      jid,
+      name,
+      role: channelRole,
+      messages: msgs.map((m) => ({
+        sender_name: m.sender_name || 'Unknown',
+        content:
+          m.content && m.content.length > 200
+            ? m.content.slice(0, 200) + '...'
+            : m.content || '',
+        timestamp: m.timestamp,
+        is_bot: !!m.is_bot_message,
+        thread_ts: m.threadTs || null,
+      })),
+    };
+  });
+  const activeGroups = queue
+    .getActiveGroups()
+    .filter((g) => g.groupFolder !== group.folder);
+  const activeContainers = activeGroups.map((g) => {
+    const gInfo = getGroupByFolder(g.groupFolder);
+    return {
+      group_folder: g.groupFolder,
+      agent_name: gInfo?.assistantName || gInfo?.name || g.groupFolder,
+    };
+  });
+  writeRecentActivitySnapshot(
+    group.folder,
+    activityChannels,
+    activeContainers,
+    lookbackMinutes,
+  );
+
   // Wrap onOutput to track session ID from streamed results
   const wrappedOnOutput = onOutput
     ? async (output: ContainerOutput) => {
@@ -1408,6 +1473,29 @@ async function startMessageLoop(): Promise<void> {
               );
               queue.closeStdin(chatJid);
             }
+
+            // If the message will be queued behind an active container,
+            // add a "busy" reaction so the user knows the agent received it
+            if (queue.isActive(chatJid)) {
+              const lastMsg = messagesToSend[messagesToSend.length - 1];
+              const baseJidForReaction = getBaseJid(chatJid);
+              channel
+                .addReaction?.(baseJidForReaction, lastMsg.id, BUSY_EMOJI)
+                ?.catch((err) =>
+                  logger.debug(
+                    { chatJid, err },
+                    'Failed to add busy reaction',
+                  ),
+                );
+              // Track for removal when processing starts
+              const existing = pendingBusyReactions.get(chatJid) || [];
+              existing.push({
+                jid: baseJidForReaction,
+                messageTs: lastMsg.id,
+              });
+              pendingBusyReactions.set(chatJid, existing);
+            }
+
             queue.enqueueMessageCheck(chatJid);
           }
         }

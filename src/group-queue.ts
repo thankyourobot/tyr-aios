@@ -62,6 +62,13 @@ export class GroupQueue {
     this.processMessagesFn = fn;
   }
 
+  /**
+   * Check if a group currently has an active container.
+   */
+  isActive(groupJid: string): boolean {
+    return this.groups.get(groupJid)?.active ?? false;
+  }
+
   enqueueMessageCheck(groupJid: string): void {
     if (this.shuttingDown) return;
 
@@ -245,6 +252,31 @@ export class GroupQueue {
     this.drainWaiting();
 
     return true;
+  }
+
+  /**
+   * Get which group folders currently have active containers.
+   * Used by recent activity snapshot to show agents what else is running.
+   */
+  getActiveGroups(): Array<{
+    groupFolder: string;
+    isTaskContainer: boolean;
+  }> {
+    const seen = new Set<string>();
+    const result: Array<{
+      groupFolder: string;
+      isTaskContainer: boolean;
+    }> = [];
+    for (const [_jid, state] of this.groups) {
+      if (state.active && state.groupFolder && !seen.has(state.groupFolder)) {
+        seen.add(state.groupFolder);
+        result.push({
+          groupFolder: state.groupFolder,
+          isTaskContainer: state.isTaskContainer,
+        });
+      }
+    }
+    return result;
   }
 
   private async runForGroup(

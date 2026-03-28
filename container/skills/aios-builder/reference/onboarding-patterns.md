@@ -10,7 +10,7 @@ How a new agent gets from deployed to fully operational.
 
 ## How It's Triggered
 
-When Robot builds a new agent, it creates an onboarding task in `tasks.db` assigned to the new agent. The task should include a pointer to this document and confirm the chain of command. The agent's standard heartbeat picks it up and drives progress — on each heartbeat invocation, the agent checks whether the onboarding task is open and moves it forward. The task stays open until onboarding is complete and confirmed.
+When Robot builds a new agent, it creates an onboarding task in `assignments.db` assigned to the new agent. The task should include a pointer to this document and confirm the chain of command. The agent's standard heartbeat picks it up and drives progress — on each heartbeat invocation, the agent checks whether the onboarding task is open and moves it forward. The task stays open until onboarding is complete and confirmed.
 
 Onboarding is a one-time process. If something significant comes up later that requires additional integration, the chain of command creates a new task for it. There is no "re-onboarding."
 

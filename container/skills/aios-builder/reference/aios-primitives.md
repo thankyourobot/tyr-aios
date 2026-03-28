@@ -74,7 +74,7 @@ Mount logic, allowed tools, and SDK settings are defined in the NanoClaw source.
 
 Main group also gets the NanoClaw project root mounted at `/workspace/project/` (read-only).
 
-**Write boundaries:** Non-main agents can only write to their own workspace, IPC directory, and allowlisted shared paths. They cannot write to the host, other groups' workspaces, or `container/skills/`. To deploy anything outside their workspace (e.g., a global skill), non-main agents create a task in the shared `tasks.db` for the main group agent to review and execute.
+**Write boundaries:** Non-main agents can only write to their own workspace, IPC directory, and allowlisted shared paths. They cannot write to the host, other groups' workspaces, or `container/skills/`. To deploy anything outside their workspace (e.g., a global skill), non-main agents create a task in the shared `assignments.db` for the main group agent to review and execute.
 
 Additional mounts beyond the defaults are controlled by the mount allowlist config on the host.
 
@@ -121,7 +121,7 @@ Agents communicate via Slack @mentions. Director agents have their own Slack app
 
 ### Shared Task Database
 
-The shared `tasks.db` remains available for asynchronous coordination when immediate attention isn't needed.
+The shared `assignments.db` remains available for asynchronous coordination when immediate attention isn't needed.
 
 ### Emoji Reactions
 
@@ -167,9 +167,9 @@ Timezone is configured at the system level on the host.
 | Database | Location | Purpose |
 |---|---|---|
 | `messages.db` | `store/` | Messages, groups, sessions, scheduled tasks (NanoClaw internal) |
-| `tasks.db` | `data/shared/` | Cross-agent task coordination |
+| `assignments.db` | `data/shared/` | Cross-agent task coordination |
 
-The shared `tasks.db` is the coordination mechanism between agents. Inspect its schema directly. Available inside containers at `/workspace/extra/shared/tasks.db`.
+The shared `assignments.db` is the coordination mechanism between agents. Inspect its schema directly. Available inside containers at `/workspace/extra/shared/assignments.db`.
 
 ## State & Persistence
 

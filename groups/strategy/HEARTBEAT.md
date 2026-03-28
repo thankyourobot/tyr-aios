@@ -7,7 +7,10 @@ You have NO memory of prior conversations or heartbeats. You are starting from s
 ## What to do
 
 1. **Check recent activity.** Call the `get_recent_activity` tool to see what has been happening in your channels. If conversations are in progress or work was just completed, do not interfere.
-2. **Check open assignments** assigned to you in `/workspace/extra/shared/assignments.db`
+2. **Check open assignments** assigned to you:
+   ```
+   sqlite3 /workspace/extra/shared/assignments.db "SELECT id, title, status, json_extract(meta, '$.description') as description FROM assignments WHERE agent_id='strategy' AND status IN ('open', 'active')"
+   ```
 3. **Check active workpapers** in `projects/` for in-progress work.
 4. **Decide what to do.** A heartbeat is for lightweight progress — status checks, small updates, surfacing blockers. It is NOT for completing large tasks autonomously. Specifically:
    - **Do:** Check on blocked items, update workpaper status, surface things that need human attention
@@ -23,7 +26,7 @@ Your output IS the Slack message. If you produce any text — including HTML com
 **When there is nothing actionable, use `<internal>` tags to contain your reasoning and produce nothing else:**
 
 ```
-<internal>Checked recent activity, open assignments, and workpapers. Nothing actionable for a lightweight heartbeat.</internal>
+<internal>Checked recent activity, open assignments, and workpapers. Nothing actionable for a lightweight heartbeat. All assignments require human check-in per Progressive Autonomy guidelines.</internal>
 ```
 
 The `<internal>` tags are stripped by NanoClaw. If the remaining output is empty, no Slack message is sent. This is the ONLY way to stay silent.
@@ -38,7 +41,3 @@ The `<internal>` tags are stripped by NanoClaw. If the remaining output is empty
 - If you take action, describe briefly what you did
 - If you need human input, say what you need and from whom
 - If there is nothing actionable, use `<internal>` tags as shown above
-
-## External data sources
-
-None defined. Add agent-specific sources here when customizing.

@@ -25,7 +25,11 @@ export interface IpcDeps {
   /** Check if a group is registered in a channel (for multi-group authorization). */
   isGroupInChannel?: (chatJid: string, groupFolder: string) => boolean;
   /** Add emoji reaction to a message. */
-  addReaction?: (jid: string, messageTs: string, emoji: string) => Promise<void>;
+  addReaction?: (
+    jid: string,
+    messageTs: string,
+    emoji: string,
+  ) => Promise<void>;
 }
 
 let ipcWatcherRunning = false;
@@ -80,7 +84,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
                 const targetGroup = registeredGroups[data.chatJid];
-                const isChannelMember = deps.isGroupInChannel?.(data.chatJid, sourceGroup) ?? false;
+                const isChannelMember =
+                  deps.isGroupInChannel?.(data.chatJid, sourceGroup) ?? false;
                 if (
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup) ||
@@ -99,11 +104,21 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 }
               }
               // Handle emoji reaction IPC action
-              if (data.type === 'reaction' && data.chatJid && data.messageTs && data.emoji) {
-                const isChannelMember = deps.isGroupInChannel?.(data.chatJid, sourceGroup) ?? false;
+              if (
+                data.type === 'reaction' &&
+                data.chatJid &&
+                data.messageTs &&
+                data.emoji
+              ) {
+                const isChannelMember =
+                  deps.isGroupInChannel?.(data.chatJid, sourceGroup) ?? false;
                 if (isMain || isChannelMember) {
                   if (deps.addReaction) {
-                    await deps.addReaction(data.chatJid, data.messageTs, data.emoji);
+                    await deps.addReaction(
+                      data.chatJid,
+                      data.messageTs,
+                      data.emoji,
+                    );
                     logger.info(
                       { chatJid: data.chatJid, emoji: data.emoji, sourceGroup },
                       'IPC reaction added',

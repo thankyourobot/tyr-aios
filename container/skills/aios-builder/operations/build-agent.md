@@ -42,12 +42,12 @@ The agent drives its own onboarding. Robot's job is to set up the conditions for
 
 **Robot's responsibilities at build time:**
 - Establish chain of command in the agent's CLAUDE.md (who it reports to, where to escalate)
-- Create an onboarding task in `tasks.db` assigned to the new agent. The task should reference `reference/onboarding-patterns.md` and confirm the chain of command.
+- Create an onboarding task in `assignments.db` assigned to the new agent. The task should reference `reference/onboarding-patterns.md` and confirm the chain of command.
 - That's it. The agent's heartbeat picks up the task and drives onboarding autonomously from there.
 
 See `reference/onboarding-patterns.md` for the full onboarding pattern — what the agent works through, the five pillars, autonomy principles, and how onboarding completes.
 
-**Deliverable:** Chain of command documented in CLAUDE.md. Onboarding task created in `tasks.db`.
+**Deliverable:** Chain of command documented in CLAUDE.md. Onboarding task created in `assignments.db`.
 
 ## Execution
 
@@ -55,7 +55,7 @@ This operation follows the build philosophy — assess complexity, create a work
 
 **Collaborative mode:** Elicit the directive and domain knowledge from the human. Draft the CLAUDE.md together. Review skills and rhythms. The builder structures what the human already knows about this agent's role.
 
-**Autonomous mode:** If the agent's purpose is clear from context (e.g., a task in tasks.db says "create a security monitoring agent"), make judgment calls and document decisions in the workpaper. Stop only when genuinely human-blocked.
+**Autonomous mode:** If the agent's purpose is clear from context (e.g., a task in assignments.db says "create a security monitoring agent"), make judgment calls and document decisions in the workpaper. Stop only when genuinely human-blocked.
 
 ## Infrastructure
 
