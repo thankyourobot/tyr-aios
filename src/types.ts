@@ -156,3 +156,42 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+// --- Container I/O types ---
+
+export interface ContainerInput {
+  prompt: string;
+  sessionId?: string;
+  groupFolder: string;
+  chatJid: string;
+  isMain: boolean;
+  isScheduledTask?: boolean;
+  assistantName?: string;
+  verbose?: boolean;
+  thinking?: boolean;
+  maxThinkingTokens?: number;
+  filebrowserBaseUrl?: string;
+  threadTs?: string;
+  forkFromSession?: boolean;
+  resumeSessionAt?: string;
+}
+
+export interface ContainerOutput {
+  status: 'success' | 'error';
+  result: string | null;
+  type?: 'result' | 'verbose' | 'thinking';
+  newSessionId?: string;
+  lastAssistantUuid?: string;
+  contextUsage?: {
+    inputTokens: number;
+    cacheCreationTokens: number;
+    cacheReadTokens: number;
+    contextWindow: number;
+  };
+  model?: string;
+  compaction?: {
+    preTokens: number;
+    trigger: 'manual' | 'auto';
+  };
+  error?: string;
+}

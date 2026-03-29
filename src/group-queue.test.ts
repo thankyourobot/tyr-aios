@@ -437,6 +437,192 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  // ========================================================
+  // Parallel thread support
+  // ========================================================
+
+  describe('parallel thread support', () => {
+    it('two threads enqueued simultaneously both run (activeCount is 2)', async () => {
+      let activeCount = 0;
+      let maxActive = 0;
+      const completionCallbacks: Array<() => void> = [];
+
+      const processMessages = vi.fn(async (groupJid: string) => {
+        activeCount++;
+        maxActive = Math.max(maxActive, activeCount);
+        await new Promise<void>((resolve) => completionCallbacks.push(resolve));
+        activeCount--;
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+
+      // Enqueue two different threads in the same channel
+      queue.enqueueMessageCheck('group1@g.us', 'thread-1');
+      queue.enqueueMessageCheck('group1@g.us', 'thread-2');
+
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Both should be running in parallel (2 slots, 2 threads)
+      expect(maxActive).toBe(2);
+      expect(activeCount).toBe(2);
+      expect(processMessages).toHaveBeenCalledTimes(2);
+
+      // Clean up
+      completionCallbacks.forEach((cb) => cb());
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('same-thread duplicate queues instead of starting new container', async () => {
+      let activeCount = 0;
+      const completionCallbacks: Array<() => void> = [];
+
+      const processMessages = vi.fn(async (groupJid: string) => {
+        activeCount++;
+        await new Promise<void>((resolve) => completionCallbacks.push(resolve));
+        activeCount--;
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+
+      // Enqueue first message for thread-1
+      queue.enqueueMessageCheck('group1@g.us', 'thread-1');
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(activeCount).toBe(1);
+      expect(processMessages).toHaveBeenCalledTimes(1);
+
+      // Enqueue second message for same thread — should queue, not start new container
+      queue.enqueueMessageCheck('group1@g.us', 'thread-1');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Still only 1 active — second was queued as pending
+      expect(activeCount).toBe(1);
+      expect(processMessages).toHaveBeenCalledTimes(1);
+
+      // Complete first — queued message should drain
+      completionCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(processMessages).toHaveBeenCalledTimes(2);
+
+      // Complete the drain run
+      completionCallbacks[1]();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('wouldQueue returns correct values per thread state', async () => {
+      const completionCallbacks: Array<() => void> = [];
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => completionCallbacks.push(resolve));
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+
+      // Nothing active yet — should not queue
+      expect(queue.wouldQueue('group1@g.us', 'thread-1')).toBe(false);
+      expect(queue.wouldQueue('group1@g.us', 'thread-2')).toBe(false);
+
+      // Start thread-1
+      queue.enqueueMessageCheck('group1@g.us', 'thread-1');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // thread-1 active → would queue; thread-2 not active but 1 slot used → still room
+      expect(queue.wouldQueue('group1@g.us', 'thread-1')).toBe(true);
+      expect(queue.wouldQueue('group1@g.us', 'thread-2')).toBe(false);
+
+      // Fill second slot with thread-2
+      queue.enqueueMessageCheck('group1@g.us', 'thread-2');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Both active, at concurrency limit — any new thread would queue
+      expect(queue.wouldQueue('group1@g.us', 'thread-1')).toBe(true);
+      expect(queue.wouldQueue('group1@g.us', 'thread-2')).toBe(true);
+      expect(queue.wouldQueue('group1@g.us', 'thread-3')).toBe(true);
+
+      // Clean up
+      completionCallbacks.forEach((cb) => cb());
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('queueKey composite key format: chatJid::threadTs or chatJid::__root__', async () => {
+      const processedKeys: string[] = [];
+
+      const processMessages = vi.fn(async (groupJid: string, threadTs?: string) => {
+        // Record the arguments to verify routing
+        processedKeys.push(`${groupJid}::${threadTs || '__root__'}`);
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+
+      // Enqueue with explicit thread
+      queue.enqueueMessageCheck('group1@g.us', 'ts-123.456');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Enqueue with null thread (root)
+      queue.enqueueMessageCheck('group1@g.us', null);
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Both should have been dispatched (different keys)
+      expect(processMessages).toHaveBeenCalledTimes(2);
+      expect(processedKeys).toContain('group1@g.us::ts-123.456');
+      expect(processedKeys).toContain('group1@g.us::__root__');
+
+      // Verify isActive sees the group as active-ish (at least one thread ran)
+      // After both completed synchronously, the slots should be cleaned up.
+      // Let's verify they were treated as separate slots by checking they ran in parallel
+    });
+
+    it('thread slot eviction after drain decrements activeCount', async () => {
+      const completionCallbacks: Array<() => void> = [];
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => completionCallbacks.push(resolve));
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+
+      // Fill both slots with two threads
+      queue.enqueueMessageCheck('group1@g.us', 'thread-1');
+      queue.enqueueMessageCheck('group1@g.us', 'thread-2');
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(processMessages).toHaveBeenCalledTimes(2);
+
+      // At capacity — third group would queue
+      expect(queue.wouldQueue('group2@g.us')).toBe(true);
+
+      // Enqueue a third that should wait
+      queue.enqueueMessageCheck('group2@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Still only 2 calls — third is waiting
+      expect(processMessages).toHaveBeenCalledTimes(2);
+
+      // Complete thread-1 — activeCount should decrement, allowing group2 to start
+      completionCallbacks[0]();
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Third should now be running
+      expect(processMessages).toHaveBeenCalledTimes(3);
+
+      // Slot freed — wouldQueue for a brand new group should be false if thread-2 finishes too
+      completionCallbacks[1](); // thread-2
+      await vi.advanceTimersByTimeAsync(10);
+
+      completionCallbacks[2](); // group2
+      await vi.advanceTimersByTimeAsync(10);
+
+      // All done — new enqueue should not queue
+      expect(queue.wouldQueue('group3@g.us')).toBe(false);
+    });
+  });
+
   it('preempts when idle arrives with pending tasks', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;

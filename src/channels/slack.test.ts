@@ -40,7 +40,7 @@ vi.mock('@slack/bolt', () => ({
 
     client = {
       auth: {
-        test: vi.fn().mockResolvedValue({ user_id: 'U_BOT_123' }),
+        test: vi.fn().mockResolvedValue({ user_id: 'U_BOT_123', bot_id: 'B_MY_BOT' }),
       },
       chat: {
         postMessage: vi.fn().mockResolvedValue(undefined),
@@ -66,6 +66,18 @@ vi.mock('@slack/bolt', () => ({
 
     event(name: string, handler: Handler) {
       this.eventHandlers.set(name, handler);
+    }
+
+    action(nameOrPattern: string | RegExp, handler: Handler) {
+      this.eventHandlers.set(`action:${nameOrPattern}`, handler);
+    }
+
+    view(name: string, handler: Handler) {
+      this.eventHandlers.set(`view:${name}`, handler);
+    }
+
+    command(name: string, handler: Handler) {
+      this.eventHandlers.set(`command:${name}`, handler);
     }
 
     async start() {}
@@ -443,9 +455,9 @@ describe('SlackChannel', () => {
       });
       await triggerMessageEvent(event);
 
-      // Threaded replies are delivered as regular channel messages
+      // Threaded replies are delivered with thread-aware JIDs
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:C0123456789:t:1704067200.000000',
         expect.objectContaining({
           content: 'Thread reply',
         }),
@@ -465,7 +477,7 @@ describe('SlackChannel', () => {
       await triggerMessageEvent(event);
 
       expect(opts.onMessage).toHaveBeenCalledWith(
-        'slack:C0123456789',
+        'slack:C0123456789:t:1704067200.000000',
         expect.objectContaining({
           content: 'Thread parent',
         }),

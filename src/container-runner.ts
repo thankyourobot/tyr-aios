@@ -27,48 +27,15 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import { RegisteredGroup } from './types.js';
+import {
+  createParseState,
+  parseStreamingChunk,
+  parseLegacyOutput,
+} from './output-parser.js';
+import { ContainerInput, ContainerOutput, RegisteredGroup } from './types.js';
 
-// Sentinel markers for robust output parsing (must match agent-runner)
-const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
-const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-
-export interface ContainerInput {
-  prompt: string;
-  sessionId?: string;
-  groupFolder: string;
-  chatJid: string;
-  isMain: boolean;
-  isScheduledTask?: boolean;
-  assistantName?: string;
-  verbose?: boolean;
-  thinking?: boolean;
-  maxThinkingTokens?: number;
-  filebrowserBaseUrl?: string;
-  threadTs?: string;
-  forkFromSession?: boolean;
-  resumeSessionAt?: string;
-}
-
-export interface ContainerOutput {
-  status: 'success' | 'error';
-  result: string | null;
-  type?: 'result' | 'verbose' | 'thinking';
-  newSessionId?: string;
-  lastAssistantUuid?: string;
-  contextUsage?: {
-    inputTokens: number;
-    cacheCreationTokens: number;
-    cacheReadTokens: number;
-    contextWindow: number;
-  };
-  model?: string;
-  compaction?: {
-    preTokens: number;
-    trigger: 'manual' | 'auto';
-  };
-  error?: string;
-}
+// Re-export for backwards compatibility
+export type { ContainerInput, ContainerOutput } from './types.js';
 
 interface VolumeMount {
   hostPath: string;
@@ -373,8 +340,7 @@ export async function runContainerAgent(
     container.stdin.end();
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
-    let parseBuffer = '';
-    let newSessionId: string | undefined;
+    const parseState = createParseState();
     let outputChain = Promise.resolve();
 
     container.stdout.on('data', (data) => {
@@ -397,34 +363,14 @@ export async function runContainerAgent(
 
       // Stream-parse for output markers
       if (onOutput) {
-        parseBuffer += chunk;
-        let startIdx: number;
-        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
-          const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
-          if (endIdx === -1) break; // Incomplete pair, wait for more data
-
-          const jsonStr = parseBuffer
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-          parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
-
-          try {
-            const parsed: ContainerOutput = JSON.parse(jsonStr);
-            if (parsed.newSessionId) {
-              newSessionId = parsed.newSessionId;
-            }
-            hadStreamingOutput = true;
-            // Activity detected — reset the hard timeout
-            resetTimeout();
-            // Call onOutput for all markers (including null results)
-            // so idle timers start even for "silent" query completions.
-            outputChain = outputChain.then(() => onOutput(parsed));
-          } catch (err) {
-            logger.warn(
-              { group: group.name, error: err },
-              'Failed to parse streamed output chunk',
-            );
-          }
+        const results = parseStreamingChunk(parseState, chunk, group.name);
+        for (const parsed of results) {
+          hadStreamingOutput = true;
+          // Activity detected — reset the hard timeout
+          resetTimeout();
+          // Call onOutput for all markers (including null results)
+          // so idle timers start even for "silent" query completions.
+          outputChain = outputChain.then(() => onOutput(parsed));
         }
       }
     });
@@ -515,7 +461,7 @@ export async function runContainerAgent(
             resolve({
               status: 'success',
               result: null,
-              newSessionId,
+              newSessionId: parseState.newSessionId,
             });
           });
           return;
@@ -617,13 +563,13 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId },
+            { group: group.name, duration, newSessionId: parseState.newSessionId },
             'Container completed (streaming mode)',
           );
           resolve({
             status: 'success',
             result: null,
-            newSessionId,
+            newSessionId: parseState.newSessionId,
           });
         });
         return;
@@ -631,22 +577,7 @@ export async function runContainerAgent(
 
       // Legacy mode: parse the last output marker pair from accumulated stdout
       try {
-        // Extract JSON between sentinel markers for robust parsing
-        const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-        const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-
-        let jsonLine: string;
-        if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-          jsonLine = stdout
-            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-            .trim();
-        } else {
-          // Fallback: last non-empty line (backwards compatibility)
-          const lines = stdout.trim().split('\n');
-          jsonLine = lines[lines.length - 1];
-        }
-
-        const output: ContainerOutput = JSON.parse(jsonLine);
+        const output = parseLegacyOutput(stdout);
 
         logger.info(
           {
@@ -693,106 +624,10 @@ export async function runContainerAgent(
   });
 }
 
-export function writeTasksSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  tasks: Array<{
-    id: string;
-    groupFolder: string;
-    prompt: string;
-    schedule_type: string;
-    schedule_value: string;
-    status: string;
-    next_run: string | null;
-  }>,
-): void {
-  // Write filtered tasks to the group's IPC directory
-  const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
-
-  const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
-}
-
-export interface AvailableGroup {
-  jid: string;
-  name: string;
-  lastActivity: string;
-  isRegistered: boolean;
-}
-
-/**
- * Write available groups snapshot for the container to read.
- * Only main group can see all available groups (for activation).
- * Non-main groups only see their own registration status.
- */
-export function writeGroupsSnapshot(
-  groupFolder: string,
-  isMain: boolean,
-  groups: AvailableGroup[],
-  registeredJids: Set<string>,
-): void {
-  const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  // Main sees all groups; others see nothing (they can't activate groups)
-  const visibleGroups = isMain ? groups : [];
-
-  const groupsFile = path.join(groupIpcDir, 'available_groups.json');
-  fs.writeFileSync(
-    groupsFile,
-    JSON.stringify(
-      {
-        groups: visibleGroups,
-        lastSync: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
-}
-
-/**
- * Write recent activity snapshot for the container to read.
- * Gives agents awareness of recent channel activity and active containers.
- */
-export function writeRecentActivitySnapshot(
-  groupFolder: string,
-  channels: Array<{
-    jid: string;
-    name: string;
-    role: string;
-    messages: Array<{
-      sender_name: string;
-      content: string;
-      timestamp: string;
-      is_bot: boolean;
-      thread_ts: string | null;
-    }>;
-  }>,
-  activeContainers: Array<{ group_folder: string; agent_name: string }>,
-  lookbackMinutes: number,
-): void {
-  const groupIpcDir = resolveGroupIpcPath(groupFolder);
-  fs.mkdirSync(groupIpcDir, { recursive: true });
-
-  const activityFile = path.join(groupIpcDir, 'recent_activity.json');
-  fs.writeFileSync(
-    activityFile,
-    JSON.stringify(
-      {
-        generated_at: new Date().toISOString(),
-        lookback_minutes: lookbackMinutes,
-        channels,
-        active_containers: activeContainers,
-      },
-      null,
-      2,
-    ),
-  );
-}
+// Re-export snapshot functions from their new home
+export {
+  writeTasksSnapshot,
+  writeGroupsSnapshot,
+  writeRecentActivitySnapshot,
+  type AvailableGroup,
+} from './snapshot-writer.js';

@@ -310,7 +310,7 @@ function migrateRegisteredGroupsPK(database: Database.Database): void {
         SELECT jid, folder, name, trigger_pattern, added_at, container_config,
                requires_trigger, display_name, display_emoji, display_icon_url,
                assistant_name, is_main, verbose_default, thinking_default,
-               COALESCE(channel_role, 'director'), bot_user_id
+               COALESCE(channel_role, 'director'), bot_user_id, bot_token
         FROM registered_groups;
       DROP TABLE registered_groups;
       ALTER TABLE registered_groups_new RENAME TO registered_groups;
