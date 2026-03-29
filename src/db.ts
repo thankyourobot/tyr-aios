@@ -910,9 +910,7 @@ export function getGroupByFolder(
 /**
  * Get all JIDs registered to a given folder (supports multi-channel agents).
  */
-export function getJidsForFolder(
-  folder: string,
-): Array<{
+export function getJidsForFolder(folder: string): Array<{
   jid: string;
   name: string;
   channelRole: string;

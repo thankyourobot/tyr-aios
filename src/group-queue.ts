@@ -48,10 +48,7 @@ export class GroupQueue {
     | null = null;
   private shuttingDown = false;
 
-  private getGroup(
-    chatJid: string,
-    threadTs?: string | null,
-  ): GroupState {
+  private getGroup(chatJid: string, threadTs?: string | null): GroupState {
     const key = queueKey(chatJid, threadTs);
     let state = this.groups.get(key);
     if (!state) {
@@ -102,10 +99,7 @@ export class GroupQueue {
     return this.activeCount >= MAX_CONCURRENT_CONTAINERS;
   }
 
-  enqueueMessageCheck(
-    groupJid: string,
-    threadTs?: string | null,
-  ): void {
+  enqueueMessageCheck(groupJid: string, threadTs?: string | null): void {
     if (this.shuttingDown) return;
 
     const key = queueKey(groupJid, threadTs);
@@ -141,11 +135,7 @@ export class GroupQueue {
     );
   }
 
-  enqueueTask(
-    groupJid: string,
-    taskId: string,
-    fn: () => Promise<void>,
-  ): void {
+  enqueueTask(groupJid: string, taskId: string, fn: () => Promise<void>): void {
     if (this.shuttingDown) return;
 
     // Tasks always run on the __root__ slot
@@ -446,7 +436,10 @@ export class GroupQueue {
     } catch (err) {
       logger.error({ key, taskId: task.id, err }, 'Error running task');
     } finally {
-      this.cleanupThreadIpc(state.groupFolder, state.threadKey === '__root__' ? null : state.threadKey);
+      this.cleanupThreadIpc(
+        state.groupFolder,
+        state.threadKey === '__root__' ? null : state.threadKey,
+      );
       state.active = false;
       state.isTaskContainer = false;
       state.runningTaskId = null;
@@ -505,13 +498,9 @@ export class GroupQueue {
 
     // Then pending messages
     if (state.pendingMessages) {
-      const threadTs =
-        state.threadKey === '__root__' ? null : state.threadKey;
+      const threadTs = state.threadKey === '__root__' ? null : state.threadKey;
       this.runForGroup(state.chatJid, threadTs, 'drain').catch((err) =>
-        logger.error(
-          { key, err },
-          'Unhandled error in runForGroup (drain)',
-        ),
+        logger.error({ key, err }, 'Unhandled error in runForGroup (drain)'),
       );
       return;
     }
