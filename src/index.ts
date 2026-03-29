@@ -112,6 +112,15 @@ const pendingBusyReactions = new Map<
 >();
 const BUSY_EMOJI = 'hourglass_flowing_sand';
 
+/**
+ * Canonical cursor key for lastAgentTimestamp.
+ * Thread messages: synthetic JID (matches how messages are stored in DB).
+ * Root messages: base JID as-is.
+ */
+function getCursorKey(baseJid: string, threadTs?: string | null): string {
+  return threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
+}
+
 // Per-thread toggle overrides (ephemeral — resets on restart)
 const threadToggles = new Map<
   string,
@@ -637,7 +646,7 @@ function dispatchMessage(chatJid: string, msg: NewMessage): void {
       if (!queue.sendMessage(channelJid, threadTs, formatted)) {
         queue.enqueueMessageCheck(channelJid, threadTs);
       } else {
-        lastAgentTimestamp[chatJid] = msg.timestamp;
+        lastAgentTimestamp[getCursorKey(channelJid, threadTs)] = msg.timestamp;
         saveState();
       }
     }
@@ -659,7 +668,8 @@ function dispatchMessage(chatJid: string, msg: NewMessage): void {
     if (!queue.sendMessage(groupJid, threadTs || msg.threadTs, formatted)) {
       queue.enqueueMessageCheck(groupJid, threadTs || msg.threadTs);
     } else {
-      lastAgentTimestamp[groupJid] = msg.timestamp;
+      lastAgentTimestamp[getCursorKey(groupJid, threadTs || msg.threadTs)] =
+        msg.timestamp;
       saveState();
     }
   }
@@ -813,7 +823,7 @@ async function processGroupMessages(
   // Thread messages are stored under synthetic JIDs (e.g., slack:C123:t:171110...).
   // Use the synthetic JID for retrieval when processing a specific thread.
   const fetchJid = threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
-  const cursorKey = threadTs ? fetchJid : chatJid;
+  const cursorKey = getCursorKey(baseJid, threadTs);
   const sinceTimestamp =
     lastAgentTimestamp[cursorKey] || lastAgentTimestamp[baseJid] || '';
   // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation
@@ -1220,7 +1230,13 @@ async function runAgent(
         resumeSessionAt: rewindOpts?.resumeSessionAt,
       },
       (proc, containerName) =>
-        queue.registerProcess(chatJid, threadTs, proc, containerName, group.folder),
+        queue.registerProcess(
+          chatJid,
+          threadTs,
+          proc,
+          containerName,
+          group.folder,
+        ),
       wrappedOnOutput,
     );
 
@@ -1432,7 +1448,7 @@ async function startMessageLoop(): Promise<void> {
           // context that accumulated between triggers is included.
           const allPending = getMessagesSince(
             chatJid,
-            lastAgentTimestamp[chatJid] || '',
+            lastAgentTimestamp[getCursorKey(chatJid)] || '',
             ASSISTANT_NAME,
           );
           const messagesToSend =
@@ -1453,19 +1469,22 @@ async function startMessageLoop(): Promise<void> {
             messagesToSend[messagesToSend.length - 1].threadTs || null;
 
           // Try to pipe to an existing container for this specific thread (or root)
-          if (
-            !isDm &&
-            queue.sendMessage(chatJid, msgThread, formatted)
-          ) {
+          if (!isDm && queue.sendMessage(chatJid, msgThread, formatted)) {
             logger.debug(
-              { chatJid, threadTs: msgThread || '__root__', count: messagesToSend.length },
+              {
+                chatJid,
+                threadTs: msgThread || '__root__',
+                count: messagesToSend.length,
+              },
               'Piped messages to active thread container',
             );
-            lastAgentTimestamp[chatJid] =
+            lastAgentTimestamp[getCursorKey(chatJid, msgThread)] =
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
             // Show typing indicator — use synthetic thread JID for thread context lookup
-            const typingPipeJid = msgThread ? buildThreadJid(getBaseJid(chatJid), msgThread) : chatJid;
+            const typingPipeJid = msgThread
+              ? buildThreadJid(getBaseJid(chatJid), msgThread)
+              : chatJid;
             channel
               .setTyping?.(typingPipeJid, true)
               ?.catch((err) =>
@@ -1483,10 +1502,7 @@ async function startMessageLoop(): Promise<void> {
               channel
                 .addReaction?.(baseJidForReaction, lastMsg.id, BUSY_EMOJI)
                 ?.catch((err) =>
-                  logger.debug(
-                    { chatJid, err },
-                    'Failed to add busy reaction',
-                  ),
+                  logger.debug({ chatJid, err }, 'Failed to add busy reaction'),
                 );
               // Track for removal when processing starts (keyed by composite for thread isolation)
               const busyReactionKey = `${chatJid}::${msgThread || '__root__'}`;
@@ -1653,7 +1669,8 @@ async function main(): Promise<void> {
                   if (!queue.sendMessage(channelJid, evtThreadTs, formatted)) {
                     queue.enqueueMessageCheck(channelJid, evtThreadTs);
                   } else {
-                    lastAgentTimestamp[chatJid] = msg.timestamp;
+                    lastAgentTimestamp[getCursorKey(channelJid, evtThreadTs)] =
+                      msg.timestamp;
                     saveState();
                   }
                 }
