@@ -300,6 +300,7 @@ describe('GroupQueue', () => {
     // Register a process so closeStdin has a groupFolder
     queue.registerProcess(
       'group1@g.us',
+      null,
       {} as any,
       'container-1',
       'test-group',
@@ -340,6 +341,7 @@ describe('GroupQueue', () => {
     // Register process and mark idle
     queue.registerProcess(
       'group1@g.us',
+      null,
       {} as any,
       'container-1',
       'test-group',
@@ -379,6 +381,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
     queue.registerProcess(
       'group1@g.us',
+      null,
       {} as any,
       'container-1',
       'test-group',
@@ -388,7 +391,7 @@ describe('GroupQueue', () => {
     queue.notifyIdle('group1@g.us');
 
     // A new user message arrives — resets idleWaiting
-    queue.sendMessage('group1@g.us', 'hello');
+    queue.sendMessage('group1@g.us', null, 'hello');
 
     // Task enqueued after message reset — should NOT preempt (agent is working)
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
@@ -420,13 +423,14 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
     queue.registerProcess(
       'group1@g.us',
+      null,
       {} as any,
       'container-1',
       'test-group',
     );
 
     // sendMessage should return false — user messages must not go to task containers
-    const result = queue.sendMessage('group1@g.us', 'hello');
+    const result = queue.sendMessage('group1@g.us', null, 'hello');
     expect(result).toBe(false);
 
     resolveTask!();
@@ -453,6 +457,7 @@ describe('GroupQueue', () => {
     // Register process and enqueue a task (no idle yet — no preemption)
     queue.registerProcess(
       'group1@g.us',
+      null,
       {} as any,
       'container-1',
       'test-group',

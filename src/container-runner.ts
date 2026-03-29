@@ -311,8 +311,24 @@ export async function runContainerAgent(
   fs.mkdirSync(groupDir, { recursive: true });
 
   const mounts = buildVolumeMounts(group, input.isMain);
+
+  // Per-thread IPC input overlay: each thread gets its own input directory
+  // mounted over /workspace/ipc/input/ so the agent-runner reads only its thread's input.
+  const threadKey = input.threadTs || '__root__';
+  const groupIpcDir = resolveGroupIpcPath(group.folder);
+  const threadInputDir = path.join(groupIpcDir, 'input', threadKey);
+  fs.mkdirSync(threadInputDir, { recursive: true });
+  mounts.push({
+    hostPath: threadInputDir,
+    containerPath: '/workspace/ipc/input',
+    readonly: false,
+  });
+
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
-  const containerName = `nanoclaw-${safeName}-${Date.now()}`;
+  const threadSuffix = input.threadTs
+    ? `-t${input.threadTs.replace('.', '').slice(-8)}`
+    : '-root';
+  const containerName = `nanoclaw-${safeName}${threadSuffix}-${Date.now()}`;
   const containerArgs = buildContainerArgs(mounts, containerName);
 
   logger.debug(

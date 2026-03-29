@@ -220,9 +220,9 @@ async function handleCommand(
   const text = msg.content.trim();
   const group = resolveGroup(chatJid);
 
-  // /stop command
+  // /stop command — stops container for the thread where *stop was sent
   if (text === '*stop') {
-    const stopped = await queue.stopGroup(chatJid);
+    const stopped = await queue.stopGroup(chatJid, msg.threadTs);
     const displayOpts: SendMessageOpts = {
       displayName: group?.displayName,
       displayEmoji: group?.displayEmoji,
@@ -631,11 +631,11 @@ function dispatchMessage(chatJid: string, msg: NewMessage): void {
   const { threadTs } = parseSlackJid(chatJid);
 
   if (!isMultiGroupChannel(channelJid)) {
-    // Single-group: existing behavior (IPC pipe or enqueue)
+    // Single-group: route using base channel JID + threadTs for consistent queue keying
     if (isSyntheticThreadJid(chatJid)) {
       const formatted = formatMessages([msg], TIMEZONE);
-      if (!queue.sendMessage(chatJid, formatted)) {
-        queue.enqueueMessageCheck(chatJid);
+      if (!queue.sendMessage(channelJid, threadTs, formatted)) {
+        queue.enqueueMessageCheck(channelJid, threadTs);
       } else {
         lastAgentTimestamp[chatJid] = msg.timestamp;
         saveState();
@@ -656,8 +656,8 @@ function dispatchMessage(chatJid: string, msg: NewMessage): void {
       : channelJid;
     const groupJid = buildGroupJid(baseJid, group.folder);
     const formatted = formatMessages([msg], TIMEZONE, true);
-    if (!queue.sendMessage(groupJid, formatted)) {
-      queue.enqueueMessageCheck(groupJid);
+    if (!queue.sendMessage(groupJid, threadTs || msg.threadTs, formatted)) {
+      queue.enqueueMessageCheck(groupJid, threadTs || msg.threadTs);
     } else {
       lastAgentTimestamp[groupJid] = msg.timestamp;
       saveState();
@@ -686,7 +686,7 @@ function dispatchBotMessage(chatJid: string, msg: NewMessage): void {
       ? buildThreadJid(`slack:${parseSlackJid(channelJid).channelId}`, threadTs)
       : channelJid;
     const groupJid = buildGroupJid(baseJid, group.folder);
-    queue.enqueueMessageCheck(groupJid);
+    queue.enqueueMessageCheck(groupJid, threadTs || msg.threadTs);
   }
 }
 
@@ -767,7 +767,10 @@ export function _setRegisteredGroups(
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.
  */
-async function processGroupMessages(chatJid: string): Promise<boolean> {
+async function processGroupMessages(
+  chatJid: string,
+  threadTs?: string,
+): Promise<boolean> {
   // Handle group-qualified JIDs from multi-agent dispatch
   const groupFolder = getGroupFolder(chatJid);
   const baseJid = getBaseJid(chatJid);
@@ -785,7 +788,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (!group) return true;
 
   // Remove any "busy" reactions now that we're processing this group's messages
-  const busyReactions = pendingBusyReactions.get(chatJid);
+  const busyKey = `${chatJid}::${threadTs || '__root__'}`;
+  const busyReactions = pendingBusyReactions.get(busyKey);
   if (busyReactions?.length) {
     const channel_ = findChannel(channels, baseJid);
     for (const { jid, messageTs } of busyReactions) {
@@ -795,7 +799,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
           logger.debug({ chatJid, err }, 'Failed to remove busy reaction'),
         );
     }
-    pendingBusyReactions.delete(chatJid);
+    pendingBusyReactions.delete(busyKey);
   }
 
   const channel = findChannel(channels, baseJid);
@@ -806,13 +810,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   const isMainGroup = group.isMain === true;
 
-  // Use baseJid for message retrieval (messages stored under base JID)
+  // Thread messages are stored under synthetic JIDs (e.g., slack:C123:t:171110...).
+  // Use the synthetic JID for retrieval when processing a specific thread.
+  const fetchJid = threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
+  const cursorKey = threadTs ? fetchJid : chatJid;
   const sinceTimestamp =
-    lastAgentTimestamp[chatJid] || lastAgentTimestamp[baseJid] || '';
+    lastAgentTimestamp[cursorKey] || lastAgentTimestamp[baseJid] || '';
   // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation
   const missedMessages = groupFolder
-    ? getMessagesSinceIncludingBots(baseJid, sinceTimestamp)
-    : getMessagesSince(baseJid, sinceTimestamp, ASSISTANT_NAME);
+    ? getMessagesSinceIncludingBots(fetchJid, sinceTimestamp)
+    : getMessagesSince(fetchJid, sinceTimestamp, ASSISTANT_NAME);
 
   if (missedMessages.length === 0) return true;
 
@@ -866,8 +873,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
+  const previousCursor = lastAgentTimestamp[cursorKey] || '';
+  lastAgentTimestamp[cursorKey] =
     missedMessages[missedMessages.length - 1].timestamp;
   saveState();
 
@@ -896,7 +903,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
         { group: group.name },
         'Idle timeout, closing container stdin',
       );
-      queue.closeStdin(chatJid);
+      queue.closeStdin(chatJid, lastThreadTs);
     }, IDLE_TIMEOUT);
   };
 
@@ -911,7 +918,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
       new RegExp(`(?:^|\\s)@${escapeRegex(group.assistantName)}\\b`, 'i').test(
         triggeringMsg.content,
       ));
-  const typingJid = groupFolder ? baseJid : chatJid;
+  // Use synthetic thread JID for typing indicator so it matches latestMessageContext
+  const typingJid = groupFolder ? baseJid : threadTs ? fetchJid : chatJid;
   if (isMentioned) {
     await channel.setTyping?.(typingJid, true, group.botToken);
   }
@@ -921,8 +929,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
   // Get toggle state for this thread
   const toggleState = getToggleState(chatJid, lastThreadTs);
 
-  // Set active thread for IPC routing
-  queue.setActiveThreadTs(chatJid, lastThreadTs);
+  // Thread routing is now handled by composite queue keys — no need to set active thread
 
   const output = await runAgent(
     group,
@@ -1044,7 +1051,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
       }
 
       if (result.status === 'success') {
-        queue.notifyIdle(chatJid);
+        queue.notifyIdle(chatJid, lastThreadTs);
       }
 
       if (result.status === 'error') {
@@ -1069,7 +1076,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
       return true;
     }
     // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
+    lastAgentTimestamp[cursorKey] = previousCursor;
     saveState();
     logger.warn(
       { group: group.name },
@@ -1213,7 +1220,7 @@ async function runAgent(
         resumeSessionAt: rewindOpts?.resumeSessionAt,
       },
       (proc, containerName) =>
-        queue.registerProcess(chatJid, proc, containerName, group.folder),
+        queue.registerProcess(chatJid, threadTs, proc, containerName, group.folder),
       wrappedOnOutput,
     );
 
@@ -1440,43 +1447,37 @@ async function startMessageLoop(): Promise<void> {
           const formatted =
             formatMessages(messagesToSend, TIMEZONE) + pipeFileAnnotation;
 
-          // DMs skip IPC pipe to avoid cross-contamination with main group's container
-          // Check thread match — only pipe if the message's thread matches the active container's thread
-          const activeThread = queue.getActiveThreadTs(chatJid);
+          // Per-thread parallel dispatch: try to pipe to existing container for this thread,
+          // otherwise enqueue independently. No more thread-mismatch container killing.
           const msgThread =
             messagesToSend[messagesToSend.length - 1].threadTs || null;
-          // Only pipe if the message is a reply in the same thread the container is serving.
-          // Channel-root messages (msgThread=null) never pipe — they each get their own container.
-          const threadMatch = msgThread !== null && activeThread === msgThread;
-          if (!isDm && threadMatch && queue.sendMessage(chatJid, formatted)) {
+
+          // Try to pipe to an existing container for this specific thread (or root)
+          if (
+            !isDm &&
+            queue.sendMessage(chatJid, msgThread, formatted)
+          ) {
             logger.debug(
-              { chatJid, count: messagesToSend.length },
-              'Piped messages to active container',
+              { chatJid, threadTs: msgThread || '__root__', count: messagesToSend.length },
+              'Piped messages to active thread container',
             );
             lastAgentTimestamp[chatJid] =
               messagesToSend[messagesToSend.length - 1].timestamp;
             saveState();
-            // Show typing indicator while the container processes the piped message
+            // Show typing indicator — use synthetic thread JID for thread context lookup
+            const typingPipeJid = msgThread ? buildThreadJid(getBaseJid(chatJid), msgThread) : chatJid;
             channel
-              .setTyping?.(chatJid, true)
+              .setTyping?.(typingPipeJid, true)
               ?.catch((err) =>
                 logger.warn({ chatJid, err }, 'Failed to set typing indicator'),
               );
           } else {
-            // Thread mismatch or no active container — enqueue for a new one.
-            // If a container IS active but serving a different thread, close it
-            // so the queued messages get processed without waiting for idle timeout.
-            if (activeThread && !threadMatch) {
-              logger.debug(
-                { chatJid, activeThread, msgThread },
-                'Thread mismatch, closing current container to process new thread',
-              );
-              queue.closeStdin(chatJid);
-            }
+            // No active container for this thread — enqueue for a new one.
+            // With parallel threads, this doesn't kill sibling thread containers.
 
-            // If the message will be queued behind an active container,
+            // If the message will be queued (concurrency limit or same-thread active),
             // add a "busy" reaction so the user knows the agent received it
-            if (queue.isActive(chatJid)) {
+            if (queue.wouldQueue(chatJid, msgThread)) {
               const lastMsg = messagesToSend[messagesToSend.length - 1];
               const baseJidForReaction = getBaseJid(chatJid);
               channel
@@ -1487,16 +1488,17 @@ async function startMessageLoop(): Promise<void> {
                     'Failed to add busy reaction',
                   ),
                 );
-              // Track for removal when processing starts
-              const existing = pendingBusyReactions.get(chatJid) || [];
+              // Track for removal when processing starts (keyed by composite for thread isolation)
+              const busyReactionKey = `${chatJid}::${msgThread || '__root__'}`;
+              const existing = pendingBusyReactions.get(busyReactionKey) || [];
               existing.push({
                 jid: baseJidForReaction,
                 messageTs: lastMsg.id,
               });
-              pendingBusyReactions.set(chatJid, existing);
+              pendingBusyReactions.set(busyReactionKey, existing);
             }
 
-            queue.enqueueMessageCheck(chatJid);
+            queue.enqueueMessageCheck(chatJid, msgThread);
           }
         }
       }
@@ -1562,7 +1564,14 @@ function recoverPendingMessages(): void {
           { chatJid, pendingCount: pending.length },
           `Recovery: found unprocessed ${label} messages`,
         );
-        queue.enqueueMessageCheck(chatJid);
+        // Use consistent keying: base JID + threadTs (not synthetic JID)
+        if (isSyntheticThreadJid(chatJid)) {
+          const { threadTs: recoveryThreadTs } = parseSlackJid(chatJid);
+          const baseRecoveryJid = getParentJid(chatJid) || chatJid;
+          queue.enqueueMessageCheck(baseRecoveryJid, recoveryThreadTs);
+        } else {
+          queue.enqueueMessageCheck(chatJid);
+        }
       }
     }
   }
@@ -1638,10 +1647,11 @@ async function main(): Promise<void> {
                   !isMultiGroupChannel(channelJid) &&
                   isSyntheticThreadJid(chatJid)
                 ) {
-                  // Single-group: existing IPC pipe behavior
+                  // Single-group: IPC pipe with thread-aware routing (use base JID for consistent queue keys)
                   const formatted = formatMessages([msg], TIMEZONE);
-                  if (!queue.sendMessage(chatJid, formatted)) {
-                    queue.enqueueMessageCheck(chatJid);
+                  const { threadTs: evtThreadTs } = parseSlackJid(chatJid);
+                  if (!queue.sendMessage(channelJid, evtThreadTs, formatted)) {
+                    queue.enqueueMessageCheck(channelJid, evtThreadTs);
                   } else {
                     lastAgentTimestamp[chatJid] = msg.timestamp;
                     saveState();
@@ -1720,7 +1730,7 @@ async function main(): Promise<void> {
 
       switch (params.command) {
         case 'stop': {
-          const stopped = await queue.stopGroup(channelJid);
+          const stopped = await queue.stopGroup(channelJid, params.threadTs);
           return stopped
             ? `Stopped ${group?.name || 'agent'}`
             : 'No active agent to stop';
@@ -1835,7 +1845,7 @@ async function main(): Promise<void> {
     getSessions: () => sessions,
     queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
-      queue.registerProcess(groupJid, proc, containerName, groupFolder),
+      queue.registerProcess(groupJid, null, proc, containerName, groupFolder),
     sendMessage: async (jid, rawText) => {
       const channel = findChannel(channels, jid);
       if (!channel) {
