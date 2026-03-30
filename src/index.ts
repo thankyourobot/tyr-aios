@@ -188,7 +188,13 @@ async function handleCommand(
       );
       state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
       logger.info(
-        { toggleKey, planMode: newValue, baseJid, threadTs: msg.threadTs, folder: group?.folder },
+        {
+          toggleKey,
+          planMode: newValue,
+          baseJid,
+          threadTs: msg.threadTs,
+          folder: group?.folder,
+        },
         'Plan mode toggle SET',
       );
     } else {
@@ -197,10 +203,9 @@ async function handleCommand(
       setRegisteredGroup(chatJid, group);
     }
 
-    // *plan <prompt>: strip prefix, let message flow through to agent
+    // *plan <prompt>: keep full message (agent sees *plan intent), let it flow through
     if (inlinePrompt && newValue) {
-      msg.content = inlinePrompt;
-      return false; // Don't consume — message flows to agent processing
+      return false; // Don't consume — message flows to agent processing with *plan prefix intact
     }
 
     // Bare *plan or *plan off: send confirmation, consume message
