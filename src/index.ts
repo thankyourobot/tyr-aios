@@ -177,17 +177,18 @@ async function handleCommand(
     const inThread = !!msg.threadTs;
     const newValue = !isOff;
 
-    // Set the toggle
+    // Set the toggle — use base JID to match how processGroupMessages looks it up
     if (inThread) {
-      const toggleKey = `${chatJid}:${msg.threadTs}:${group?.folder || ''}`;
+      const baseJid = getParentJid(chatJid) || chatJid;
+      const toggleKey = `${baseJid}:${msg.threadTs}:${group?.folder || ''}`;
       const current = state.getToggleState(
-        chatJid,
+        baseJid,
         msg.threadTs,
         group?.folder,
       );
       state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
       logger.info(
-        { toggleKey, planMode: newValue, chatJid, threadTs: msg.threadTs, folder: group?.folder },
+        { toggleKey, planMode: newValue, baseJid, threadTs: msg.threadTs, folder: group?.folder },
         'Plan mode toggle SET',
       );
     } else {
