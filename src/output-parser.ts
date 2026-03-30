@@ -32,9 +32,7 @@ export function parseStreamingChunk(
   parseState.buffer += chunk;
 
   let startIdx: number;
-  while (
-    (startIdx = parseState.buffer.indexOf(OUTPUT_START_MARKER)) !== -1
-  ) {
+  while ((startIdx = parseState.buffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
     const endIdx = parseState.buffer.indexOf(OUTPUT_END_MARKER, startIdx);
     if (endIdx === -1) break; // Incomplete pair, wait for more data
 

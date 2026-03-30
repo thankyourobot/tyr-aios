@@ -563,7 +563,11 @@ export async function runContainerAgent(
       if (onOutput) {
         outputChain.then(() => {
           logger.info(
-            { group: group.name, duration, newSessionId: parseState.newSessionId },
+            {
+              group: group.name,
+              duration,
+              newSessionId: parseState.newSessionId,
+            },
             'Container completed (streaming mode)',
           );
           resolve({

@@ -54,7 +54,10 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-function makeGroup(folder: string, overrides?: Partial<RegisteredGroup>): RegisteredGroup {
+function makeGroup(
+  folder: string,
+  overrides?: Partial<RegisteredGroup>,
+): RegisteredGroup {
   return {
     name: folder,
     folder,
@@ -134,8 +137,14 @@ describe('MessageProcessor', () => {
       // fetchJid = buildThreadJid(baseJid, threadTs) = "slack:CH:t:TS:t:TS" (DOUBLE!)
       // It should be: "slack:CH:t:TS"
 
-      const growth = makeGroup('growth', { channelRole: 'director', requiresTrigger: false });
-      state.groupsByFolder.set('growth', { jid: 'slack:C0AN59XN8B1', group: growth });
+      const growth = makeGroup('growth', {
+        channelRole: 'director',
+        requiresTrigger: false,
+      });
+      state.groupsByFolder.set('growth', {
+        jid: 'slack:C0AN59XN8B1',
+        group: growth,
+      });
       state.groupsByJid.set('slack:C0AN59XN8B1', [growth]);
       state.registeredGroups['slack:C0AN59XN8B1'] = growth;
 
@@ -151,7 +160,10 @@ describe('MessageProcessor', () => {
     });
 
     it('uses correct fetchJid for plain channel JID (no thread)', async () => {
-      const strategy = makeGroup('strategy', { isMain: true, requiresTrigger: false });
+      const strategy = makeGroup('strategy', {
+        isMain: true,
+        requiresTrigger: false,
+      });
       state.registeredGroups['slack:C0AL6C8U21L'] = strategy;
 
       await processor.processGroupMessages('slack:C0AL6C8U21L');
@@ -160,7 +172,10 @@ describe('MessageProcessor', () => {
     });
 
     it('uses correct fetchJid for plain channel JID with threadTs param', async () => {
-      const strategy = makeGroup('strategy', { isMain: true, requiresTrigger: false });
+      const strategy = makeGroup('strategy', {
+        isMain: true,
+        requiresTrigger: false,
+      });
       state.registeredGroups['slack:C0AL6C8U21L'] = strategy;
 
       await processor.processGroupMessages('slack:C0AL6C8U21L', '9999999.000');

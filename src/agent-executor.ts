@@ -193,8 +193,7 @@ export class AgentExecutor {
       : undefined;
 
     // Use toggle state passed from caller (with thread context), fall back to group default
-    const effectiveToggle =
-      toggleState || this.state.getToggleState(chatJid);
+    const effectiveToggle = toggleState || this.state.getToggleState(chatJid);
 
     try {
       const output = await runContainerAgent(

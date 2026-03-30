@@ -24,7 +24,11 @@ describe('output-parser', () => {
   describe('parseStreamingChunk', () => {
     it('parses a single complete marker pair', () => {
       const state = createParseState();
-      const output = { status: 'success', result: 'hello', newSessionId: 'sess1' };
+      const output = {
+        status: 'success',
+        result: 'hello',
+        newSessionId: 'sess1',
+      };
       const results = parseStreamingChunk(state, wrapOutput(output));
 
       expect(results).toHaveLength(1);
@@ -97,7 +101,11 @@ describe('output-parser', () => {
     it('tracks newSessionId from any output', () => {
       const state = createParseState();
       const out1 = { status: 'success', result: null };
-      const out2 = { status: 'success', result: 'done', newSessionId: 'abc123' };
+      const out2 = {
+        status: 'success',
+        result: 'done',
+        newSessionId: 'abc123',
+      };
 
       parseStreamingChunk(state, wrapOutput(out1));
       expect(state.newSessionId).toBeUndefined();

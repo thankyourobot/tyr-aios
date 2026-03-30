@@ -21,8 +21,7 @@ vi.mock('./group-folder.js', () => ({
 }));
 
 vi.mock('./jid.js', async () => {
-  const actual =
-    await vi.importActual<typeof import('./jid.js')>('./jid.js');
+  const actual = await vi.importActual<typeof import('./jid.js')>('./jid.js');
   return {
     ...actual,
     getGroupFolder: vi.fn(actual.getGroupFolder),
@@ -50,7 +49,9 @@ import { getGroupFolder, getParentJid } from './jid.js';
 
 // --- Test fixtures ---
 
-function makeGroup(overrides: Partial<RegisteredGroup> & { folder: string; name: string }): RegisteredGroup {
+function makeGroup(
+  overrides: Partial<RegisteredGroup> & { folder: string; name: string },
+): RegisteredGroup {
   return {
     trigger: `@${overrides.name}`,
     added_at: '2026-01-01T00:00:00.000Z',
@@ -93,7 +94,12 @@ const backOfficeAlfred = makeGroup({
   assistantName: 'Alfred',
 });
 
-const allChannelGroups = [growthRyan, strategySherlock, operationsTom, backOfficeAlfred];
+const allChannelGroups = [
+  growthRyan,
+  strategySherlock,
+  operationsTom,
+  backOfficeAlfred,
+];
 
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {
@@ -111,7 +117,10 @@ function createMultiGroupState(): AppState {
   const groupsByJid = new Map<string, RegisteredGroup[]>();
   groupsByJid.set(CHANNEL_JID, allChannelGroups);
 
-  const groupsByFolder = new Map<string, { jid: string; group: RegisteredGroup }>();
+  const groupsByFolder = new Map<
+    string,
+    { jid: string; group: RegisteredGroup }
+  >();
   for (const g of allChannelGroups) {
     groupsByFolder.set(g.folder, { jid: CHANNEL_JID, group: g });
   }
@@ -157,7 +166,9 @@ describe('GroupManager', () => {
     });
 
     it('2. @mention of member (Sherlock) → only Sherlock, NOT director', () => {
-      const msg = makeMsg({ content: 'Hey <@U0AEMLMHLTZ> can you check this?' });
+      const msg = makeMsg({
+        content: 'Hey <@U0AEMLMHLTZ> can you check this?',
+      });
       const targets = gm.resolveTargetGroups(CHANNEL_JID, undefined, msg);
       expect(targets).toHaveLength(1);
       expect(targets[0].folder).toBe('strategy');
@@ -171,7 +182,9 @@ describe('GroupManager', () => {
     });
 
     it('4. @mention of multiple agents → both mentioned, no director auto-add', () => {
-      const msg = makeMsg({ content: '<@U0AEMLMHLTZ> and <@U0AN5V7U6Q7> coordinate on this' });
+      const msg = makeMsg({
+        content: '<@U0AEMLMHLTZ> and <@U0AN5V7U6Q7> coordinate on this',
+      });
       const targets = gm.resolveTargetGroups(CHANNEL_JID, undefined, msg);
       const folders = targets.map((t) => t.folder).sort();
       expect(folders).toEqual(['operations', 'strategy']);
@@ -190,7 +203,11 @@ describe('GroupManager', () => {
       const targets = gm.resolveTargetGroups(CHANNEL_JID, THREAD_TS, makeMsg());
       expect(targets).toHaveLength(1);
       expect(targets[0].folder).toBe('growth');
-      expect(addThreadMember).toHaveBeenCalledWith(CHANNEL_JID, THREAD_TS, 'growth');
+      expect(addThreadMember).toHaveBeenCalledWith(
+        CHANNEL_JID,
+        THREAD_TS,
+        'growth',
+      );
     });
 
     it('6. human reply with @mention of member → mentioned member only (director skipped when explicit mentions exist)', () => {
@@ -202,7 +219,11 @@ describe('GroupManager', () => {
       expect(folders).toContain('strategy');
       // Director is NOT added because there are explicit mentions and director is not mentioned
       expect(folders).not.toContain('growth');
-      expect(addThreadMember).toHaveBeenCalledWith(CHANNEL_JID, THREAD_TS, 'strategy');
+      expect(addThreadMember).toHaveBeenCalledWith(
+        CHANNEL_JID,
+        THREAD_TS,
+        'strategy',
+      );
     });
 
     it('7. human reply with existing thread members → all existing members get the message', () => {
@@ -226,7 +247,11 @@ describe('GroupManager', () => {
       const targets = gm.resolveTargetGroups(CHANNEL_JID, THREAD_TS, msg);
       expect(targets).toHaveLength(1);
       expect(targets[0].folder).toBe('operations');
-      expect(recordBotTrigger).toHaveBeenCalledWith(CHANNEL_JID, THREAD_TS, 'operations');
+      expect(recordBotTrigger).toHaveBeenCalledWith(
+        CHANNEL_JID,
+        THREAD_TS,
+        'operations',
+      );
     });
 
     it('9. bot message rate limiting — 4th trigger in 5 min is skipped', () => {
@@ -251,7 +276,10 @@ describe('GroupManager', () => {
 
   describe('parseMentions', () => {
     it('10. native Slack mention <@U_BOT_ID> is detected', () => {
-      const mentioned = gm.parseMentions('<@U0AEMLMHLTZ> check this', allChannelGroups);
+      const mentioned = gm.parseMentions(
+        '<@U0AEMLMHLTZ> check this',
+        allChannelGroups,
+      );
       expect(mentioned).toEqual(['strategy']);
     });
 
@@ -262,12 +290,15 @@ describe('GroupManager', () => {
         folder: 'tech',
         assistantName: 'Darwin',
       });
-      const mentioned = gm.parseMentions('Hey @Darwin can you look?', [techGroup]);
+      const mentioned = gm.parseMentions('Hey @Darwin can you look?', [
+        techGroup,
+      ]);
       expect(mentioned).toEqual(['tech']);
     });
 
     it('12. mention inside code block is ignored', () => {
-      const content = 'Here is some code:\n```\n<@U0AEMLMHLTZ> is referenced here\n```\nThat is all.';
+      const content =
+        'Here is some code:\n```\n<@U0AEMLMHLTZ> is referenced here\n```\nThat is all.';
       const mentioned = gm.parseMentions(content, allChannelGroups);
       expect(mentioned).toEqual([]);
     });
@@ -368,7 +399,11 @@ describe('GroupManager', () => {
 
   describe('getMainGroup', () => {
     it('returns the main group', () => {
-      const mainGroup = makeGroup({ name: 'Main', folder: 'main', isMain: true });
+      const mainGroup = makeGroup({
+        name: 'Main',
+        folder: 'main',
+        isMain: true,
+      });
       state.registeredGroups['slack:C_MAIN'] = mainGroup;
       const result = gm.getMainGroup();
       expect(result).toEqual({ jid: 'slack:C_MAIN', group: mainGroup });
@@ -387,18 +422,30 @@ describe('GroupManager', () => {
   describe('resolveTargetGroups — single-group channel', () => {
     it('always returns that single group', () => {
       const singleJid = 'slack:C_SINGLE';
-      const singleGroup = makeGroup({ name: 'Solo', folder: 'solo', channelRole: 'director' });
+      const singleGroup = makeGroup({
+        name: 'Solo',
+        folder: 'solo',
+        channelRole: 'director',
+      });
       state.registeredGroups[singleJid] = singleGroup;
       state.groupsByJid.set(singleJid, [singleGroup]);
 
-      const targets = gm.resolveTargetGroups(singleJid, undefined, makeMsg({ chat_jid: singleJid }));
+      const targets = gm.resolveTargetGroups(
+        singleJid,
+        undefined,
+        makeMsg({ chat_jid: singleJid }),
+      );
       expect(targets).toEqual([singleGroup]);
     });
 
     it('returns empty array for unknown channel with no main group', () => {
       // Remove all registered groups to ensure no fallback
       state.registeredGroups = {};
-      const targets = gm.resolveTargetGroups('slack:C_GHOST', undefined, makeMsg());
+      const targets = gm.resolveTargetGroups(
+        'slack:C_GHOST',
+        undefined,
+        makeMsg(),
+      );
       expect(targets).toEqual([]);
     });
   });

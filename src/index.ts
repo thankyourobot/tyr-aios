@@ -352,9 +352,7 @@ async function startMessageLoop(): Promise<void> {
               const channelGroups = state.groupsByJid.get(chatJid);
               if (channelGroups && channelGroups.length > 1) {
                 const names = channelGroups
-                  .map(
-                    (g) => g.assistantName || g.displayName || g.name,
-                  )
+                  .map((g) => g.assistantName || g.displayName || g.name)
                   .join(', ');
                 const channel = findChannel(state.channels, chatJid);
                 channel?.sendMessage(

@@ -138,10 +138,7 @@ export class GroupManager {
    * For directors with own Slack apps: check for native <@U_BOT_ID> mentions.
    * For technicians/fallback: check for text-based @Name mentions.
    */
-  parseMentions(
-    content: string,
-    channelGroups: RegisteredGroup[],
-  ): string[] {
+  parseMentions(content: string, channelGroups: RegisteredGroup[]): string[] {
     const mentioned: string[] = [];
     // Strip code blocks to avoid false positives
     const stripped = content

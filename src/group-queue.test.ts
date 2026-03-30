@@ -551,11 +551,13 @@ describe('GroupQueue', () => {
     it('queueKey composite key format: chatJid::threadTs or chatJid::__root__', async () => {
       const processedKeys: string[] = [];
 
-      const processMessages = vi.fn(async (groupJid: string, threadTs?: string) => {
-        // Record the arguments to verify routing
-        processedKeys.push(`${groupJid}::${threadTs || '__root__'}`);
-        return true;
-      });
+      const processMessages = vi.fn(
+        async (groupJid: string, threadTs?: string) => {
+          // Record the arguments to verify routing
+          processedKeys.push(`${groupJid}::${threadTs || '__root__'}`);
+          return true;
+        },
+      );
 
       queue.setProcessMessagesFn(processMessages);
 
