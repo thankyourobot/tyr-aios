@@ -92,7 +92,7 @@ function makeMockState(): AppState {
     getCursorKey: vi.fn((jid: string, ts?: string) =>
       ts ? `${jid}:t:${ts}` : jid,
     ),
-    getToggleState: vi.fn(() => ({ verbose: false, thinking: false })),
+    getToggleState: vi.fn(() => ({ verbose: false, thinking: false, planMode: false })),
     formatTokens: vi.fn((n: number) => `${n}`),
     saveState: vi.fn(),
     loadState: vi.fn(),

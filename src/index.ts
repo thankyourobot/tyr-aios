@@ -165,6 +165,52 @@ async function handleCommand(
     return true;
   }
 
+  // *plan toggle command — per-thread plan mode (per-agent in multi-agent threads)
+  const planMatch = text.match(/^\*plan(?:\s+(on|off))?$/);
+  if (planMatch) {
+    const arg = planMatch[1]; // 'on', 'off', or undefined (toggle)
+    const inThread = !!msg.threadTs;
+
+    let newValue: boolean;
+
+    if (inThread) {
+      // Per-thread, per-agent override
+      // Use per-agent key so multi-agent threads have independent plan mode
+      const toggleKey = `${chatJid}:${msg.threadTs}:${group?.folder || ''}`;
+      const current = state.getToggleState(chatJid, msg.threadTs, group?.folder);
+      if (arg === 'on') newValue = true;
+      else if (arg === 'off') newValue = false;
+      else newValue = !current.planMode;
+
+      state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
+    } else {
+      // Global default toggle
+      if (!group) return false;
+      const currentDefault = group.planModeDefault === true;
+      if (arg === 'on') newValue = true;
+      else if (arg === 'off') newValue = false;
+      else newValue = !currentDefault;
+
+      group.planModeDefault = newValue;
+      setRegisteredGroup(chatJid, group);
+    }
+
+    const scope = inThread
+      ? 'this thread'
+      : `${group?.name || 'group'} (default)`;
+    const stateStr = newValue ? 'ON' : 'OFF';
+    await channel.sendMessage(
+      chatJid,
+      `Plan mode: ${stateStr} for ${scope}`,
+      {
+        displayName: group?.displayName,
+        displayEmoji: group?.displayEmoji,
+        threadTs: msg.threadTs,
+      },
+    );
+    return true;
+  }
+
   // *rewind command — trigger rewind flow via channel
   if (text === '*rewind') {
     if (!msg.threadTs) {
@@ -705,6 +751,30 @@ async function main(): Promise<void> {
       newThreadTs: string;
       sdkUuid: string;
     }) => agentExecutor.rewindSession(p),
+    onPlanApprove: async (params: {
+      chatJid: string;
+      threadTs: string;
+      groupFolder: string;
+    }) => {
+      // Toggle plan mode OFF for this thread+agent
+      const planKey = `${params.chatJid}:${params.threadTs}:${params.groupFolder}`;
+      const current = state.getToggleState(params.chatJid, params.threadTs, params.groupFolder);
+      state.threadToggles.set(planKey, { ...current, planMode: false });
+
+      // Store synthetic approval message and enqueue for processing
+      // (container is likely already exited from idle timeout)
+      const baseJid = getParentJid(params.chatJid) || params.chatJid;
+      storeMessage({
+        id: Date.now().toString(),
+        chat_jid: buildThreadJid(baseJid, params.threadTs),
+        sender: 'user',
+        sender_name: 'User',
+        content: 'Approved. Execute the plan now.',
+        timestamp: new Date().toISOString(),
+        threadTs: params.threadTs,
+      });
+      state.queue.enqueueMessageCheck(baseJid, params.threadTs);
+    },
     onSlashCommand: async (params: {
       command: string;
       text: string;
@@ -766,6 +836,34 @@ async function main(): Promise<void> {
             : `${group?.name || 'group'} (default)`;
           const mode = params.command;
           return `${mode.charAt(0).toUpperCase() + mode.slice(1)} mode: ${newValue ? 'ON' : 'OFF'} for ${scope}`;
+        }
+
+        case 'plan': {
+          const arg = params.text.trim().toLowerCase();
+          const inThread = !!params.threadTs;
+
+          let newValue: boolean;
+          if (inThread) {
+            const toggleKey = `${channelJid}:${params.threadTs}:${group?.folder || ''}`;
+            const current = state.getToggleState(channelJid, params.threadTs, group?.folder);
+            if (arg === 'on') newValue = true;
+            else if (arg === 'off') newValue = false;
+            else newValue = !current.planMode;
+            state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
+          } else {
+            if (!group) return 'No group found for this channel';
+            const currentDefault = group.planModeDefault === true;
+            if (arg === 'on') newValue = true;
+            else if (arg === 'off') newValue = false;
+            else newValue = !currentDefault;
+            group.planModeDefault = newValue;
+            setRegisteredGroup(channelJid, group);
+          }
+
+          const scope = inThread
+            ? 'this thread'
+            : `${group?.name || 'group'} (default)`;
+          return `Plan mode: ${newValue ? 'ON' : 'OFF'} for ${scope}`;
         }
 
         case 'rewind': {
@@ -880,6 +978,13 @@ async function main(): Promise<void> {
       const channel = findChannel(state.channels, jid);
       if (channel?.addReaction) {
         await channel.addReaction(jid, messageTs, emoji);
+      }
+    },
+    setPlanMode: (chatJid: string, threadTs: string | undefined, groupFolder: string, enabled: boolean) => {
+      if (threadTs) {
+        const planKey = `${chatJid}:${threadTs}:${groupFolder}`;
+        const current = state.getToggleState(chatJid, threadTs, groupFolder);
+        state.threadToggles.set(planKey, { ...current, planMode: enabled });
       }
     },
   });

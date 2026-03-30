@@ -29,6 +29,7 @@ interface ContainerInput {
   assistantName?: string;
   verbose?: boolean;
   thinking?: boolean;
+  planMode?: boolean;
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
   threadTs?: string;
@@ -350,6 +351,7 @@ async function runQuery(
         'memory_20250818',
         'mcp__nanoclaw__*'
       ],
+      planMode: containerInput.planMode,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -362,6 +364,7 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            ...(containerInput.threadTs ? { NANOCLAW_THREAD_TS: containerInput.threadTs } : {}),
           },
         },
       },

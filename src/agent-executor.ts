@@ -87,7 +87,7 @@ export class AgentExecutor {
     prompt: string,
     chatJid: string,
     onOutput?: (output: ContainerOutput) => Promise<void>,
-    toggleState?: { verbose: boolean; thinking: boolean },
+    toggleState?: { verbose: boolean; thinking: boolean; planMode: boolean },
     threadTs?: string,
     rewindOpts?: { sourceSessionId: string; resumeSessionAt: string },
   ): Promise<'success' | 'error'> {
@@ -207,6 +207,7 @@ export class AgentExecutor {
           assistantName: group.assistantName || ASSISTANT_NAME,
           verbose: effectiveToggle.verbose,
           thinking: effectiveToggle.thinking,
+          planMode: effectiveToggle.planMode,
           maxThinkingTokens: effectiveToggle.thinking ? 10000 : undefined,
           filebrowserBaseUrl: this.state.filebrowserBaseUrl || undefined,
           threadTs,

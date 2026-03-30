@@ -46,6 +46,7 @@ export interface RegisteredGroup {
   assistantName?: string; // Per-group assistant name for container (e.g., "Builder")
   verboseDefault?: boolean;
   thinkingDefault?: boolean;
+  planModeDefault?: boolean;
   channelRole?: 'director' | 'member'; // Default: 'director'
   botUserId?: string; // Slack bot user ID (for directors with own app)
   botToken?: string; // Per-agent Slack bot token (for posting as this agent)
@@ -169,6 +170,7 @@ export interface ContainerInput {
   assistantName?: string;
   verbose?: boolean;
   thinking?: boolean;
+  planMode?: boolean;
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
   threadTs?: string;

@@ -60,7 +60,7 @@ describe('AppState', () => {
   describe('getToggleState', () => {
     it('returns defaults when no resolver set', () => {
       const result = state.getToggleState('slack:C123');
-      expect(result).toEqual({ verbose: false, thinking: false });
+      expect(result).toEqual({ verbose: false, thinking: false, planMode: false });
     });
 
     it('returns group defaults from resolver', () => {
@@ -73,25 +73,37 @@ describe('AppState', () => {
         thinkingDefault: false,
       }));
       const result = state.getToggleState('slack:C123');
-      expect(result).toEqual({ verbose: true, thinking: false });
+      expect(result).toEqual({ verbose: true, thinking: false, planMode: false });
     });
 
     it('returns thread override when set via threadToggles (synthetic JID)', () => {
       state.threadToggles.set('slack:C123:t:111.000', {
         verbose: true,
         thinking: true,
+        planMode: false,
       });
       const result = state.getToggleState('slack:C123:t:111.000');
-      expect(result).toEqual({ verbose: true, thinking: true });
+      expect(result).toEqual({ verbose: true, thinking: true, planMode: false });
     });
 
     it('returns thread override when set via JID + threadTs', () => {
       state.threadToggles.set('slack:C123:111.000', {
         verbose: false,
         thinking: true,
+        planMode: false,
       });
       const result = state.getToggleState('slack:C123', '111.000');
-      expect(result).toEqual({ verbose: false, thinking: true });
+      expect(result).toEqual({ verbose: false, thinking: true, planMode: false });
+    });
+
+    it('returns per-agent plan mode from agent-specific key', () => {
+      state.threadToggles.set('slack:C123:111.000:strategy', {
+        verbose: false,
+        thinking: false,
+        planMode: true,
+      });
+      const result = state.getToggleState('slack:C123', '111.000', 'strategy');
+      expect(result.planMode).toBe(true);
     });
   });
 

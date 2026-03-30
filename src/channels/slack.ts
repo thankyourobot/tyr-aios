@@ -51,6 +51,11 @@ export interface SlackChannelOpts {
     newThreadTs: string;
     sdkUuid: string;
   }) => Promise<void>;
+  onPlanApprove?: (params: {
+    chatJid: string;
+    threadTs: string;
+    groupFolder: string;
+  }) => Promise<void>;
   /** Handle slash commands. Returns the response text (shown ephemerally). */
   onSlashCommand?: (params: {
     command: string;
@@ -321,8 +326,22 @@ export class SlackChannel implements Channel {
       }
     });
 
+    // Plan mode approve button handler
+    this.app.action('plan_approve', async ({ ack, body }) => {
+      await ack();
+      try {
+        const action = (body as any).actions[0];
+        const { chatJid, threadTs, groupFolder } = JSON.parse(action.value);
+        if (this.opts.onPlanApprove) {
+          await this.opts.onPlanApprove({ chatJid, threadTs, groupFolder });
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to process plan approval');
+      }
+    });
+
     // --- Slash command handlers ---
-    const slashCommands = ['stop', 'verbose', 'thinking', 'rewind', 'agents'];
+    const slashCommands = ['stop', 'verbose', 'thinking', 'plan', 'rewind', 'agents'];
     for (const cmd of slashCommands) {
       this.app.command(`/${cmd}`, async ({ command, ack }) => {
         await ack();
