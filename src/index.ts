@@ -78,7 +78,8 @@ async function handleCommand(
   msg: NewMessage,
   channel: Channel,
 ): Promise<boolean> {
-  const text = msg.content.trim();
+  // Strip leading @mentions so commands work with "@Agent *plan ..." syntax
+  const text = msg.content.trim().replace(/^(<@[A-Z0-9]+>\s*)+/, '');
   const group = resolveGroup(chatJid);
 
   // /stop command — stops container for the thread where *stop was sent
@@ -995,7 +996,11 @@ async function main(): Promise<void> {
         await channel.addReaction(jid, messageTs, emoji);
       }
     },
-    onSubmitPlan: async (chatJid: string, groupFolder: string, plan: string) => {
+    onSubmitPlan: async (
+      chatJid: string,
+      groupFolder: string,
+      plan: string,
+    ) => {
       const channel = findChannel(state.channels, chatJid);
       if (!channel) return;
       const group = state.groupsByFolder.get(groupFolder)?.group;
