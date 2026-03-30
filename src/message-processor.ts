@@ -234,9 +234,19 @@ ${formatMessages([parentMsg], TIMEZONE)}
         if (planPattern.test(stripped)) {
           const isOff = /^\*plan\s+off\s*$/.test(stripped);
           const planKey = `${chatJid}:${lastThreadTs}:${group.folder}`;
-          const current = this.state.getToggleState(chatJid, lastThreadTs, group.folder);
-          this.state.threadToggles.set(planKey, { ...current, planMode: !isOff });
-          logger.info({ planKey, planMode: !isOff }, 'Plan mode set from message-processor');
+          const current = this.state.getToggleState(
+            chatJid,
+            lastThreadTs,
+            group.folder,
+          );
+          this.state.threadToggles.set(planKey, {
+            ...current,
+            planMode: !isOff,
+          });
+          logger.info(
+            { planKey, planMode: !isOff },
+            'Plan mode set from message-processor',
+          );
           break;
         }
       }

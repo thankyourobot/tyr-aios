@@ -1000,13 +1000,11 @@ async function main(): Promise<void> {
       chatJid: string,
       groupFolder: string,
       plan: string,
+      threadTs?: string,
     ) => {
       const channel = findChannel(state.channels, chatJid);
       if (!channel) return;
       const group = state.groupsByFolder.get(groupFolder)?.group;
-
-      // Find the thread for this group's active container
-      const threadTs = state.queue.getActiveThreadTs(chatJid, groupFolder);
 
       // Send the plan text
       await channel.sendMessage(chatJid, plan, {

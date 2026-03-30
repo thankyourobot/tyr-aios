@@ -35,6 +35,7 @@ export interface IpcDeps {
     chatJid: string,
     groupFolder: string,
     plan: string,
+    threadTs?: string,
   ) => Promise<void>;
 }
 
@@ -121,6 +122,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   data.chatJid,
                   data.groupFolder,
                   data.plan,
+                  data.threadTs as string | undefined,
                 );
                 logger.info(
                   { chatJid: data.chatJid, sourceGroup },
