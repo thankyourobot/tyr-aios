@@ -219,7 +219,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           'i',
         ).test(triggeringMsg.content));
     // Use synthetic thread JID for typing indicator so it matches latestMessageContext
-    const typingJid = groupFolder ? baseJid : threadTs ? fetchJid : chatJid;
+    const typingJid = threadTs ? fetchJid : groupFolder ? baseJid : chatJid;
     if (isMentioned) {
       await channel.setTyping?.(typingJid, true, group.botToken);
     }
