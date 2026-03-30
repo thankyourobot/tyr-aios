@@ -210,9 +210,10 @@ ${formatMessages([parentMsg], TIMEZONE)}
     // Suppress typing for thread members who aren't explicitly mentioned in the triggering message.
     // Exception: show typing when this is the only agent in the thread (no ambiguity about who's responding).
     const triggeringMsg = missedMessages[missedMessages.length - 1];
-    const threadMembers = groupFolder && threadTs
-      ? getThreadMembers(getParentJid(baseJid) || baseJid, threadTs)
-      : [];
+    const threadMembers =
+      groupFolder && threadTs
+        ? getThreadMembers(getParentJid(baseJid) || baseJid, threadTs)
+        : [];
     const isSoleThreadAgent = threadMembers.length <= 1;
     const isMentioned =
       !groupFolder ||
@@ -423,6 +424,26 @@ ${formatMessages([parentMsg], TIMEZONE)}
       threadTs || msg.threadTs,
       msg,
     );
+    if (
+      targets.length === 0 &&
+      !threadTs &&
+      !msg.threadTs &&
+      !msg.is_bot_message
+    ) {
+      // No agents targeted in a multi-group channel — send a hint
+      const channelGroups = this.state.groupsByJid.get(channelJid);
+      if (channelGroups && channelGroups.length > 1) {
+        const names = channelGroups
+          .map((g) => g.assistantName || g.displayName || g.name)
+          .join(', ');
+        const channel = findChannel(this.state.channels, channelJid);
+        channel?.sendMessage(
+          channelJid,
+          `This is a multi-agent channel — @mention an agent to start a conversation: ${names}`,
+          { threadTs: msg.id || msg.timestamp },
+        );
+      }
+    }
     for (const group of targets) {
       const baseJid = threadTs
         ? buildThreadJid(

@@ -123,7 +123,8 @@ async function handleCommand(
     if (inThread && toggleKey) {
       // Per-thread override
       const current =
-        state.threadToggles.get(toggleKey) || state.getToggleState(chatJid, msg.threadTs);
+        state.threadToggles.get(toggleKey) ||
+        state.getToggleState(chatJid, msg.threadTs);
       if (arg === 'on') newValue = true;
       else if (arg === 'off') newValue = false;
       else newValue = isVerbose ? !current.verbose : !current.thinking;
@@ -342,6 +343,27 @@ async function startMessageLoop(): Promise<void> {
               lastGroupMsg.threadTs,
               lastGroupMsg,
             );
+            if (
+              targets.length === 0 &&
+              !lastGroupMsg.threadTs &&
+              !lastGroupMsg.is_bot_message
+            ) {
+              // No agents targeted in a multi-group channel — send a hint
+              const channelGroups = state.groupsByJid.get(chatJid);
+              if (channelGroups && channelGroups.length > 1) {
+                const names = channelGroups
+                  .map(
+                    (g) => g.assistantName || g.displayName || g.name,
+                  )
+                  .join(', ');
+                const channel = findChannel(state.channels, chatJid);
+                channel?.sendMessage(
+                  chatJid,
+                  `This is a multi-agent channel — @mention an agent to start a conversation: ${names}`,
+                  { threadTs: lastGroupMsg.id },
+                );
+              }
+            }
             for (const target of targets) {
               const groupJid = buildGroupJid(chatJid, target.folder);
               state.queue.enqueueMessageCheck(groupJid);
@@ -443,7 +465,8 @@ async function startMessageLoop(): Promise<void> {
                 );
               // Track for removal when processing starts (keyed by composite for thread isolation)
               const busyReactionKey = `${chatJid}::${msgThread || '__root__'}`;
-              const existing = state.pendingBusyReactions.get(busyReactionKey) || [];
+              const existing =
+                state.pendingBusyReactions.get(busyReactionKey) || [];
               existing.push({
                 jid: baseJidForReaction,
                 messageTs: lastMsg.id,
@@ -475,7 +498,11 @@ function recoverPendingMessages(): void {
       const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
       if (pending.length > 0) {
         const lastMsg = pending[pending.length - 1];
-        const targets = groupManager.resolveTargetGroups(chatJid, lastMsg.threadTs, lastMsg);
+        const targets = groupManager.resolveTargetGroups(
+          chatJid,
+          lastMsg.threadTs,
+          lastMsg,
+        );
         for (const target of targets) {
           const groupJid = buildGroupJid(chatJid, target.folder);
           logger.info(
@@ -603,11 +630,14 @@ async function main(): Promise<void> {
                   // Single-group: IPC pipe with thread-aware routing (use base JID for consistent state.queue keys)
                   const formatted = formatMessages([msg], TIMEZONE);
                   const { threadTs: evtThreadTs } = parseSlackJid(chatJid);
-                  if (!state.queue.sendMessage(channelJid, evtThreadTs, formatted)) {
+                  if (
+                    !state.queue.sendMessage(channelJid, evtThreadTs, formatted)
+                  ) {
                     state.queue.enqueueMessageCheck(channelJid, evtThreadTs);
                   } else {
-                    state.lastAgentTimestamp[state.getCursorKey(channelJid, evtThreadTs)] =
-                      msg.timestamp;
+                    state.lastAgentTimestamp[
+                      state.getCursorKey(channelJid, evtThreadTs)
+                    ] = msg.timestamp;
                     saveState();
                   }
                 }
@@ -670,7 +700,13 @@ async function main(): Promise<void> {
       }
       return undefined;
     },
-    onRewind: (p: { groupFolder: string; chatJid: string; sourceThreadTs: string; newThreadTs: string; sdkUuid: string }) => agentExecutor.rewindSession(p),
+    onRewind: (p: {
+      groupFolder: string;
+      chatJid: string;
+      sourceThreadTs: string;
+      newThreadTs: string;
+      sdkUuid: string;
+    }) => agentExecutor.rewindSession(p),
     onSlashCommand: async (params: {
       command: string;
       text: string;
@@ -684,7 +720,10 @@ async function main(): Promise<void> {
 
       switch (params.command) {
         case 'stop': {
-          const stopped = await state.queue.stopGroup(channelJid, params.threadTs);
+          const stopped = await state.queue.stopGroup(
+            channelJid,
+            params.threadTs,
+          );
           return stopped
             ? `Stopped ${group?.name || 'agent'}`
             : 'No active agent to stop';
@@ -799,7 +838,13 @@ async function main(): Promise<void> {
     getSessions: () => state.sessions,
     queue: state.queue,
     onProcess: (groupJid, proc, containerName, groupFolder) =>
-      state.queue.registerProcess(groupJid, null, proc, containerName, groupFolder),
+      state.queue.registerProcess(
+        groupJid,
+        null,
+        proc,
+        containerName,
+        groupFolder,
+      ),
     sendMessage: async (jid, rawText) => {
       const channel = findChannel(state.channels, jid);
       if (!channel) {
