@@ -27,10 +27,7 @@ import {
 } from './jid.js';
 import { logger } from './logger.js';
 import { findChannel, formatMessages } from './router.js';
-import {
-  isTriggerAllowed,
-  loadSenderAllowlist,
-} from './sender-allowlist.js';
+import { isTriggerAllowed, loadSenderAllowlist } from './sender-allowlist.js';
 import { NewMessage, RegisteredGroup, SendMessageOpts } from './types.js';
 
 function escapeRegex(str: string): string {
@@ -64,7 +61,12 @@ export class MessageProcessor {
   ): Promise<boolean> {
     // Handle group-qualified JIDs from multi-agent dispatch
     const groupFolder = getGroupFolder(chatJid);
-    const baseJid = getBaseJid(chatJid);
+    // Strip both :g: and :t: suffixes to get the plain channel JID.
+    // getBaseJid only strips :g:, but for group-qualified thread JIDs
+    // (e.g., slack:CH:t:TS:g:folder) we need the plain channel JID
+    // to avoid building a double :t: fetchJid.
+    const strippedJid = getBaseJid(chatJid);
+    const baseJid = getParentJid(strippedJid) || strippedJid;
 
     let group: RegisteredGroup | null;
     if (groupFolder) {
@@ -217,11 +219,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           'i',
         ).test(triggeringMsg.content));
     // Use synthetic thread JID for typing indicator so it matches latestMessageContext
-    const typingJid = groupFolder
-      ? baseJid
-      : threadTs
-        ? fetchJid
-        : chatJid;
+    const typingJid = groupFolder ? baseJid : threadTs ? fetchJid : chatJid;
     if (isMentioned) {
       await channel.setTyping?.(typingJid, true, group.botToken);
     }
@@ -247,9 +245,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
               botToken: group.botToken,
               threadTs: lastThreadTs,
             })
-            ?.catch((err) =>
-              logger.warn({ err }, 'Verbose message failed'),
-            );
+            ?.catch((err) => logger.warn({ err }, 'Verbose message failed'));
           return;
         }
         if (result.type === 'thinking' && result.result) {
@@ -260,9 +256,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
               botToken: group.botToken,
               threadTs: lastThreadTs,
             })
-            ?.catch((err) =>
-              logger.warn({ err }, 'Thinking message failed'),
-            );
+            ?.catch((err) => logger.warn({ err }, 'Thinking message failed'));
           return;
         }
 
@@ -272,14 +266,11 @@ ${formatMessages([parentMsg], TIMEZONE)}
               ? result.result
               : JSON.stringify(result.result);
           // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-          let text = raw
-            .replace(/<internal>[\s\S]*?<\/internal>/g, '')
-            .trim();
+          let text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
           // Agent can wrap output in <channel>...</channel> to post top-level instead of threading
           const hasChannelTags = /<channel>/.test(text);
           const useThreadTs = hasChannelTags ? undefined : lastThreadTs;
-          if (hasChannelTags)
-            text = text.replace(/<\/?channel>/g, '').trim();
+          if (hasChannelTags) text = text.replace(/<\/?channel>/g, '').trim();
           logger.info(
             { group: group.name },
             `Agent output: ${raw.slice(0, 200)}`,
@@ -319,12 +310,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
             const cu = result.contextUsage;
             const totalUsed =
               cu.inputTokens + cu.cacheCreationTokens + cu.cacheReadTokens;
-            const pct = Math.round(
-              (totalUsed / cu.contextWindow) * 100,
-            );
-            const modelSuffix = result.model
-              ? ` \u2014 ${result.model}`
-              : '';
+            const pct = Math.round((totalUsed / cu.contextWindow) * 100);
+            const modelSuffix = result.model ? ` \u2014 ${result.model}` : '';
             const contextLine = `_Context: ${this.state.formatTokens(totalUsed)}/${this.state.formatTokens(cu.contextWindow)} (${pct}%)${modelSuffix}_`;
             await channel.sendMessage(chatJid, contextLine, {
               displayName: group.displayName,
@@ -338,10 +325,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           // Compaction notification (only when agent actually responded)
           if (outputSentToUser && result.compaction) {
             let compactLine: string;
-            if (
-              result.contextUsage &&
-              result.contextUsage.contextWindow > 0
-            ) {
+            if (result.contextUsage && result.contextUsage.contextWindow > 0) {
               const postTokens =
                 result.contextUsage.inputTokens +
                 result.contextUsage.cacheCreationTokens +
@@ -485,10 +469,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           )
         : channelJid;
       const groupJid = buildGroupJid(baseJid, group.folder);
-      this.state.queue.enqueueMessageCheck(
-        groupJid,
-        threadTs || msg.threadTs,
-      );
+      this.state.queue.enqueueMessageCheck(groupJid, threadTs || msg.threadTs);
     }
   }
 }
