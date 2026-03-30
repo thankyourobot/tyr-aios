@@ -194,6 +194,9 @@ export class AgentExecutor {
 
     // Use toggle state passed from caller (with thread context), fall back to group default
     const effectiveToggle = toggleState || this.state.getToggleState(chatJid);
+    if (effectiveToggle.planMode) {
+      logger.info({ chatJid, planMode: true }, 'ContainerInput will have planMode=true');
+    }
 
     try {
       const output = await runContainerAgent(
