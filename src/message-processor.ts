@@ -226,20 +226,20 @@ ${formatMessages([parentMsg], TIMEZONE)}
           `(?:^|\\s)@${escapeRegex(group.assistantName)}\\b`,
           'i',
         ).test(triggeringMsg.content));
-    // Use synthetic thread JID for typing indicator so it matches latestMessageContext
-    const typingJid = threadTs ? fetchJid : groupFolder ? baseJid : chatJid;
-    if (isMentioned) {
-      await channel.setTyping?.(typingJid, true, group.botToken);
-    }
-    let hadError = false;
-    let outputSentToUser = false;
-
     // Get toggle state for this thread (pass groupFolder for per-agent plan mode)
     const toggleState = this.state.getToggleState(
       chatJid,
       lastThreadTs,
       group.folder,
     );
+
+    // Use synthetic thread JID for typing indicator so it matches latestMessageContext
+    const typingJid = threadTs ? fetchJid : groupFolder ? baseJid : chatJid;
+    if (isMentioned || toggleState.planMode) {
+      await channel.setTyping?.(typingJid, true, group.botToken);
+    }
+    let hadError = false;
+    let outputSentToUser = false;
 
     const output = await this.agentExecutor.runAgent(
       group,
@@ -352,7 +352,6 @@ ${formatMessages([parentMsg], TIMEZONE)}
             channel
               .setTyping?.(typingJid, false, group.botToken)
               ?.catch(() => {});
-
           }
 
           // Context window display (when verbose mode is enabled and agent actually responded)

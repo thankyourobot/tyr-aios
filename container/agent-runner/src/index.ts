@@ -554,6 +554,9 @@ async function main(): Promise<void> {
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
+  if (containerInput.planMode) {
+    prompt = `[PLAN MODE — Call the EnterPlanMode tool immediately before doing anything else. Explore and plan, then call ExitPlanMode when your plan is ready. Do NOT execute — wait for user approval.]\n\n${prompt}`;
+  }
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
