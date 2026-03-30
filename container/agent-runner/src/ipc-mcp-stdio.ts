@@ -21,7 +21,6 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
-const threadTs = process.env.NANOCLAW_THREAD_TS || undefined;
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -428,16 +427,10 @@ server.tool(
   {
     plan: z.string().describe('The complete plan text to present for approval'),
   },
-  async (args) => {
-    const data = {
-      type: 'submit_plan',
-      chatJid,
-      groupFolder,
-      threadTs,
-      plan: args.plan,
-      timestamp: new Date().toISOString(),
-    };
-    writeIpcFile(MESSAGES_DIR, data);
+  async () => {
+    // The agent-runner detects this tool call in the CLI stream and emits
+    // the plan via the streaming output path (which has thread context).
+    // No IPC file needed — the tool just needs to exist for the agent to call.
     return {
       content: [{
         type: 'text' as const,

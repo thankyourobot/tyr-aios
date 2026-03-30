@@ -376,7 +376,6 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-            ...(containerInput.threadTs ? { NANOCLAW_THREAD_TS: containerInput.threadTs } : {}),
           },
         },
       },
@@ -401,6 +400,22 @@ async function runQuery(
           cacheReadTokens: u.cache_read_input_tokens || 0,
           contextWindow: 0,
         };
+      }
+    }
+
+    // Detect submit_plan MCP tool call → emit plan_ready output
+    // (streaming path has thread context; IPC path does not)
+    if (message.type === 'assistant') {
+      const content = (message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
+      if (Array.isArray(content)) {
+        for (const block of content) {
+          if (block.type === 'tool_use' && block.name === 'mcp__nanoclaw__submit_plan') {
+            const planText = (block.input as { plan?: string })?.plan || '';
+            if (planText) {
+              writeOutput({ status: 'success', result: planText, type: 'plan_ready' });
+            }
+          }
+        }
       }
     }
 
