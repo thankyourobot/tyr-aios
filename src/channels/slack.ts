@@ -341,7 +341,14 @@ export class SlackChannel implements Channel {
     });
 
     // --- Slash command handlers ---
-    const slashCommands = ['stop', 'verbose', 'thinking', 'plan', 'rewind', 'agents'];
+    const slashCommands = [
+      'stop',
+      'verbose',
+      'thinking',
+      'plan',
+      'rewind',
+      'agents',
+    ];
     for (const cmd of slashCommands) {
       this.app.command(`/${cmd}`, async ({ command, ack }) => {
         await ack();

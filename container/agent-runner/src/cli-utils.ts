@@ -88,14 +88,9 @@ export function buildCliArgs(opts: BuildCliArgsOptions): string[] {
     args.push('--model', opts.model);
   }
 
-  if (opts.planMode) {
-    // Plan mode: restrict to read-only built-in tools (MCP tools unaffected)
-    args.push('--tools', 'Read,Glob,Grep,WebSearch,WebFetch,ToolSearch,Agent');
-  } else {
-    const cliTools = mapAllowedTools(opts.allowedTools);
-    if (cliTools.length > 0) {
-      args.push('--allowedTools', ...cliTools);
-    }
+  const cliTools = mapAllowedTools(opts.allowedTools);
+  if (cliTools.length > 0) {
+    args.push('--allowedTools', ...cliTools);
   }
 
   if (opts.additionalDirectories) {

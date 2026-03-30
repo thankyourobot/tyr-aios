@@ -9,9 +9,7 @@ export function getRouterState(key: string): string | undefined {
 
 export function setRouterState(key: string, value: string): void {
   getDb()
-    .prepare(
-      'INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)',
-    )
+    .prepare('INSERT OR REPLACE INTO router_state (key, value) VALUES (?, ?)')
     .run(key, value);
 }
 

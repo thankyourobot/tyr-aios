@@ -40,7 +40,7 @@ interface ContainerInput {
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
-  type?: 'result' | 'verbose' | 'thinking';
+  type?: 'result' | 'verbose' | 'thinking' | 'plan_ready';
   newSessionId?: string;
   lastAssistantUuid?: string;
   contextUsage?: {
@@ -317,6 +317,17 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Append plan mode instructions to system prompt
+  if (containerInput.planMode) {
+    const planInstructions = [
+      '',
+      'IMPORTANT: You are in plan mode. Call the EnterPlanMode tool immediately before doing anything else.',
+      'Explore the codebase, design your approach, then call ExitPlanMode when your plan is ready.',
+      'Do NOT execute the plan — wait for user approval after presenting it.',
+    ].join('\n');
+    globalClaudeMd = (globalClaudeMd || '') + planInstructions;
+  }
+
   // Track context usage from assistant messages
   let lastContextUsage: ContainerOutput['contextUsage'] | undefined;
   let lastCompaction: ContainerOutput['compaction'] | undefined;
@@ -348,6 +359,7 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
+        'EnterPlanMode', 'ExitPlanMode',
         'memory_20250818',
         'mcp__nanoclaw__*'
       ],
@@ -364,7 +376,6 @@ async function runQuery(
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-            ...(containerInput.threadTs ? { NANOCLAW_THREAD_TS: containerInput.threadTs } : {}),
           },
         },
       },
@@ -389,6 +400,18 @@ async function runQuery(
           cacheReadTokens: u.cache_read_input_tokens || 0,
           contextWindow: 0,
         };
+      }
+    }
+
+    // Detect ExitPlanMode tool use → emit plan_ready signal
+    if (message.type === 'assistant') {
+      const assistantContent = (message as { message?: { content?: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
+      if (Array.isArray(assistantContent)) {
+        for (const block of assistantContent) {
+          if (block.type === 'tool_use' && block.name === 'ExitPlanMode') {
+            writeOutput({ status: 'success', result: null, type: 'plan_ready' });
+          }
+        }
       }
     }
 

@@ -60,7 +60,11 @@ describe('AppState', () => {
   describe('getToggleState', () => {
     it('returns defaults when no resolver set', () => {
       const result = state.getToggleState('slack:C123');
-      expect(result).toEqual({ verbose: false, thinking: false, planMode: false });
+      expect(result).toEqual({
+        verbose: false,
+        thinking: false,
+        planMode: false,
+      });
     });
 
     it('returns group defaults from resolver', () => {
@@ -73,7 +77,11 @@ describe('AppState', () => {
         thinkingDefault: false,
       }));
       const result = state.getToggleState('slack:C123');
-      expect(result).toEqual({ verbose: true, thinking: false, planMode: false });
+      expect(result).toEqual({
+        verbose: true,
+        thinking: false,
+        planMode: false,
+      });
     });
 
     it('returns thread override when set via threadToggles (synthetic JID)', () => {
@@ -83,7 +91,11 @@ describe('AppState', () => {
         planMode: false,
       });
       const result = state.getToggleState('slack:C123:t:111.000');
-      expect(result).toEqual({ verbose: true, thinking: true, planMode: false });
+      expect(result).toEqual({
+        verbose: true,
+        thinking: true,
+        planMode: false,
+      });
     });
 
     it('returns thread override when set via JID + threadTs', () => {
@@ -93,7 +105,11 @@ describe('AppState', () => {
         planMode: false,
       });
       const result = state.getToggleState('slack:C123', '111.000');
-      expect(result).toEqual({ verbose: false, thinking: true, planMode: false });
+      expect(result).toEqual({
+        verbose: false,
+        thinking: true,
+        planMode: false,
+      });
     });
 
     it('returns per-agent plan mode from agent-specific key', () => {
@@ -117,7 +133,12 @@ describe('AppState', () => {
       });
       vi.mocked(getAllSessions).mockReturnValue({ strategy: 'sess-abc' });
       vi.mocked(getAllRegisteredGroups).mockReturnValue({
-        'slack:C123': { name: 'strategy', folder: 'strategy', trigger: '@Sherlock', added_at: '2026-01-01' } satisfies Partial<RegisteredGroup> as RegisteredGroup,
+        'slack:C123': {
+          name: 'strategy',
+          folder: 'strategy',
+          trigger: '@Sherlock',
+          added_at: '2026-01-01',
+        } satisfies Partial<RegisteredGroup> as RegisteredGroup,
       });
 
       state.loadState();

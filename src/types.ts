@@ -181,7 +181,7 @@ export interface ContainerInput {
 export interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
-  type?: 'result' | 'verbose' | 'thinking';
+  type?: 'result' | 'verbose' | 'thinking' | 'plan_ready';
   newSessionId?: string;
   lastAssistantUuid?: string;
   contextUsage?: {

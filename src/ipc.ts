@@ -30,13 +30,6 @@ export interface IpcDeps {
     messageTs: string,
     emoji: string,
   ) => Promise<void>;
-  /** Set plan mode for a thread (from agent MCP tool). */
-  setPlanMode?: (
-    chatJid: string,
-    threadTs: string | undefined,
-    groupFolder: string,
-    enabled: boolean,
-  ) => void;
 }
 
 let ipcWatcherRunning = false;
@@ -217,9 +210,6 @@ export async function processTaskIpc(
     trigger?: string;
     requiresTrigger?: boolean;
     containerConfig?: RegisteredGroup['containerConfig'];
-    // For set_plan_mode
-    enabled?: boolean;
-    threadTs?: string;
   },
   sourceGroup: string, // Verified identity from IPC directory
   isMain: boolean, // Verified from directory path
@@ -494,21 +484,6 @@ export async function processTaskIpc(
         logger.warn(
           { data },
           'Invalid register_group request - missing required fields',
-        );
-      }
-      break;
-
-    case 'set_plan_mode':
-      if (data.enabled !== undefined && deps.setPlanMode) {
-        deps.setPlanMode(
-          data.chatJid || '',
-          data.threadTs as string | undefined,
-          sourceGroup,
-          data.enabled as boolean,
-        );
-        logger.info(
-          { sourceGroup, enabled: data.enabled },
-          'Plan mode set via IPC',
         );
       }
       break;

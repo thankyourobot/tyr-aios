@@ -19,7 +19,6 @@ const TASKS_DIR = path.join(IPC_DIR, 'tasks');
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
-const threadTs = process.env.NANOCLAW_THREAD_TS || undefined;
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -417,33 +416,6 @@ server.tool(
         ],
       };
     }
-  },
-);
-
-server.tool(
-  'set_plan_mode',
-  'Enter or exit plan mode for the current thread. In plan mode, you cannot write files, edit files, or run shell commands — only read, search, and plan. Use this when you want to present a plan for user approval before executing. Takes effect on the next invocation (the current session continues with its existing permissions).',
-  {
-    enabled: z.boolean().describe('true to enter plan mode, false to exit'),
-  },
-  async (args) => {
-    const data = {
-      type: 'set_plan_mode',
-      chatJid,
-      groupFolder,
-      threadTs,
-      enabled: args.enabled,
-      timestamp: new Date().toISOString(),
-    };
-    writeIpcFile(TASKS_DIR, data);
-    return {
-      content: [{
-        type: 'text' as const,
-        text: args.enabled
-          ? 'Plan mode enabled. Your next invocation will be restricted to read-only operations. Present your plan and wait for user approval.'
-          : 'Plan mode disabled. Your next invocation will have full permissions.',
-      }],
-    };
   },
 );
 

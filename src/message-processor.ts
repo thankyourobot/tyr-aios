@@ -235,7 +235,11 @@ ${formatMessages([parentMsg], TIMEZONE)}
     let outputSentToUser = false;
 
     // Get toggle state for this thread (pass groupFolder for per-agent plan mode)
-    const toggleState = this.state.getToggleState(chatJid, lastThreadTs, group.folder);
+    const toggleState = this.state.getToggleState(
+      chatJid,
+      lastThreadTs,
+      group.folder,
+    );
 
     const output = await this.agentExecutor.runAgent(
       group,
@@ -265,6 +269,48 @@ ${formatMessages([parentMsg], TIMEZONE)}
               threadTs: lastThreadTs,
             })
             ?.catch((err) => logger.warn({ err }, 'Thinking message failed'));
+          return;
+        }
+
+        // Plan ready: agent called ExitPlanMode — post Approve button
+        if (result.type === 'plan_ready' && channel.sendBlocks) {
+          await channel.sendBlocks(
+            chatJid,
+            [
+              {
+                type: 'section',
+                text: {
+                  type: 'mrkdwn',
+                  text: '_Reply to revise the plan_',
+                },
+              },
+              {
+                type: 'actions',
+                block_id: `plan_${Date.now()}`,
+                elements: [
+                  {
+                    type: 'button',
+                    text: { type: 'plain_text', text: 'Approve' },
+                    style: 'primary',
+                    action_id: 'plan_approve',
+                    value: JSON.stringify({
+                      chatJid,
+                      threadTs: lastThreadTs,
+                      groupFolder: group.folder,
+                    }),
+                  },
+                ],
+              },
+            ],
+            'Plan ready — Approve or reply to revise',
+            {
+              displayName: group.displayName,
+              displayEmoji: group.displayEmoji,
+              displayIconUrl: group.displayIconUrl,
+              botToken: group.botToken,
+              threadTs: lastThreadTs,
+            },
+          );
           return;
         }
 
@@ -307,38 +353,6 @@ ${formatMessages([parentMsg], TIMEZONE)}
               .setTyping?.(typingJid, false, group.botToken)
               ?.catch(() => {});
 
-            // Plan mode: send Approve button after plan output
-            if (toggleState.planMode && channel.sendBlocks) {
-              await channel.sendBlocks(chatJid, [
-                {
-                  type: 'section',
-                  text: { type: 'mrkdwn', text: '_Reply to revise the plan_' },
-                },
-                {
-                  type: 'actions',
-                  block_id: `plan_${Date.now()}`,
-                  elements: [
-                    {
-                      type: 'button',
-                      text: { type: 'plain_text', text: 'Approve' },
-                      style: 'primary',
-                      action_id: 'plan_approve',
-                      value: JSON.stringify({
-                        chatJid,
-                        threadTs: useThreadTs,
-                        groupFolder: group.folder,
-                      }),
-                    },
-                  ],
-                },
-              ], 'Plan ready — Approve or reply to revise', {
-                displayName: group.displayName,
-                displayEmoji: group.displayEmoji,
-                displayIconUrl: group.displayIconUrl,
-                botToken: group.botToken,
-                threadTs: useThreadTs,
-              });
-            }
           }
 
           // Context window display (when verbose mode is enabled and agent actually responded)

@@ -63,10 +63,13 @@ Your workspace has a standardized structure:
 ## Task Management
 
 All agents share a task database at `/workspace/extra/shared/assignments.db` (SQLite, WAL mode).
-Use `sqlite3` CLI to query and manage tasks. Generate task IDs with `python3 -c "import ulid; print(ulid.ULID())"`.
-Inspect the schema with `sqlite3 /workspace/extra/shared/assignments.db ".schema"`.
+Use `sqlite3` CLI to query and manage tasks. Inspect the schema with `.schema`.
 
-Status values: `open`, `active`, `blocked`, `done`
+**Key columns:** `id`, `title`, `agent_id`, `status`, `blocked_by`, `meta` (JSON)
+**Status values:** `open`, `active`, `blocked`, `done`
+**IDs:** Generate with `python3 -c "import ulid; print(ulid.ULID())"`
+
+Assignments with `blocked_by` set cannot be started until the blocking assignment is `done`.
 
 ## Inter-Agent Communication
 

@@ -521,7 +521,10 @@ export class GroupQueue {
       state.pendingTasks.length === 0 &&
       !state.pendingMessages
     ) {
-      logger.info({ key, ageMs: Date.now() - state.lastActivity }, 'Evicting stale queue entry');
+      logger.info(
+        { key, ageMs: Date.now() - state.lastActivity },
+        'Evicting stale queue entry',
+      );
       this.groups.delete(key);
     }
 

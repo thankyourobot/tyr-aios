@@ -34,7 +34,10 @@ export class AppState {
   >();
 
   // Per-thread toggle overrides (ephemeral — resets on restart)
-  threadToggles = new Map<string, { verbose: boolean; thinking: boolean; planMode: boolean }>();
+  threadToggles = new Map<
+    string,
+    { verbose: boolean; thinking: boolean; planMode: boolean }
+  >();
 
   // Env vars for file downloads
   slackBotToken?: string;
@@ -65,7 +68,9 @@ export class AppState {
     threadTs?: string,
     groupFolder?: string,
   ): { verbose: boolean; thinking: boolean; planMode: boolean } {
-    let override: { verbose: boolean; thinking: boolean; planMode: boolean } | undefined;
+    let override:
+      | { verbose: boolean; thinking: boolean; planMode: boolean }
+      | undefined;
 
     // Synthetic JID already encodes the thread
     if (isSyntheticThreadJid(jid)) {
