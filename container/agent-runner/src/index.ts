@@ -409,8 +409,12 @@ async function runQuery(
       const content = (message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
       if (Array.isArray(content)) {
         for (const block of content) {
+          if (block.type === 'tool_use' && block.name?.includes('submit_plan')) {
+            log(`[tool_use] name=${block.name} hasInput=${!!block.input} inputKeys=${Object.keys(block.input || {}).join(',')}`);
+          }
           if (block.type === 'tool_use' && block.name === 'mcp__nanoclaw__submit_plan') {
             const planText = (block.input as { plan?: string })?.plan || '';
+            log(`[submit_plan detected] planText length=${planText.length}, input keys=${Object.keys(block.input || {}).join(',')}`);
             if (planText) {
               writeOutput({ status: 'success', result: planText, type: 'plan_ready' });
             }
