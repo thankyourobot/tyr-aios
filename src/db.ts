@@ -66,6 +66,8 @@ function createSchema(database: Database.Database): void {
       FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
     );
     CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_jid, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_group ON scheduled_tasks(group_folder);
 
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
@@ -103,120 +105,73 @@ function createSchema(database: Database.Database): void {
       display_emoji TEXT,
       assistant_name TEXT
     );
+    CREATE INDEX IF NOT EXISTS idx_registered_groups_folder ON registered_groups(folder);
   `);
 
-  // Add context_mode column if it doesn't exist (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
-    );
-  } catch {
-    /* column already exists */
-  }
+  // Helper: run an idempotent migration, surfacing unexpected errors
+  const migrate = (label: string, fn: () => void) => {
+    try {
+      fn();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('duplicate column') && !msg.includes('already exists')) {
+        logger.warn({ error: msg }, `Migration error: ${label}`);
+        throw err;
+      }
+    }
+  };
 
-  // Add is_bot_message column if it doesn't exist (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
-    );
-    // Backfill: mark existing bot messages that used the content prefix pattern
-    database
-      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
-      .run(`${ASSISTANT_NAME}:%`);
-  } catch {
-    /* column already exists */
-  }
+  migrate('scheduled_tasks.context_mode', () => {
+    database.exec(`ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`);
+  });
 
-  // Add thread_ts column if it doesn't exist (migration for existing DBs)
-  try {
+  migrate('messages.is_bot_message', () => {
+    database.exec(`ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`);
+    database.prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`).run(`${ASSISTANT_NAME}:%`);
+  });
+
+  migrate('messages.thread_ts', () => {
     database.exec(`ALTER TABLE messages ADD COLUMN thread_ts TEXT`);
-  } catch {
-    /* column already exists */
-  }
+  });
 
-  // Add files column if it doesn't exist (migration for file attachment support)
-  try {
+  migrate('messages.files', () => {
     database.exec(`ALTER TABLE messages ADD COLUMN files TEXT`);
-  } catch {
-    /* column already exists */
-  }
+  });
 
-  // Add is_main column if it doesn't exist (migration for existing DBs)
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
-    );
-    // Backfill: existing rows with folder = 'main' are the main group
-    database.exec(
-      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
-    );
-  } catch {
-    /* column already exists */
-  }
+  migrate('registered_groups.is_main', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`);
+    database.exec(`UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`);
+  });
 
-  // Add display_name, display_emoji, assistant_name columns if they don't exist (migration for existing DBs)
-  try {
+  migrate('registered_groups.display_name', () => {
     database.exec(`ALTER TABLE registered_groups ADD COLUMN display_name TEXT`);
-  } catch {
-    /* column already exists */
-  }
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN display_emoji TEXT`,
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN assistant_name TEXT`,
-    );
-  } catch {
-    /* column already exists */
-  }
+  });
+  migrate('registered_groups.display_emoji', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN display_emoji TEXT`);
+  });
+  migrate('registered_groups.assistant_name', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN assistant_name TEXT`);
+  });
 
-  // Add verbose_default and thinking_default columns (migration for toggle system)
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN verbose_default INTEGER DEFAULT 0`,
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN thinking_default INTEGER DEFAULT 0`,
-    );
-  } catch {
-    /* column already exists */
-  }
-  // Add display_icon_url column for portrait photo support (migration)
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN display_icon_url TEXT`,
-    );
-  } catch {
-    /* column already exists */
-  }
+  migrate('registered_groups.verbose_default', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN verbose_default INTEGER DEFAULT 0`);
+  });
+  migrate('registered_groups.thinking_default', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN thinking_default INTEGER DEFAULT 0`);
+  });
+  migrate('registered_groups.display_icon_url', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN display_icon_url TEXT`);
+  });
 
-  // Add channel_role and bot_user_id columns for multi-agent @mention routing
-  try {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN channel_role TEXT DEFAULT 'director'`,
-    );
-  } catch {
-    /* column already exists */
-  }
-  try {
+  migrate('registered_groups.channel_role', () => {
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN channel_role TEXT DEFAULT 'director'`);
+  });
+  migrate('registered_groups.bot_user_id', () => {
     database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_user_id TEXT`);
-  } catch {
-    /* column already exists */
-  }
-  try {
+  });
+  migrate('registered_groups.bot_token', () => {
     database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_token TEXT`);
-  } catch {
-    /* column already exists */
-  }
+  });
 
   // Migrate registered_groups to composite PK (jid, folder) if still using single PK.
   // Check by trying to insert a duplicate jid with different folder — if it fails, migrate.
@@ -247,26 +202,14 @@ function createSchema(database: Database.Database): void {
       ON thread_bot_triggers(channel_jid, thread_ts, group_folder);
   `);
 
-  // Add channel and is_group columns if they don't exist (migration for existing DBs)
-  try {
+  migrate('chats.channel/is_group', () => {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
     database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    // Backfill from JID patterns
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
-    );
-  } catch {
-    /* columns already exist */
-  }
+    database.exec(`UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`);
+    database.exec(`UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`);
+    database.exec(`UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`);
+    database.exec(`UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`);
+  });
 }
 
 /**

@@ -54,6 +54,7 @@ interface ContainerOutput {
     trigger: 'manual' | 'auto';
   };
   error?: string;
+  schemaVersion?: number;
 }
 
 interface SDKUserMessage {
@@ -103,13 +104,18 @@ class MessageStream {
   }
 }
 
+const STDIN_TIMEOUT_MS = 60_000;
+
 async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = '';
+    const timer = setTimeout(() => {
+      reject(new Error(`stdin read timed out after ${STDIN_TIMEOUT_MS}ms`));
+    }, STDIN_TIMEOUT_MS);
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => { data += chunk; });
-    process.stdin.on('end', () => resolve(data));
-    process.stdin.on('error', reject);
+    process.stdin.on('end', () => { clearTimeout(timer); resolve(data); });
+    process.stdin.on('error', err => { clearTimeout(timer); reject(err); });
   });
 }
 
@@ -118,7 +124,7 @@ const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
 function writeOutput(output: ContainerOutput): void {
   console.log(OUTPUT_START_MARKER);
-  console.log(JSON.stringify(output));
+  console.log(JSON.stringify({ ...output, schemaVersion: 1 }));
   console.log(OUTPUT_END_MARKER);
 }
 

@@ -183,4 +183,159 @@ describe('MessageProcessor', () => {
       expect(capturedFetchJid).toBe('slack:C0AL6C8U21L:t:9999999.000');
     });
   });
+
+  describe('processGroupMessages — dispatch flow', () => {
+    it('returns true (no container) when no messages found', async () => {
+      const result = await processor.processGroupMessages('slack:C0AL6C8U21L');
+      expect(result).toBe(true);
+    });
+
+    it('calls agentExecutor.runAgent when messages exist', async () => {
+      const { getMessagesSince } = await import('./db.js');
+      vi.mocked(getMessagesSince).mockReturnValueOnce([
+        {
+          id: 'msg-1',
+          chat_jid: 'slack:C0AL6C8U21L',
+          sender: 'U123',
+          sender_name: 'Jeremiah',
+          content: '@Sherlock hello',
+          timestamp: '2026-03-30T10:00:00Z',
+          is_from_me: false,
+        },
+      ] as any);
+
+      const mockRunAgent = vi.fn(async () => 'success' as const);
+      processor.setAgentExecutor({
+        runAgent: mockRunAgent,
+        downloadFiles: vi.fn(async () => ''),
+        rewindSession: vi.fn(),
+      } as any);
+
+      const result = await processor.processGroupMessages('slack:C0AL6C8U21L');
+
+      expect(result).toBe(true);
+      expect(mockRunAgent).toHaveBeenCalledWith(
+        expect.objectContaining({ folder: 'strategy' }),
+        expect.any(String),
+        expect.any(String),
+        expect.any(Function),
+        expect.objectContaining({ verbose: false }),
+        undefined,
+      );
+    });
+
+    it('rolls back cursor on agent error (no output sent)', async () => {
+      const { getMessagesSince } = await import('./db.js');
+      vi.mocked(getMessagesSince).mockReturnValueOnce([
+        {
+          id: 'msg-2',
+          chat_jid: 'slack:C0AL6C8U21L',
+          sender: 'U123',
+          sender_name: 'Jeremiah',
+          content: '@Sherlock fail',
+          timestamp: '2026-03-30T10:00:00Z',
+          is_from_me: false,
+        },
+      ] as any);
+
+      state.lastAgentTimestamp['slack:C0AL6C8U21L'] = 'old-cursor';
+
+      const mockRunAgent = vi.fn(async () => 'error' as const);
+      processor.setAgentExecutor({
+        runAgent: mockRunAgent,
+        downloadFiles: vi.fn(async () => ''),
+        rewindSession: vi.fn(),
+      } as any);
+      const saveFn = vi.fn();
+      processor.setSaveFn(saveFn);
+
+      const result = await processor.processGroupMessages('slack:C0AL6C8U21L');
+
+      expect(result).toBe(false);
+      // Cursor should be rolled back
+      expect(state.lastAgentTimestamp['slack:C0AL6C8U21L']).toBe('old-cursor');
+    });
+  });
+
+  describe('dispatchMessage', () => {
+    it('pipes message via IPC for single-group thread', () => {
+      const msg: NewMessage = {
+        id: 'msg-3',
+        chat_jid: 'slack:C123:t:111.000',
+        sender: 'U456',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-30T11:00:00Z',
+        is_from_me: false,
+      };
+      (state.queue.sendMessage as any).mockReturnValue(true);
+
+      processor.dispatchMessage('slack:C123:t:111.000', msg);
+
+      expect(state.queue.sendMessage).toHaveBeenCalledWith(
+        'slack:C123',
+        '111.000',
+        'formatted',
+      );
+    });
+
+    it('enqueues when IPC pipe not available', () => {
+      const msg: NewMessage = {
+        id: 'msg-4',
+        chat_jid: 'slack:C123:t:111.000',
+        sender: 'U456',
+        sender_name: 'User',
+        content: 'hello',
+        timestamp: '2026-03-30T11:00:00Z',
+        is_from_me: false,
+      };
+      (state.queue.sendMessage as any).mockReturnValue(false);
+
+      processor.dispatchMessage('slack:C123:t:111.000', msg);
+
+      expect(state.queue.enqueueMessageCheck).toHaveBeenCalledWith(
+        'slack:C123',
+        '111.000',
+      );
+    });
+  });
+
+  describe('dispatchBotMessage', () => {
+    it('does nothing for single-group channels', () => {
+      vi.mocked(groupManager.isMultiGroupChannel as any).mockReturnValue(false);
+
+      processor.dispatchBotMessage('slack:C123', {
+        id: 'bot-1',
+        chat_jid: 'slack:C123',
+        sender: 'UBOT',
+        sender_name: 'Bot',
+        content: '<@U999> hello',
+        timestamp: '2026-03-30T12:00:00Z',
+        is_from_me: false,
+        is_bot_message: true,
+      } as any);
+
+      expect(state.queue.enqueueMessageCheck).not.toHaveBeenCalled();
+    });
+
+    it('dispatches to target groups in multi-group channel', () => {
+      vi.mocked(groupManager.isMultiGroupChannel as any).mockReturnValue(true);
+      vi.mocked(groupManager.resolveTargetGroups as any).mockReturnValue([
+        makeGroup('growth'),
+      ]);
+
+      processor.dispatchBotMessage('slack:C123', {
+        id: 'bot-2',
+        chat_jid: 'slack:C123',
+        sender: 'UBOT',
+        sender_name: 'Bot',
+        content: '<@UGROWTH> check this',
+        timestamp: '2026-03-30T12:00:00Z',
+        is_from_me: false,
+        is_bot_message: true,
+      } as any);
+
+      expect(state.queue.enqueueMessageCheck).toHaveBeenCalled();
+    });
+  });
 });

@@ -194,4 +194,5 @@ export interface ContainerOutput {
     trigger: 'manual' | 'auto';
   };
   error?: string;
+  schemaVersion?: number;
 }

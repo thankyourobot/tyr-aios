@@ -14,6 +14,7 @@ interface QueuedTask {
 
 const MAX_RETRIES = 5;
 const BASE_RETRY_MS = 5000;
+const MAX_IDLE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**
  * Composite queue key: chatJid + threadTs.
@@ -37,6 +38,7 @@ interface GroupState {
   threadKey: string; // threadTs or '__root__'
   chatJid: string; // original chatJid (for drain resolution)
   retryCount: number;
+  lastActivity: number;
 }
 
 export class GroupQueue {
@@ -65,6 +67,7 @@ export class GroupQueue {
         threadKey: threadTs || '__root__',
         chatJid,
         retryCount: 0,
+        lastActivity: Date.now(),
       };
       this.groups.set(key, state);
     }
@@ -104,6 +107,7 @@ export class GroupQueue {
 
     const key = queueKey(groupJid, threadTs);
     const state = this.getGroup(groupJid, threadTs);
+    state.lastActivity = Date.now();
 
     if (state.active) {
       state.pendingMessages = true;
@@ -141,6 +145,7 @@ export class GroupQueue {
     // Tasks always run on the __root__ slot
     const key = queueKey(groupJid, null);
     const state = this.getGroup(groupJid, null);
+    state.lastActivity = Date.now();
 
     // Prevent double-queuing: check both pending and currently-running task
     if (state.runningTaskId === taskId) {
@@ -345,6 +350,7 @@ export class GroupQueue {
     state.idleWaiting = false;
     state.isTaskContainer = false;
     state.pendingMessages = false;
+    state.lastActivity = Date.now();
     this.activeCount++;
 
     logger.debug(
@@ -421,6 +427,7 @@ export class GroupQueue {
     const state = this.groups.get(key);
     if (!state) return;
     state.active = true;
+    state.lastActivity = Date.now();
     state.idleWaiting = false;
     state.isTaskContainer = true;
     state.runningTaskId = task.id;
@@ -508,6 +515,13 @@ export class GroupQueue {
     // Evict idle slots with no pending work to prevent unbounded Map growth.
     // Don't evict if a retry is scheduled (retryCount > 0) — the retry callback needs the state.
     if (state.retryCount === 0) {
+      this.groups.delete(key);
+    } else if (
+      Date.now() - state.lastActivity > MAX_IDLE_AGE_MS &&
+      state.pendingTasks.length === 0 &&
+      !state.pendingMessages
+    ) {
+      logger.info({ key, ageMs: Date.now() - state.lastActivity }, 'Evicting stale queue entry');
       this.groups.delete(key);
     }
 

@@ -17,6 +17,8 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { logger } from './logger.js';
+
+const MAX_CATCHUP_ITERATIONS = 1000;
 import { RegisteredGroup, ScheduledTask } from './types.js';
 
 /**
@@ -51,8 +53,17 @@ export function computeNextRun(task: ScheduledTask): string | null {
     // Anchor to the scheduled time, not now, to prevent drift.
     // Skip past any missed intervals so we always land in the future.
     let next = new Date(task.next_run!).getTime() + ms;
+    let iterations = 0;
     while (next <= now) {
       next += ms;
+      if (++iterations >= MAX_CATCHUP_ITERATIONS) {
+        logger.warn(
+          { taskId: task.id, iterations, intervalMs: ms },
+          'Catch-up loop exceeded max iterations, snapping to now',
+        );
+        next = now + ms;
+        break;
+      }
     }
     return new Date(next).toISOString();
   }

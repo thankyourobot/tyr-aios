@@ -45,6 +45,11 @@ export function parseStreamingChunk(
 
     try {
       const parsed: ContainerOutput = JSON.parse(jsonStr);
+      if (parsed.schemaVersion === undefined) {
+        logger.warn({ group: groupName }, 'Container output missing schemaVersion — possible stale agent-runner image');
+      } else if (parsed.schemaVersion !== 1) {
+        logger.warn({ group: groupName, schemaVersion: parsed.schemaVersion }, 'Unexpected container output schemaVersion');
+      }
       if (parsed.newSessionId) {
         parseState.newSessionId = parsed.newSessionId;
       }
