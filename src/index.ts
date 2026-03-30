@@ -186,6 +186,10 @@ async function handleCommand(
         group?.folder,
       );
       state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
+      logger.info(
+        { toggleKey, planMode: newValue, chatJid, threadTs: msg.threadTs, folder: group?.folder },
+        'Plan mode toggle SET',
+      );
     } else {
       if (!group) return false;
       group.planModeDefault = newValue;

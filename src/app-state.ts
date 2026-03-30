@@ -93,6 +93,10 @@ export class AppState {
       if (groupFolder && threadTs) {
         const planKey = `${jid}:${threadTs}:${groupFolder}`;
         const planOverride = this.threadToggles.get(planKey);
+        logger.debug(
+          { planKey, found: !!planOverride, toggleMapSize: this.threadToggles.size, toggleKeys: [...this.threadToggles.keys()] },
+          'getToggleState plan key lookup',
+        );
         if (planOverride) {
           return { ...defaults, planMode: planOverride.planMode };
         }
