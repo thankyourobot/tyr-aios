@@ -13,6 +13,7 @@ import {
   getMessageById,
   getMessagesSince,
   getMessagesSinceIncludingBots,
+  getThreadMembers,
   storeResponseUuid,
 } from './db.js';
 import type { GroupManager } from './group-manager.js';
@@ -206,11 +207,17 @@ ${formatMessages([parentMsg], TIMEZONE)}
       }, IDLE_TIMEOUT);
     };
 
-    // Suppress typing for thread members who aren't explicitly mentioned in the triggering message
+    // Suppress typing for thread members who aren't explicitly mentioned in the triggering message.
+    // Exception: show typing when this is the only agent in the thread (no ambiguity about who's responding).
     const triggeringMsg = missedMessages[missedMessages.length - 1];
+    const threadMembers = groupFolder && threadTs
+      ? getThreadMembers(getParentJid(baseJid) || baseJid, threadTs)
+      : [];
+    const isSoleThreadAgent = threadMembers.length <= 1;
     const isMentioned =
       !groupFolder ||
       !triggeringMsg ||
+      isSoleThreadAgent ||
       (group.botUserId &&
         triggeringMsg.content.includes(`<@${group.botUserId}>`)) ||
       (group.assistantName &&
