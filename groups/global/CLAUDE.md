@@ -63,13 +63,29 @@ Your workspace has a standardized structure:
 ## Task Management
 
 All agents share a task database at `/workspace/extra/shared/assignments.db` (SQLite, WAL mode).
-Use `sqlite3` CLI to query and manage tasks. Inspect the schema with `.schema`.
+Use the assignment MCP tools (`list_assignments`, `create_assignment`, `update_assignment`, `complete_assignment`) as the primary interface. Fall back to `sqlite3` CLI for manual inspection or debugging.
 
 **Key columns:** `id`, `title`, `agent_id`, `status`, `blocked_by`, `meta` (JSON)
 **Status values:** `open`, `active`, `blocked`, `done`
-**IDs:** Generate with `python3 -c "import ulid; print(ulid.ULID())"`
+**Status lifecycle:** `open` → (plan approved) → `active` → `done`. Set `blocked` when not ready to start.
 
-Assignments with `blocked_by` set cannot be started until the blocking assignment is `done`.
+### Assignment Creation Standards
+
+Assignments MUST include these fields in `meta` (JSON):
+- `meta.description` (required): WHY this needs doing — background context and motivation
+- `meta.acceptance_criteria` (required): how to verify the work is done correctly
+- `meta.source` (required): who created it — human name or agent folder
+
+Optional meta fields:
+- `meta.priority`: `highest`, `high`, `medium`, `low`
+- `meta.constraints`: what NOT to do, scope limits
+- `meta.references`: file paths, specs, conversation context
+
+**Underspecified assignments:** Assignments without `description` and `acceptance_criteria` are underspecified. Do NOT start work on them — ask for clarification from the creator (`meta.source`) first.
+
+### Blocking
+
+`blocked_by` is an informal freetext field. Use it to note what's blocking — assignment IDs, descriptions, external dependencies. There is no automated cascade. When you see a blocked assignment during a heartbeat, check the blocker's status yourself and move the assignment to `open` if the blocker is resolved.
 
 ## Inter-Agent Communication
 

@@ -9,7 +9,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
+import { ulid } from 'ulid';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -414,6 +416,222 @@ server.tool(
             text: `Error reading activity: ${err instanceof Error ? err.message : String(err)}`,
           },
         ],
+      };
+    }
+  },
+);
+
+// --- Assignment Tools (direct sqlite3 access — no IPC needed) ---
+
+const ASSIGNMENTS_DB = '/workspace/extra/shared/assignments.db';
+
+function execSqlite(dbPath: string, sql: string): string {
+  try {
+    return execSync(`sqlite3 -json "${dbPath}" "${sql.replace(/"/g, '\\"')}"`, {
+      encoding: 'utf-8',
+      timeout: 10000,
+    }).trim();
+  } catch (err: any) {
+    const stderr = err.stderr?.toString().trim() || '';
+    const msg = stderr || (err instanceof Error ? err.message : String(err));
+    throw new Error(`sqlite3 error: ${msg}`);
+  }
+}
+
+function ensureAssignmentsSchema(dbPath: string): void {
+  const schema = `
+    PRAGMA journal_mode=WAL;
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      folder TEXT NOT NULL UNIQUE,
+      created TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS assignments (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      agent_id TEXT NOT NULL REFERENCES agents(id),
+      status TEXT NOT NULL DEFAULT 'open',
+      blocked_by TEXT,
+      meta TEXT DEFAULT '{}',
+      created TEXT DEFAULT (datetime('now')),
+      updated TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_assignments_agent_status ON assignments(agent_id, status);
+    CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
+  `;
+  execSync(`sqlite3 "${dbPath}" "${schema.replace(/\n/g, ' ').replace(/"/g, '\\"')}"`, {
+    encoding: 'utf-8',
+    timeout: 10000,
+  });
+}
+
+server.tool(
+  'list_assignments',
+  'List assignments from the shared assignments database. Non-main agents see only their own assignments; main agent sees all.',
+  {
+    status: z.enum(['open', 'active', 'blocked', 'done']).optional().describe('Filter by status. Omit to see open, active, and blocked.'),
+  },
+  async (args) => {
+    try {
+      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+      const statusFilter = args.status
+        ? `status = '${args.status}'`
+        : "status IN ('open', 'active', 'blocked')";
+      const agentFilter = isMain ? '' : `agent_id = '${groupFolder}' AND`;
+      const sql = `SELECT id, title, agent_id, status, blocked_by, json_extract(meta, '$.description') as description, json_extract(meta, '$.acceptance_criteria') as acceptance_criteria, json_extract(meta, '$.priority') as priority FROM assignments WHERE ${agentFilter} ${statusFilter} ORDER BY created`;
+      const result = execSqlite(ASSIGNMENTS_DB, sql);
+      if (!result || result === '[]') {
+        return { content: [{ type: 'text' as const, text: 'No assignments found.' }] };
+      }
+      const rows = JSON.parse(result);
+      const formatted = rows.map((r: any) => {
+        let line = `[${r.id}] ${r.title} (${r.status})`;
+        if (r.agent_id && isMain) line += ` — agent: ${r.agent_id}`;
+        if (r.priority) line += ` [${r.priority}]`;
+        if (r.blocked_by) line += `\n  Blocked by: ${r.blocked_by}`;
+        if (r.description) line += `\n  Description: ${r.description}`;
+        if (r.acceptance_criteria) line += `\n  Acceptance criteria: ${r.acceptance_criteria}`;
+        return line;
+      }).join('\n\n');
+      return { content: [{ type: 'text' as const, text: formatted }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'create_assignment',
+  'Create a new assignment in the shared assignments database. Requires title, agent_id, description, and acceptance_criteria.',
+  {
+    title: z.string().describe('Short title for the assignment'),
+    agent_id: z.string().describe('Agent folder name to assign to (e.g., "strategy", "operations")'),
+    description: z.string().describe('WHY this needs doing — background context and motivation'),
+    acceptance_criteria: z.string().describe('How to verify the work is done correctly'),
+    priority: z.enum(['highest', 'high', 'medium', 'low']).optional().describe('Relative urgency'),
+    constraints: z.string().optional().describe('What NOT to do, scope limits'),
+    references: z.string().optional().describe('File paths, specs, conversation context'),
+    blocked_by: z.string().optional().describe('Freetext note of what blocks this (assignment IDs, descriptions, etc.)'),
+  },
+  async (args) => {
+    try {
+      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+
+      // Validate agent exists
+      const agentCheck = execSqlite(ASSIGNMENTS_DB, `SELECT id FROM agents WHERE id = '${args.agent_id}' OR folder = '${args.agent_id}'`);
+      if (!agentCheck || agentCheck === '[]') {
+        return {
+          content: [{ type: 'text' as const, text: `Agent "${args.agent_id}" not found in agents table. Register it first.` }],
+          isError: true,
+        };
+      }
+
+      const id = ulid();
+      const meta: Record<string, string | undefined> = {
+        description: args.description,
+        acceptance_criteria: args.acceptance_criteria,
+        source: groupFolder,
+        priority: args.priority,
+        constraints: args.constraints,
+        references: args.references,
+      };
+      // Remove undefined values
+      Object.keys(meta).forEach(k => meta[k] === undefined && delete meta[k]);
+
+      const metaJson = JSON.stringify(meta).replace(/'/g, "''");
+      const status = args.blocked_by ? 'blocked' : 'open';
+      const blockedBy = args.blocked_by ? args.blocked_by.replace(/'/g, "''") : '';
+      const titleEsc = args.title.replace(/'/g, "''");
+
+      const sql = `INSERT INTO assignments (id, title, agent_id, status, blocked_by, meta) VALUES ('${id}', '${titleEsc}', '${args.agent_id}', '${status}', ${blockedBy ? `'${blockedBy}'` : 'NULL'}, '${metaJson}')`;
+      execSqlite(ASSIGNMENTS_DB, sql);
+
+      return { content: [{ type: 'text' as const, text: `Assignment created: ${id} — "${args.title}" (${status})` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'update_assignment',
+  'Update an existing assignment. Only provided fields are changed.',
+  {
+    id: z.string().describe('Assignment ID to update'),
+    status: z.enum(['open', 'active', 'blocked', 'done']).optional().describe('New status'),
+    title: z.string().optional().describe('New title'),
+    blocked_by: z.string().optional().describe('Freetext blocker note (set empty string to clear)'),
+    meta: z.string().optional().describe('Full meta JSON to replace existing meta'),
+  },
+  async (args) => {
+    try {
+      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+
+      const sets: string[] = ["updated = datetime('now')"];
+      if (args.status !== undefined) sets.push(`status = '${args.status}'`);
+      if (args.title !== undefined) sets.push(`title = '${args.title.replace(/'/g, "''")}'`);
+      if (args.blocked_by !== undefined) {
+        sets.push(args.blocked_by === '' ? 'blocked_by = NULL' : `blocked_by = '${args.blocked_by.replace(/'/g, "''")}'`);
+      }
+      if (args.meta !== undefined) sets.push(`meta = '${args.meta.replace(/'/g, "''")}'`);
+
+      const sql = `UPDATE assignments SET ${sets.join(', ')} WHERE id = '${args.id}'`;
+      execSqlite(ASSIGNMENTS_DB, sql);
+
+      // Verify it existed
+      const check = execSqlite(ASSIGNMENTS_DB, `SELECT id, title, status FROM assignments WHERE id = '${args.id}'`);
+      if (!check || check === '[]') {
+        return {
+          content: [{ type: 'text' as const, text: `Assignment "${args.id}" not found.` }],
+          isError: true,
+        };
+      }
+
+      const row = JSON.parse(check)[0];
+      return { content: [{ type: 'text' as const, text: `Updated: [${row.id}] "${row.title}" — status: ${row.status}` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'complete_assignment',
+  'Mark an assignment as done.',
+  {
+    id: z.string().describe('Assignment ID to complete'),
+  },
+  async (args) => {
+    try {
+      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+
+      // Verify it exists
+      const check = execSqlite(ASSIGNMENTS_DB, `SELECT id, title, status FROM assignments WHERE id = '${args.id}'`);
+      if (!check || check === '[]') {
+        return {
+          content: [{ type: 'text' as const, text: `Assignment "${args.id}" not found.` }],
+          isError: true,
+        };
+      }
+
+      execSqlite(ASSIGNMENTS_DB, `UPDATE assignments SET status = 'done', updated = datetime('now') WHERE id = '${args.id}'`);
+
+      const row = JSON.parse(check)[0];
+      return { content: [{ type: 'text' as const, text: `Completed: [${row.id}] "${row.title}"` }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
       };
     }
   },

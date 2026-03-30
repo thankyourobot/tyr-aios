@@ -133,9 +133,21 @@ Write to `/workspace/ipc/messages/`. Prefer reactions over "Got it" text respons
 
 ### MCP Tools
 
-Agents have access to NanoClaw MCP tools that bridge the container isolation boundary. These communicate with the NanoClaw host process to perform actions the container can't do directly (post to Slack, create scheduled tasks, add reactions). Available tools are discoverable at runtime.
+Agents have access to NanoClaw MCP tools. Two categories:
 
-**Scope:** Agents can send messages and reactions to channels where they are registered. The main group can send to any channel.
+**Host IPC tools** — bridge the container isolation boundary, communicating with the NanoClaw host process for actions the container can't do directly:
+- `send_message` — Post a Slack message
+- `schedule_task` / `list_tasks` / `pause_task` / `resume_task` / `cancel_task` / `update_task` — Manage scheduled tasks
+- `register_group` — Register a new group (main only)
+- `get_recent_activity` — Recent message activity snapshot
+
+**Assignment tools** — direct sqlite3 access to the shared assignments database (no host involvement needed):
+- `list_assignments` — List assignments (filtered by agent for non-main, all for main)
+- `create_assignment` — Create with required fields (title, agent_id, description, acceptance_criteria)
+- `update_assignment` — Update status, title, blocked_by, or meta
+- `complete_assignment` — Mark assignment as done
+
+**Scope:** Agents can send messages and reactions to channels where they are registered. The main group can send to any channel. Assignment tools are available to all agents.
 
 ### IPC
 
