@@ -995,6 +995,57 @@ async function main(): Promise<void> {
         await channel.addReaction(jid, messageTs, emoji);
       }
     },
+    onSubmitPlan: async (chatJid: string, groupFolder: string, plan: string) => {
+      const channel = findChannel(state.channels, chatJid);
+      if (!channel) return;
+      const group = state.groupsByFolder.get(groupFolder)?.group;
+
+      // Find the thread for this group's active container
+      const threadTs = state.queue.getActiveThreadTs(chatJid, groupFolder);
+
+      // Send the plan text
+      await channel.sendMessage(chatJid, plan, {
+        displayName: group?.displayName,
+        displayEmoji: group?.displayEmoji,
+        displayIconUrl: group?.displayIconUrl,
+        botToken: group?.botToken,
+        threadTs,
+      });
+
+      // Send the Approve button
+      if ((channel as any).sendBlocks) {
+        await (channel as any).sendBlocks(
+          chatJid,
+          [
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: '_Reply to revise the plan_' },
+            },
+            {
+              type: 'actions',
+              block_id: `plan_${Date.now()}`,
+              elements: [
+                {
+                  type: 'button',
+                  text: { type: 'plain_text', text: 'Approve' },
+                  style: 'primary',
+                  action_id: 'plan_approve',
+                  value: JSON.stringify({ chatJid, threadTs, groupFolder }),
+                },
+              ],
+            },
+          ],
+          'Plan ready — Approve or reply to revise',
+          {
+            displayName: group?.displayName,
+            displayEmoji: group?.displayEmoji,
+            displayIconUrl: group?.displayIconUrl,
+            botToken: group?.botToken,
+            threadTs,
+          },
+        );
+      }
+    },
   });
   state.queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();

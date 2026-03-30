@@ -272,48 +272,6 @@ ${formatMessages([parentMsg], TIMEZONE)}
           return;
         }
 
-        // Plan ready: agent called ExitPlanMode — post Approve button
-        if (result.type === 'plan_ready' && channel.sendBlocks) {
-          await channel.sendBlocks(
-            chatJid,
-            [
-              {
-                type: 'section',
-                text: {
-                  type: 'mrkdwn',
-                  text: '_Reply to revise the plan_',
-                },
-              },
-              {
-                type: 'actions',
-                block_id: `plan_${Date.now()}`,
-                elements: [
-                  {
-                    type: 'button',
-                    text: { type: 'plain_text', text: 'Approve' },
-                    style: 'primary',
-                    action_id: 'plan_approve',
-                    value: JSON.stringify({
-                      chatJid,
-                      threadTs: lastThreadTs,
-                      groupFolder: group.folder,
-                    }),
-                  },
-                ],
-              },
-            ],
-            'Plan ready — Approve or reply to revise',
-            {
-              displayName: group.displayName,
-              displayEmoji: group.displayEmoji,
-              displayIconUrl: group.displayIconUrl,
-              botToken: group.botToken,
-              threadTs: lastThreadTs,
-            },
-          );
-          return;
-        }
-
         if (result.result) {
           const raw =
             typeof result.result === 'string'

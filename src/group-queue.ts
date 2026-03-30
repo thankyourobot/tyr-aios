@@ -74,6 +74,24 @@ export class GroupQueue {
     return state;
   }
 
+  /**
+   * Find the thread timestamp for an active container matching a chatJid and groupFolder.
+   * Used by IPC handlers that need to target a specific thread.
+   */
+  getActiveThreadTs(chatJid: string, groupFolder?: string): string | undefined {
+    for (const [key, state] of this.groups) {
+      if (
+        state.active &&
+        state.chatJid === chatJid &&
+        (!groupFolder || state.groupFolder === groupFolder) &&
+        state.threadKey !== '__root__'
+      ) {
+        return state.threadKey;
+      }
+    }
+    return undefined;
+  }
+
   setProcessMessagesFn(
     fn: (groupJid: string, threadTs?: string) => Promise<boolean>,
   ): void {

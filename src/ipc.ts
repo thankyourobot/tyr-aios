@@ -30,6 +30,12 @@ export interface IpcDeps {
     messageTs: string,
     emoji: string,
   ) => Promise<void>;
+  /** Handle plan submission from agent (posts plan + Approve button). */
+  onSubmitPlan?: (
+    chatJid: string,
+    groupFolder: string,
+    plan: string,
+  ) => Promise<void>;
 }
 
 let ipcWatcherRunning = false;
@@ -102,6 +108,24 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     'Unauthorized IPC message attempt blocked',
                   );
                 }
+              }
+              // Handle plan submission
+              if (
+                data.type === 'submit_plan' &&
+                data.chatJid &&
+                data.groupFolder &&
+                data.plan &&
+                deps.onSubmitPlan
+              ) {
+                await deps.onSubmitPlan(
+                  data.chatJid,
+                  data.groupFolder,
+                  data.plan,
+                );
+                logger.info(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'Plan submitted for approval',
+                );
               }
               // Handle emoji reaction IPC action
               if (

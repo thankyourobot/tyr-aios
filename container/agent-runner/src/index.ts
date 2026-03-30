@@ -403,18 +403,6 @@ async function runQuery(
       }
     }
 
-    // Detect ExitPlanMode tool use → emit plan_ready signal
-    if (message.type === 'assistant') {
-      const assistantContent = (message as { message?: { content?: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
-      if (Array.isArray(assistantContent)) {
-        for (const block of assistantContent) {
-          if (block.type === 'tool_use' && block.name === 'ExitPlanMode') {
-            writeOutput({ status: 'success', result: null, type: 'plan_ready' });
-          }
-        }
-      }
-    }
-
     // Verbose mode: emit tool_use summaries
     if (message.type === 'assistant' && containerInput.verbose) {
       const assistantContent = (message as { message?: { content?: Array<{ type: string; id?: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
@@ -555,7 +543,7 @@ async function main(): Promise<void> {
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.planMode) {
-    prompt = `[PLAN MODE — Call the EnterPlanMode tool immediately before doing anything else. Explore and plan, then call ExitPlanMode when your plan is ready. Do NOT execute — wait for user approval.]\n\n${prompt}`;
+    prompt = `[PLAN MODE — Call the EnterPlanMode tool immediately before doing anything else. Explore the codebase and design your approach. You may ask clarifying questions using the send_message tool. When your plan is complete, call the submit_plan MCP tool with the full plan text. Do NOT execute the plan — wait for user approval.]\n\n${prompt}`;
   }
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
