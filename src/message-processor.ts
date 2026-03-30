@@ -226,6 +226,22 @@ ${formatMessages([parentMsg], TIMEZONE)}
           `(?:^|\\s)@${escapeRegex(group.assistantName)}\\b`,
           'i',
         ).test(triggeringMsg.content));
+    // Detect *plan command in messages (handles both realtime and polling paths)
+    const planPattern = /^\*plan(?:\s|$)/;
+    for (const m of missedMessages) {
+      if (!m.is_bot_message && !m.is_from_me) {
+        const stripped = m.content.trim().replace(/^(<@[A-Z0-9]+>\s*)+/, '');
+        if (planPattern.test(stripped)) {
+          const isOff = /^\*plan\s+off\s*$/.test(stripped);
+          const planKey = `${chatJid}:${lastThreadTs}:${group.folder}`;
+          const current = this.state.getToggleState(chatJid, lastThreadTs, group.folder);
+          this.state.threadToggles.set(planKey, { ...current, planMode: !isOff });
+          logger.info({ planKey, planMode: !isOff }, 'Plan mode set from message-processor');
+          break;
+        }
+      }
+    }
+
     // Get toggle state for this thread (pass groupFolder for per-agent plan mode)
     const toggleState = this.state.getToggleState(
       chatJid,
