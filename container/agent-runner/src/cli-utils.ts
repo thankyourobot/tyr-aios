@@ -66,6 +66,7 @@ export interface BuildCliArgsOptions {
   systemPromptAppend?: string;
   additionalDirectories?: string[];
   allowedTools: string[];
+  planMode?: boolean;
   settingSources?: string[];
   maxThinkingTokens?: number;
   includePartialMessages?: boolean;

@@ -82,9 +82,7 @@ export function updateTask(
 
   values.push(id);
   getDb()
-    .prepare(
-      `UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`,
-    )
+    .prepare(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`)
     .run(...values);
 }
 

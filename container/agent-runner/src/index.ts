@@ -29,6 +29,7 @@ interface ContainerInput {
   assistantName?: string;
   verbose?: boolean;
   thinking?: boolean;
+  planMode?: boolean;
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
   threadTs?: string;
@@ -39,7 +40,7 @@ interface ContainerInput {
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
-  type?: 'result' | 'verbose' | 'thinking';
+  type?: 'result' | 'verbose' | 'thinking' | 'plan_ready';
   newSessionId?: string;
   lastAssistantUuid?: string;
   contextUsage?: {
@@ -316,6 +317,17 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  // Append plan mode instructions to system prompt
+  if (containerInput.planMode) {
+    const planInstructions = [
+      '',
+      'IMPORTANT: You are in plan mode. Call the EnterPlanMode tool immediately before doing anything else.',
+      'Explore the codebase, design your approach, then call ExitPlanMode when your plan is ready.',
+      'Do NOT execute the plan — wait for user approval after presenting it.',
+    ].join('\n');
+    globalClaudeMd = (globalClaudeMd || '') + planInstructions;
+  }
+
   // Track context usage from assistant messages
   let lastContextUsage: ContainerOutput['contextUsage'] | undefined;
   let lastCompaction: ContainerOutput['compaction'] | undefined;
@@ -347,9 +359,11 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
+        'EnterPlanMode', 'ExitPlanMode',
         'memory_20250818',
         'mcp__nanoclaw__*'
       ],
+      planMode: containerInput.planMode,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -528,6 +542,9 @@ async function main(): Promise<void> {
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
+  if (containerInput.planMode) {
+    prompt = `[PLAN MODE — Call the EnterPlanMode tool immediately before doing anything else. Explore the codebase and design your approach. You may ask clarifying questions using the send_message tool. When your plan is complete, call the submit_plan MCP tool with the full plan text. Do NOT execute the plan — wait for user approval.]\n\n${prompt}`;
+  }
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }

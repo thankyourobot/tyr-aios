@@ -78,7 +78,8 @@ async function handleCommand(
   msg: NewMessage,
   channel: Channel,
 ): Promise<boolean> {
-  const text = msg.content.trim();
+  // Strip leading @mentions so commands work with "@Agent *plan ..." syntax
+  const text = msg.content.trim().replace(/^(<@[A-Z0-9]+>\s*)+/, '');
   const group = resolveGroup(chatJid);
 
   // /stop command — stops container for the thread where *stop was sent
@@ -159,9 +160,66 @@ async function handleCommand(
       {
         displayName: group?.displayName,
         displayEmoji: group?.displayEmoji,
+        displayIconUrl: group?.displayIconUrl,
         threadTs: msg.threadTs,
       },
     );
+    return true;
+  }
+
+  // *plan command — enter plan mode, optionally with inline prompt
+  // *plan = enable plan mode (confirmation only)
+  // *plan off = disable plan mode
+  // *plan <prompt> = enable plan mode + forward prompt to agent
+  const planMatch = text.match(/^\*plan(?:\s+(off)|\s+(.+))?$/s);
+  if (planMatch) {
+    const isOff = planMatch[1] === 'off';
+    const inlinePrompt = planMatch[2]; // trailing text after *plan
+    const inThread = !!msg.threadTs;
+    const newValue = !isOff;
+
+    // Set the toggle — use base JID to match how processGroupMessages looks it up
+    if (inThread) {
+      const baseJid = getParentJid(chatJid) || chatJid;
+      const toggleKey = `${baseJid}:${msg.threadTs}:${group?.folder || ''}`;
+      const current = state.getToggleState(
+        baseJid,
+        msg.threadTs,
+        group?.folder,
+      );
+      state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
+      logger.info(
+        {
+          toggleKey,
+          planMode: newValue,
+          baseJid,
+          threadTs: msg.threadTs,
+          folder: group?.folder,
+        },
+        'Plan mode toggle SET',
+      );
+    } else {
+      if (!group) return false;
+      group.planModeDefault = newValue;
+      setRegisteredGroup(chatJid, group);
+    }
+
+    // *plan <prompt>: keep full message (agent sees *plan intent), let it flow through
+    if (inlinePrompt && newValue) {
+      return false; // Don't consume — message flows to agent processing with *plan prefix intact
+    }
+
+    // Bare *plan or *plan off: send confirmation, consume message
+    const scope = inThread
+      ? 'this thread'
+      : `${group?.name || 'group'} (default)`;
+    const stateStr = newValue ? 'ON' : 'OFF';
+    await channel.sendMessage(chatJid, `Plan mode: ${stateStr} for ${scope}`, {
+      displayName: group?.displayName,
+      displayEmoji: group?.displayEmoji,
+      displayIconUrl: group?.displayIconUrl,
+      threadTs: msg.threadTs,
+    });
     return true;
   }
 
@@ -705,6 +763,34 @@ async function main(): Promise<void> {
       newThreadTs: string;
       sdkUuid: string;
     }) => agentExecutor.rewindSession(p),
+    onPlanApprove: async (params: {
+      chatJid: string;
+      threadTs: string;
+      groupFolder: string;
+    }) => {
+      // Toggle plan mode OFF for this thread+agent
+      const planKey = `${params.chatJid}:${params.threadTs}:${params.groupFolder}`;
+      const current = state.getToggleState(
+        params.chatJid,
+        params.threadTs,
+        params.groupFolder,
+      );
+      state.threadToggles.set(planKey, { ...current, planMode: false });
+
+      // Store synthetic approval message and enqueue for processing
+      // (container is likely already exited from idle timeout)
+      const baseJid = getParentJid(params.chatJid) || params.chatJid;
+      storeMessage({
+        id: Date.now().toString(),
+        chat_jid: buildThreadJid(baseJid, params.threadTs),
+        sender: 'user',
+        sender_name: 'User',
+        content: 'Approved. Execute the plan now.',
+        timestamp: new Date().toISOString(),
+        threadTs: params.threadTs,
+      });
+      state.queue.enqueueMessageCheck(baseJid, params.threadTs);
+    },
     onSlashCommand: async (params: {
       command: string;
       text: string;
@@ -766,6 +852,34 @@ async function main(): Promise<void> {
             : `${group?.name || 'group'} (default)`;
           const mode = params.command;
           return `${mode.charAt(0).toUpperCase() + mode.slice(1)} mode: ${newValue ? 'ON' : 'OFF'} for ${scope}`;
+        }
+
+        case 'plan': {
+          const arg = params.text.trim().toLowerCase();
+          const inThread = !!params.threadTs;
+          const newValue = arg !== 'off'; // bare /plan = on, /plan off = cancel
+
+          if (inThread) {
+            const toggleKey = `${channelJid}:${params.threadTs}:${group?.folder || ''}`;
+            const current = state.getToggleState(
+              channelJid,
+              params.threadTs,
+              group?.folder,
+            );
+            state.threadToggles.set(toggleKey, {
+              ...current,
+              planMode: newValue,
+            });
+          } else {
+            if (!group) return 'No group found for this channel';
+            group.planModeDefault = newValue;
+            setRegisteredGroup(channelJid, group);
+          }
+
+          const scope = inThread
+            ? 'this thread'
+            : `${group?.name || 'group'} (default)`;
+          return `Plan mode: ${newValue ? 'ON' : 'OFF'} for ${scope}`;
         }
 
         case 'rewind': {
@@ -880,6 +994,61 @@ async function main(): Promise<void> {
       const channel = findChannel(state.channels, jid);
       if (channel?.addReaction) {
         await channel.addReaction(jid, messageTs, emoji);
+      }
+    },
+    onSubmitPlan: async (
+      chatJid: string,
+      groupFolder: string,
+      plan: string,
+    ) => {
+      const channel = findChannel(state.channels, chatJid);
+      if (!channel) return;
+      const group = state.groupsByFolder.get(groupFolder)?.group;
+
+      // Find the thread for this group's active container
+      const threadTs = state.queue.getActiveThreadTs(chatJid, groupFolder);
+
+      // Send the plan text
+      await channel.sendMessage(chatJid, plan, {
+        displayName: group?.displayName,
+        displayEmoji: group?.displayEmoji,
+        displayIconUrl: group?.displayIconUrl,
+        botToken: group?.botToken,
+        threadTs,
+      });
+
+      // Send the Approve button
+      if ((channel as any).sendBlocks) {
+        await (channel as any).sendBlocks(
+          chatJid,
+          [
+            {
+              type: 'section',
+              text: { type: 'mrkdwn', text: '_Reply to revise the plan_' },
+            },
+            {
+              type: 'actions',
+              block_id: `plan_${Date.now()}`,
+              elements: [
+                {
+                  type: 'button',
+                  text: { type: 'plain_text', text: 'Approve' },
+                  style: 'primary',
+                  action_id: 'plan_approve',
+                  value: JSON.stringify({ chatJid, threadTs, groupFolder }),
+                },
+              ],
+            },
+          ],
+          'Plan ready — Approve or reply to revise',
+          {
+            displayName: group?.displayName,
+            displayEmoji: group?.displayEmoji,
+            displayIconUrl: group?.displayIconUrl,
+            botToken: group?.botToken,
+            threadTs,
+          },
+        );
       }
     },
   });

@@ -159,9 +159,7 @@ function createSchema(database: Database.Database): void {
   });
 
   migrate('registered_groups.display_name', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN display_name TEXT`,
-    );
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN display_name TEXT`);
   });
   migrate('registered_groups.display_emoji', () => {
     database.exec(
@@ -196,14 +194,10 @@ function createSchema(database: Database.Database): void {
     );
   });
   migrate('registered_groups.bot_user_id', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN bot_user_id TEXT`,
-    );
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_user_id TEXT`);
   });
   migrate('registered_groups.bot_token', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN bot_token TEXT`,
-    );
+    database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_token TEXT`);
   });
 
   // Migrate registered_groups to composite PK (jid, folder) if still using single PK.
@@ -236,9 +230,7 @@ function createSchema(database: Database.Database): void {
 
   migrate('chats.channel/is_group', () => {
     database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
-    database.exec(
-      `ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`,
-    );
+    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
     database.exec(
       `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
     );
@@ -267,9 +259,7 @@ function migrateRegisteredGroupsPK(database: Database.Database): void {
   }>;
   const pkColumns = tableInfo.filter((c) => c.pk > 0);
   if (pkColumns.length === 1 && pkColumns[0].name === 'jid') {
-    logger.info(
-      'Migrating registered_groups to composite PK (jid, folder)...',
-    );
+    logger.info('Migrating registered_groups to composite PK (jid, folder)...');
     database.exec(`
       CREATE TABLE registered_groups_new (
         jid TEXT NOT NULL,

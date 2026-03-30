@@ -92,7 +92,11 @@ function makeMockState(): AppState {
     getCursorKey: vi.fn((jid: string, ts?: string) =>
       ts ? `${jid}:t:${ts}` : jid,
     ),
-    getToggleState: vi.fn(() => ({ verbose: false, thinking: false })),
+    getToggleState: vi.fn(() => ({
+      verbose: false,
+      thinking: false,
+      planMode: false,
+    })),
     formatTokens: vi.fn((n: number) => `${n}`),
     saveState: vi.fn(),
     loadState: vi.fn(),
@@ -131,7 +135,15 @@ describe('AgentExecutor', () => {
     it('returns empty string when no slackBotToken', async () => {
       state.slackBotToken = undefined;
       const result = await executor.downloadFiles(
-        [{ id: 'F1', name: 'test.txt', url: 'https://example.com/file', size: 100, mimetype: 'text/plain' }],
+        [
+          {
+            id: 'F1',
+            name: 'test.txt',
+            url: 'https://example.com/file',
+            size: 100,
+            mimetype: 'text/plain',
+          },
+        ],
         'strategy',
       );
       expect(result).toBe('');

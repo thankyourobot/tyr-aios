@@ -77,6 +77,7 @@ interface QueryOptions {
   forkSession?: boolean;
   systemPrompt?: { type: string; preset: string; append: string };
   allowedTools: string[];
+  planMode?: boolean;
   env: Record<string, string | undefined>;
   permissionMode: string;
   allowDangerouslySkipPermissions: boolean;
@@ -173,6 +174,7 @@ export async function* query(input: {
       systemPromptAppend: options.systemPrompt?.append,
       additionalDirectories: options.additionalDirectories,
       allowedTools: options.allowedTools,
+      planMode: options.planMode,
       settingSources: options.settingSources,
       maxThinkingTokens: options.maxThinkingTokens,
       includePartialMessages: options.includePartialMessages,

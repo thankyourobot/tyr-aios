@@ -34,7 +34,10 @@ export class AppState {
   >();
 
   // Per-thread toggle overrides (ephemeral — resets on restart)
-  threadToggles = new Map<string, { verbose: boolean; thinking: boolean }>();
+  threadToggles = new Map<
+    string,
+    { verbose: boolean; thinking: boolean; planMode: boolean }
+  >();
 
   // Env vars for file downloads
   slackBotToken?: string;
@@ -63,22 +66,59 @@ export class AppState {
   getToggleState(
     jid: string,
     threadTs?: string,
-  ): { verbose: boolean; thinking: boolean } {
+    groupFolder?: string,
+  ): { verbose: boolean; thinking: boolean; planMode: boolean } {
+    let override:
+      | { verbose: boolean; thinking: boolean; planMode: boolean }
+      | undefined;
+
     // Synthetic JID already encodes the thread
     if (isSyntheticThreadJid(jid)) {
-      const override = this.threadToggles.get(jid);
-      if (override) return override;
+      override = this.threadToggles.get(jid);
     } else if (threadTs) {
       const key = `${jid}:${threadTs}`;
-      const override = this.threadToggles.get(key);
-      if (override) return override;
+      override = this.threadToggles.get(key);
     }
-    // Fall back to group defaults
+
+    // Fall back to group defaults for missing fields
     const group = this.resolveGroupFn?.(jid) ?? null;
-    return {
+    const defaults = {
       verbose: group?.verboseDefault === true,
       thinking: group?.thinkingDefault === true,
+      planMode: group?.planModeDefault === true,
     };
+
+    if (!override) {
+      // Check for per-agent plan mode key (multi-agent threads)
+      if (groupFolder && threadTs) {
+        const planKey = `${jid}:${threadTs}:${groupFolder}`;
+        const planOverride = this.threadToggles.get(planKey);
+        logger.info(
+          {
+            planKey,
+            found: !!planOverride,
+            toggleMapSize: this.threadToggles.size,
+            toggleKeys: [...this.threadToggles.keys()],
+          },
+          'getToggleState plan key lookup',
+        );
+        if (planOverride) {
+          return { ...defaults, planMode: planOverride.planMode };
+        }
+      }
+      return defaults;
+    }
+
+    // Per-agent plan mode key overrides the thread-level planMode
+    if (groupFolder && threadTs) {
+      const planKey = `${jid}:${threadTs}:${groupFolder}`;
+      const planOverride = this.threadToggles.get(planKey);
+      if (planOverride) {
+        return { ...override, planMode: planOverride.planMode };
+      }
+    }
+
+    return override;
   }
 
   loadState(): void {
