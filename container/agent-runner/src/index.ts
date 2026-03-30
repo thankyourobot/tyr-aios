@@ -543,7 +543,7 @@ async function main(): Promise<void> {
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.planMode) {
-    prompt = `[PLAN MODE — Call the EnterPlanMode tool immediately before doing anything else. Explore the codebase and design your approach. You may ask clarifying questions using the send_message tool. When your plan is complete, call the submit_plan MCP tool with the full plan text. Do NOT execute the plan — wait for user approval.]\n\n${prompt}`;
+    prompt += `\n\n[PLAN MODE — You MUST call the EnterPlanMode tool as your very first action. Do NOT respond to the user yet. Call EnterPlanMode first, then explore the codebase and design your approach. When your plan is complete, call the submit_plan MCP tool with the full plan text. Do NOT execute — wait for user approval.]`;
   }
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
