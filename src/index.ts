@@ -388,22 +388,6 @@ async function startMessageLoop(): Promise<void> {
         }
 
         for (const [chatJid, groupMessages] of messagesByGroup) {
-          // Debug: trace multi-group routing
-          const debugChannelGroups = state.groupsByJid.get(chatJid);
-          logger.info(
-            {
-              chatJid,
-              isMulti: isMultiGroupChannel(chatJid),
-              channelGroupCount: debugChannelGroups?.length ?? 0,
-              channelGroupFolders:
-                debugChannelGroups?.map((g) => g.folder) ?? [],
-              lastMsgContent: groupMessages[
-                groupMessages.length - 1
-              ].content.slice(0, 100),
-            },
-            'Polling loop: routing decision',
-          );
-
           // Multi-group channel: dispatch via resolveTargetGroups
           if (isMultiGroupChannel(chatJid)) {
             const lastGroupMsg = groupMessages[groupMessages.length - 1];
@@ -411,14 +395,6 @@ async function startMessageLoop(): Promise<void> {
               chatJid,
               lastGroupMsg.threadTs,
               lastGroupMsg,
-            );
-            logger.info(
-              {
-                chatJid,
-                threadTs: lastGroupMsg.threadTs,
-                targetFolders: targets.map((t) => t.folder),
-              },
-              'Polling loop: multi-group targets',
             );
             if (
               targets.length === 0 &&
