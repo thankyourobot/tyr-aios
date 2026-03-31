@@ -24,7 +24,6 @@ vi.mock('./jid.js', async () => {
   const actual = await vi.importActual<typeof import('./jid.js')>('./jid.js');
   return {
     ...actual,
-    getGroupFolder: vi.fn(actual.getGroupFolder),
     getParentJid: vi.fn(actual.getParentJid),
   };
 });
@@ -45,7 +44,7 @@ import {
   getThreadMembers,
   recordBotTrigger,
 } from './db.js';
-import { getGroupFolder, getParentJid } from './jid.js';
+import { getParentJid } from './jid.js';
 
 // --- Test fixtures ---
 
@@ -345,10 +344,17 @@ describe('GroupManager', () => {
       expect(group).toBe(mainGroup);
     });
 
-    it('16. group-qualified JID extracts folder from :g: suffix', () => {
-      const qualifiedJid = `${CHANNEL_JID}:g:operations`;
-      const group = gm.resolveGroup(qualifiedJid);
-      expect(group).toBe(operationsTom);
+    it('16. unknown JID falls back to main group', () => {
+      const mainGroup = makeGroup({
+        name: 'Main',
+        folder: 'main',
+        isMain: true,
+      });
+      state.registeredGroups['slack:C_MAIN'] = mainGroup;
+
+      // groupFolder is now passed separately, not encoded in JID
+      const group = gm.resolveGroup('slack:C_UNKNOWN_CHANNEL');
+      expect(group).toBe(mainGroup);
     });
   });
 

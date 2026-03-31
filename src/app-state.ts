@@ -82,7 +82,7 @@ export class AppState {
     threadTs?: string,
     groupFolder?: string,
   ): string {
-    // Always normalize to plain channel JID — strips :g: and :t:
+    // Always normalize to plain channel JID — strips :t: if present
     const base = getParentJid(jid) || jid;
     if (groupFolder && threadTs) return `${base}:${threadTs}:${groupFolder}`;
     if (threadTs) return `${base}:${threadTs}`;

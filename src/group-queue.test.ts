@@ -334,8 +334,8 @@ describe('GroupQueue', () => {
 
     queue.setProcessMessagesFn(processMessages);
 
-    // Start processing
-    queue.enqueueMessageCheck('group1@g.us');
+    // Start processing — pass groupFolder consistently to all queue calls
+    queue.enqueueMessageCheck('group1@g.us', null, 'test-group');
     await vi.advanceTimersByTimeAsync(10);
 
     // Register process and mark idle
@@ -346,14 +346,14 @@ describe('GroupQueue', () => {
       'container-1',
       'test-group',
     );
-    queue.notifyIdle('group1@g.us');
+    queue.notifyIdle('group1@g.us', null, 'test-group');
 
     // Clear previous writes, then enqueue a task
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
-    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn, 'test-group');
 
     // _close SHOULD have been written (container is idle)
     const closeWrites = writeFileSync.mock.calls.filter(
@@ -638,8 +638,8 @@ describe('GroupQueue', () => {
 
     queue.setProcessMessagesFn(processMessages);
 
-    // Start processing
-    queue.enqueueMessageCheck('group1@g.us');
+    // Start processing — pass groupFolder consistently
+    queue.enqueueMessageCheck('group1@g.us', null, 'test-group');
     await vi.advanceTimersByTimeAsync(10);
 
     // Register process and enqueue a task (no idle yet — no preemption)
@@ -655,7 +655,7 @@ describe('GroupQueue', () => {
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
-    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn, 'test-group');
 
     let closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
@@ -664,7 +664,7 @@ describe('GroupQueue', () => {
 
     // Now container becomes idle — should preempt because task is pending
     writeFileSync.mockClear();
-    queue.notifyIdle('group1@g.us');
+    queue.notifyIdle('group1@g.us', null, 'test-group');
 
     closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),

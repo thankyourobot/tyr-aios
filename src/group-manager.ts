@@ -12,7 +12,7 @@ import {
   setRegisteredGroup,
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
-import { getGroupFolder, getParentJid } from './jid.js';
+import { getParentJid } from './jid.js';
 import { logger } from './logger.js';
 import type { AvailableGroup } from './snapshot-writer.js';
 import { NewMessage, RegisteredGroup } from './types.js';
@@ -36,16 +36,10 @@ export class GroupManager {
   }
 
   /**
-   * Resolve a group from a JID, handling synthetic thread JIDs and group-qualified JIDs.
-   * Tries group folder from :g: suffix, then direct lookup, then parent channel JID, then main group fallback.
+   * Resolve a group from a JID.
+   * Tries direct lookup, then parent channel JID (for thread JIDs), then main group fallback.
    */
   resolveGroup(chatJid: string): RegisteredGroup | null {
-    // Group-qualified JID: extract folder directly
-    const gf = getGroupFolder(chatJid);
-    if (gf) {
-      const entry = this.state.groupsByFolder.get(gf);
-      return entry?.group ?? null;
-    }
     let group = this.state.registeredGroups[chatJid];
     if (group) return group;
     const parentJid = getParentJid(chatJid);

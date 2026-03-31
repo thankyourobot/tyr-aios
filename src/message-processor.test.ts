@@ -135,11 +135,9 @@ describe('MessageProcessor', () => {
   });
 
   describe('processGroupMessages — fetchJid construction', () => {
-    it('uses correct fetchJid for group-qualified thread JID (no double :t:)', async () => {
-      // This is the bug: when called with "slack:CH:t:TS:g:folder" and threadTs "TS",
-      // baseJid = getBaseJid(...) = "slack:CH:t:TS" (still has :t:)
-      // fetchJid = buildThreadJid(baseJid, threadTs) = "slack:CH:t:TS:t:TS" (DOUBLE!)
-      // It should be: "slack:CH:t:TS"
+    it('uses correct fetchJid for multi-group thread dispatch (groupFolder as param)', async () => {
+      // groupFolder is now passed as a separate parameter, not embedded in the JID.
+      // The chatJid is always a plain channel JID.
 
       const growth = makeGroup('growth', {
         channelRole: 'director',
@@ -152,15 +150,15 @@ describe('MessageProcessor', () => {
       state.groupsByJid.set('slack:C0AN59XN8B1', [growth]);
       state.registeredGroups['slack:C0AN59XN8B1'] = growth;
 
-      // Call with a group-qualified thread JID (as multi-group dispatch would)
+      // Call with plain channel JID + threadTs + groupFolder (as queue now dispatches)
       await processor.processGroupMessages(
-        'slack:C0AN59XN8B1:t:1234567.890:g:growth',
+        'slack:C0AN59XN8B1',
         '1234567.890',
+        'growth',
       );
 
-      // The fetchJid used for getMessagesSince should be the thread JID WITHOUT doubling
+      // The fetchJid should be the synthetic thread JID
       expect(capturedFetchJid).toBe('slack:C0AN59XN8B1:t:1234567.890');
-      // NOT "slack:C0AN59XN8B1:t:1234567.890:t:1234567.890"
     });
 
     it('uses correct fetchJid for plain channel JID (no thread)', async () => {

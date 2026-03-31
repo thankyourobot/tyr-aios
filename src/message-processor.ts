@@ -18,10 +18,7 @@ import {
 } from './db.js';
 import type { GroupManager } from './group-manager.js';
 import {
-  buildGroupJid,
   buildThreadJid,
-  getBaseJid,
-  getGroupFolder,
   getParentJid,
   isSyntheticThreadJid,
   parseSlackJid,
@@ -55,24 +52,21 @@ export class MessageProcessor {
   /**
    * Process all pending messages for a group.
    * Called by the GroupQueue when it's this group's turn.
+   *
+   * chatJid is always a plain channel JID (never group-qualified).
+   * groupFolder is passed separately for multi-agent dispatch.
    */
   async processGroupMessages(
     chatJid: string,
     threadTs?: string,
+    groupFolder?: string,
   ): Promise<boolean> {
-    // Handle group-qualified JIDs from multi-agent dispatch
-    const groupFolder = getGroupFolder(chatJid);
-    // Strip both :g: and :t: suffixes to get the plain channel JID.
-    // getBaseJid only strips :g:, but for group-qualified thread JIDs
-    // (e.g., slack:CH:t:TS:g:folder) we need the plain channel JID
-    // to avoid building a double :t: fetchJid.
-    const strippedJid = getBaseJid(chatJid);
-    const baseJid = getParentJid(strippedJid) || strippedJid;
+    // chatJid may be a synthetic thread JID from drain — normalize to channel
+    const channelJid = getParentJid(chatJid) || chatJid;
 
     let group: RegisteredGroup | null;
     if (groupFolder) {
       // Prefer channel-specific registration (has correct settings for this channel)
-      const channelJid = getParentJid(baseJid) || baseJid;
       const channelGroups = this.state.groupsByJid.get(channelJid);
       const match = channelGroups?.find((g) => g.folder === groupFolder);
       group =
@@ -86,7 +80,7 @@ export class MessageProcessor {
     const busyKey = `${chatJid}::${threadTs || '__root__'}`;
     const busyReactions = this.state.pendingBusyReactions.get(busyKey);
     if (busyReactions?.length) {
-      const channel_ = findChannel(this.state.channels, baseJid);
+      const channel_ = findChannel(this.state.channels, channelJid);
       for (const { jid, messageTs } of busyReactions) {
         channel_
           ?.removeReaction?.(jid, messageTs, BUSY_EMOJI)
@@ -97,7 +91,7 @@ export class MessageProcessor {
       this.state.pendingBusyReactions.delete(busyKey);
     }
 
-    const channel = findChannel(this.state.channels, baseJid);
+    const channel = findChannel(this.state.channels, channelJid);
     if (!channel) {
       logger.warn({ chatJid }, 'No channel owns JID, skipping messages');
       return true;
@@ -107,11 +101,13 @@ export class MessageProcessor {
 
     // Thread messages are stored under synthetic JIDs (e.g., slack:C123:t:171110...).
     // Use the synthetic JID for retrieval when processing a specific thread.
-    const fetchJid = threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
-    const cursorKey = this.state.getCursorKey(baseJid, threadTs);
+    const fetchJid = threadTs
+      ? buildThreadJid(channelJid, threadTs)
+      : channelJid;
+    const cursorKey = this.state.getCursorKey(channelJid, threadTs);
     const sinceTimestamp =
       this.state.lastAgentTimestamp[cursorKey] ||
-      this.state.lastAgentTimestamp[baseJid] ||
+      this.state.lastAgentTimestamp[channelJid] ||
       '';
     // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation
     const missedMessages = groupFolder
@@ -154,10 +150,7 @@ export class MessageProcessor {
     // Include thread parent message for context when replying in a thread
     let threadParentContext = '';
     if (lastThreadTs && missedMessages.some((m) => m.threadTs)) {
-      const parentMsg = getMessageById(
-        getParentJid(chatJid) || chatJid,
-        lastThreadTs,
-      );
+      const parentMsg = getMessageById(channelJid, lastThreadTs);
       if (parentMsg) {
         threadParentContext = `<thread-parent>
 ${formatMessages([parentMsg], TIMEZONE)}
@@ -189,7 +182,6 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
     // For multi-group channels: ensure this agent is a thread member so follow-ups route correctly
     if (groupFolder && lastThreadTs) {
-      const channelJid = getParentJid(baseJid) || baseJid;
       addThreadMember(channelJid, lastThreadTs, groupFolder);
     }
 
@@ -203,7 +195,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           { group: group.name },
           'Idle timeout, closing container stdin',
         );
-        this.state.queue.closeStdin(chatJid, lastThreadTs);
+        this.state.queue.closeStdin(chatJid, lastThreadTs, groupFolder);
       }, IDLE_TIMEOUT);
     };
 
@@ -212,7 +204,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
     const triggeringMsg = missedMessages[missedMessages.length - 1];
     const threadMembers =
       groupFolder && threadTs
-        ? getThreadMembers(getParentJid(baseJid) || baseJid, threadTs)
+        ? getThreadMembers(channelJid, threadTs)
         : [];
     const isSoleThreadAgent = threadMembers.length <= 1;
     const isMentioned =
@@ -233,7 +225,11 @@ ${formatMessages([parentMsg], TIMEZONE)}
         const stripped = m.content.trim().replace(/^(<@[A-Z0-9]+>\s*)+/, '');
         if (planPattern.test(stripped)) {
           const isOff = /^\*plan\s+off\s*$/.test(stripped);
-          const planKey = this.state.toggleKey(chatJid, lastThreadTs, group.folder);
+          const planKey = this.state.toggleKey(
+            chatJid,
+            lastThreadTs,
+            group.folder,
+          );
           const current = this.state.getToggleState(
             chatJid,
             lastThreadTs,
@@ -260,7 +256,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
     );
 
     // Use synthetic thread JID for typing indicator so it matches latestMessageContext
-    const typingJid = threadTs ? fetchJid : groupFolder ? baseJid : chatJid;
+    const typingJid = threadTs ? fetchJid : channelJid;
     if (isMentioned || toggleState.planMode) {
       await channel.setTyping?.(typingJid, true, group.botToken);
     }
@@ -328,7 +324,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
                       style: 'primary',
                       action_id: 'plan_approve',
                       value: JSON.stringify({
-                        chatJid,
+                        chatJid: channelJid,
                         threadTs: lastThreadTs,
                         groupFolder: group.folder,
                       }),
@@ -438,7 +434,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
         }
 
         if (result.status === 'success') {
-          this.state.queue.notifyIdle(chatJid, lastThreadTs);
+          this.state.queue.notifyIdle(chatJid, lastThreadTs, groupFolder);
         }
 
         if (result.status === 'error') {
@@ -478,6 +474,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
   /**
    * Dispatch a human message to target groups in a multi-group channel.
+   * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
   dispatchMessage(chatJid: string, msg: NewMessage): void {
     const channelJid = getParentJid(chatJid) || chatJid;
@@ -526,30 +523,24 @@ ${formatMessages([parentMsg], TIMEZONE)}
       }
     }
     for (const group of targets) {
-      const baseJid = threadTs
-        ? buildThreadJid(
-            `slack:${parseSlackJid(channelJid).channelId}`,
-            threadTs,
-          )
-        : channelJid;
-      const groupJid = buildGroupJid(baseJid, group.folder);
+      const effectiveTs = threadTs || msg.threadTs;
       const formatted = formatMessages([msg], TIMEZONE, true);
       if (
         !this.state.queue.sendMessage(
-          groupJid,
-          threadTs || msg.threadTs,
+          channelJid,
+          effectiveTs,
           formatted,
+          group.folder,
         )
       ) {
         this.state.queue.enqueueMessageCheck(
-          groupJid,
-          threadTs || msg.threadTs,
+          channelJid,
+          effectiveTs,
+          group.folder,
         );
       } else {
-        // Use plain channel JID for cursor key — must match processGroupMessages which strips :g:
-        const cursorBase = getParentJid(groupJid) || getBaseJid(groupJid);
         this.state.lastAgentTimestamp[
-          this.state.getCursorKey(cursorBase, threadTs || msg.threadTs)
+          this.state.getCursorKey(channelJid, effectiveTs)
         ] = msg.timestamp;
         this.saveFn();
       }
@@ -558,6 +549,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
   /**
    * Dispatch a bot message that contains @mentions to target agents.
+   * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
   dispatchBotMessage(chatJid: string, msg: NewMessage): void {
     const channelJid = getParentJid(chatJid) || chatJid;
@@ -573,14 +565,11 @@ ${formatMessages([parentMsg], TIMEZONE)}
     if (targets.length === 0) return;
 
     for (const group of targets) {
-      const baseJid = threadTs
-        ? buildThreadJid(
-            `slack:${parseSlackJid(channelJid).channelId}`,
-            threadTs,
-          )
-        : channelJid;
-      const groupJid = buildGroupJid(baseJid, group.folder);
-      this.state.queue.enqueueMessageCheck(groupJid, threadTs || msg.threadTs);
+      this.state.queue.enqueueMessageCheck(
+        channelJid,
+        threadTs || msg.threadTs,
+        group.folder,
+      );
     }
   }
 }

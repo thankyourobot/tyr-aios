@@ -34,10 +34,7 @@ import { GroupManager } from './group-manager.js';
 import { MessageProcessor } from './message-processor.js';
 import {
   buildThreadJid,
-  buildGroupJid,
   getParentJid,
-  getBaseJid,
-  getGroupFolder,
   isSyntheticThreadJid,
   parseSlackJid,
 } from './jid.js';
@@ -361,8 +358,7 @@ async function startMessageLoop(): Promise<void> {
             !c.is_group &&
             c.jid !== '__group_sync__' &&
             !state.registeredGroups[c.jid] &&
-            !isSyntheticThreadJid(c.jid) &&
-            !getGroupFolder(c.jid),
+            !isSyntheticThreadJid(c.jid),
         )
         .map((c) => c.jid);
       const jids = [...registeredJids, ...dmJids];
@@ -419,8 +415,7 @@ async function startMessageLoop(): Promise<void> {
               }
             }
             for (const target of targets) {
-              const groupJid = buildGroupJid(chatJid, target.folder);
-              state.queue.enqueueMessageCheck(groupJid);
+              state.queue.enqueueMessageCheck(chatJid, undefined, target.folder);
             }
             continue;
           }
@@ -496,7 +491,7 @@ async function startMessageLoop(): Promise<void> {
             saveState();
             // Show typing indicator — use synthetic thread JID for thread context lookup
             const typingPipeJid = msgThread
-              ? buildThreadJid(getBaseJid(chatJid), msgThread)
+              ? buildThreadJid(chatJid, msgThread)
               : chatJid;
             channel
               .setTyping?.(typingPipeJid, true)
@@ -511,9 +506,8 @@ async function startMessageLoop(): Promise<void> {
             // add a "busy" reaction so the user knows the agent received it
             if (state.queue.wouldQueue(chatJid, msgThread)) {
               const lastMsg = messagesToSend[messagesToSend.length - 1];
-              const baseJidForReaction = getBaseJid(chatJid);
               channel
-                .addReaction?.(baseJidForReaction, lastMsg.id, BUSY_EMOJI)
+                .addReaction?.(chatJid, lastMsg.id, BUSY_EMOJI)
                 ?.catch((err) =>
                   logger.debug({ chatJid, err }, 'Failed to add busy reaction'),
                 );
@@ -522,7 +516,7 @@ async function startMessageLoop(): Promise<void> {
               const existing =
                 state.pendingBusyReactions.get(busyReactionKey) || [];
               existing.push({
-                jid: baseJidForReaction,
+                jid: chatJid,
                 messageTs: lastMsg.id,
               });
               state.pendingBusyReactions.set(busyReactionKey, existing);
@@ -558,7 +552,6 @@ function recoverPendingMessages(): void {
           lastMsg,
         );
         for (const target of targets) {
-          const groupJid = buildGroupJid(chatJid, target.folder);
           logger.info(
             {
               group: target.name,
@@ -567,7 +560,7 @@ function recoverPendingMessages(): void {
             },
             'Recovery: found unprocessed multi-group messages',
           );
-          state.queue.enqueueMessageCheck(groupJid);
+          state.queue.enqueueMessageCheck(chatJid, undefined, target.folder);
         }
       }
       continue;
@@ -589,8 +582,6 @@ function recoverPendingMessages(): void {
   if (mainGroup) {
     for (const [chatJid, cursor] of Object.entries(state.lastAgentTimestamp)) {
       if (state.registeredGroups[chatJid]) continue;
-      // Skip group-qualified JIDs — they're handled by the multi-group recovery above
-      if (getGroupFolder(chatJid)) continue;
       const pending = getMessagesSince(chatJid, cursor, ASSISTANT_NAME);
       if (pending.length > 0) {
         const label = isSyntheticThreadJid(chatJid) ? 'thread' : 'DM';
