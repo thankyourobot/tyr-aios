@@ -82,7 +82,11 @@ async function handleCommand(
 
   // /stop command — stops container for the thread where *stop was sent
   if (text === '*stop') {
-    const stopped = await state.queue.stopGroup(chatJid, msg.threadTs, group?.folder);
+    const stopped = await state.queue.stopGroup(
+      chatJid,
+      msg.threadTs,
+      group?.folder,
+    );
     const displayOpts: SendMessageOpts = {
       displayName: group?.displayName,
       displayEmoji: group?.displayEmoji,
@@ -254,6 +258,12 @@ async function handleCommand(
         msg.sender,
         msg.threadTs,
         group?.folder || '',
+        {
+          displayName: group?.displayName,
+          displayEmoji: group?.displayEmoji,
+          displayIconUrl: group?.displayIconUrl,
+          botToken: group?.botToken,
+        },
       );
     }
     return true;

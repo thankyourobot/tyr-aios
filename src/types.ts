@@ -141,6 +141,12 @@ export interface Channel {
     userId: string,
     threadTs: string,
     groupFolder: string,
+    displayOpts?: {
+      displayName?: string;
+      displayEmoji?: string;
+      displayIconUrl?: string;
+      botToken?: string;
+    },
   ): Promise<void>;
 }
 

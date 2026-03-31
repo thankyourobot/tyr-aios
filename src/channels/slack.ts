@@ -271,19 +271,28 @@ export class SlackChannel implements Channel {
         }
 
         // Post a new top-level message to create the rewind thread
-        const group = this.opts.registeredGroups()[jid];
+        // Use groupFolder (from modal metadata) to find the correct agent
+        const allGroups = this.opts.registeredGroups();
+        const group =
+          Object.values(allGroups).find((g) => g.folder === groupFolder) ||
+          allGroups[jid];
+        const rewindClient = group?.botToken
+          ? this.getClient(group.botToken)
+          : client;
+        const displayOverrides: Record<string, string> = {};
+        if (!group?.botToken) {
+          if (group?.displayName) displayOverrides.username = group.displayName;
+          if (group?.displayIconUrl) displayOverrides.icon_url = group.displayIconUrl;
+          else if (group?.displayEmoji)
+            displayOverrides.icon_emoji = `:${group.displayEmoji}:`;
+        }
         const rootText = msgPreview
           ? `Rewound from <${threadLink}|source thread>. Forked before: \"${msgPreview}\"`
           : `Rewound from <${threadLink}|source thread>.`;
-        const postResult = await client.chat.postMessage({
+        const postResult = await rewindClient.chat.postMessage({
           channel: channelId,
           text: rootText,
-          ...(group?.displayName ? { username: group.displayName } : {}),
-          ...(group?.displayIconUrl
-            ? { icon_url: group.displayIconUrl }
-            : group?.displayEmoji
-              ? { icon_emoji: `:${group.displayEmoji}:` }
-              : {}),
+          ...displayOverrides,
         });
 
         const newThreadTs = postResult.ts;
@@ -298,16 +307,11 @@ export class SlackChannel implements Channel {
             agentResponseText.length > 500
               ? agentResponseText.slice(0, 500) + '...'
               : agentResponseText;
-          await client.chat.postMessage({
+          await rewindClient.chat.postMessage({
             channel: channelId,
             thread_ts: newThreadTs,
             text: `<${msgLink}|Last response before fork>:\n\n${contextText}`,
-            ...(group?.displayName ? { username: group.displayName } : {}),
-            ...(group?.displayIconUrl
-              ? { icon_url: group.displayIconUrl }
-              : group?.displayEmoji
-                ? { icon_emoji: `:${group.displayEmoji}:` }
-                : {}),
+            ...displayOverrides,
           });
         }
 
@@ -677,14 +681,29 @@ export class SlackChannel implements Channel {
     userId: string,
     threadTs: string,
     groupFolder: string,
+    displayOpts?: {
+      displayName?: string;
+      displayEmoji?: string;
+      displayIconUrl?: string;
+      botToken?: string;
+    },
   ): Promise<void> {
     const { channelId } = parseSlackJid(jid);
     try {
-      await this.app.client.chat.postEphemeral({
+      const client = this.getClient(displayOpts?.botToken);
+      const overrides: Record<string, string> = {};
+      if (!displayOpts?.botToken) {
+        if (displayOpts?.displayName) overrides.username = displayOpts.displayName;
+        if (displayOpts?.displayIconUrl) overrides.icon_url = displayOpts.displayIconUrl;
+        else if (displayOpts?.displayEmoji)
+          overrides.icon_emoji = `:${displayOpts.displayEmoji}:`;
+      }
+      await client.chat.postEphemeral({
         channel: channelId,
         user: userId,
         thread_ts: threadTs,
         text: 'Select a rewind point',
+        ...overrides,
         blocks: [
           {
             type: 'section',
