@@ -117,14 +117,14 @@ async function handleCommand(
     const arg = (verboseMatch || thinkingMatch)![1]; // 'on', 'off', or undefined (toggle)
 
     const inThread = !!msg.threadTs;
-    const toggleKey = inThread ? `${chatJid}:${msg.threadTs}` : null;
+    const tKey = inThread ? state.toggleKey(chatJid, msg.threadTs) : null;
 
     let newValue: boolean;
 
-    if (inThread && toggleKey) {
+    if (inThread && tKey) {
       // Per-thread override
       const current =
-        state.threadToggles.get(toggleKey) ||
+        state.threadToggles.get(tKey) ||
         state.getToggleState(chatJid, msg.threadTs);
       if (arg === 'on') newValue = true;
       else if (arg === 'off') newValue = false;
@@ -133,7 +133,7 @@ async function handleCommand(
       const updated = { ...current };
       if (isVerbose) updated.verbose = newValue;
       else updated.thinking = newValue;
-      state.threadToggles.set(toggleKey, updated);
+      state.threadToggles.set(tKey, updated);
     } else {
       // Global default toggle
       if (!group) return false;
@@ -178,21 +178,19 @@ async function handleCommand(
     const inThread = !!msg.threadTs;
     const newValue = !isOff;
 
-    // Set the toggle — use base JID to match how processGroupMessages looks it up
+    // Set the toggle — toggleKey normalizes JID so SET/GET always match
     if (inThread) {
-      const baseJid = getParentJid(chatJid) || chatJid;
-      const toggleKey = `${baseJid}:${msg.threadTs}:${group?.folder || ''}`;
+      const tKey = state.toggleKey(chatJid, msg.threadTs, group?.folder);
       const current = state.getToggleState(
-        baseJid,
+        chatJid,
         msg.threadTs,
         group?.folder,
       );
-      state.threadToggles.set(toggleKey, { ...current, planMode: newValue });
+      state.threadToggles.set(tKey, { ...current, planMode: newValue });
       logger.info(
         {
-          toggleKey,
+          toggleKey: tKey,
           planMode: newValue,
-          baseJid,
           threadTs: msg.threadTs,
           folder: group?.folder,
         },
@@ -769,7 +767,7 @@ async function main(): Promise<void> {
       groupFolder: string;
     }) => {
       // Toggle plan mode OFF for this thread+agent
-      const planKey = `${params.chatJid}:${params.threadTs}:${params.groupFolder}`;
+      const planKey = state.toggleKey(params.chatJid, params.threadTs, params.groupFolder);
       const current = state.getToggleState(
         params.chatJid,
         params.threadTs,
@@ -818,14 +816,14 @@ async function main(): Promise<void> {
           const isVerbose = params.command === 'verbose';
           const arg = params.text.trim().toLowerCase();
           const inThread = !!params.threadTs;
-          const toggleKey = inThread
-            ? `${channelJid}:${params.threadTs}`
+          const tKey = inThread
+            ? state.toggleKey(channelJid, params.threadTs)
             : null;
 
           let newValue: boolean;
-          if (inThread && toggleKey) {
+          if (inThread && tKey) {
             const current =
-              state.threadToggles.get(toggleKey) ||
+              state.threadToggles.get(tKey) ||
               state.getToggleState(channelJid, params.threadTs);
             if (arg === 'on') newValue = true;
             else if (arg === 'off') newValue = false;
@@ -833,7 +831,7 @@ async function main(): Promise<void> {
             const updated = { ...current };
             if (isVerbose) updated.verbose = newValue;
             else updated.thinking = newValue;
-            state.threadToggles.set(toggleKey, updated);
+            state.threadToggles.set(tKey, updated);
           } else {
             if (!group) return 'No group found for this channel';
             const currentDefault = isVerbose
@@ -860,13 +858,13 @@ async function main(): Promise<void> {
           const newValue = arg !== 'off'; // bare /plan = on, /plan off = cancel
 
           if (inThread) {
-            const toggleKey = `${channelJid}:${params.threadTs}:${group?.folder || ''}`;
+            const tKey = state.toggleKey(channelJid, params.threadTs, group?.folder);
             const current = state.getToggleState(
               channelJid,
               params.threadTs,
               group?.folder,
             );
-            state.threadToggles.set(toggleKey, {
+            state.threadToggles.set(tKey, {
               ...current,
               planMode: newValue,
             });

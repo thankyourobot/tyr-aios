@@ -233,7 +233,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
         const stripped = m.content.trim().replace(/^(<@[A-Z0-9]+>\s*)+/, '');
         if (planPattern.test(stripped)) {
           const isOff = /^\*plan\s+off\s*$/.test(stripped);
-          const planKey = `${chatJid}:${lastThreadTs}:${group.folder}`;
+          const planKey = this.state.toggleKey(chatJid, lastThreadTs, group.folder);
           const current = this.state.getToggleState(
             chatJid,
             lastThreadTs,
@@ -546,8 +546,10 @@ ${formatMessages([parentMsg], TIMEZONE)}
           threadTs || msg.threadTs,
         );
       } else {
+        // Use plain channel JID for cursor key — must match processGroupMessages which strips :g:
+        const cursorBase = getParentJid(groupJid) || getBaseJid(groupJid);
         this.state.lastAgentTimestamp[
-          this.state.getCursorKey(groupJid, threadTs || msg.threadTs)
+          this.state.getCursorKey(cursorBase, threadTs || msg.threadTs)
         ] = msg.timestamp;
         this.saveFn();
       }

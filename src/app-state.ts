@@ -6,7 +6,11 @@ import {
 } from './db.js';
 import { readEnvFile } from './env.js';
 import { GroupQueue } from './group-queue.js';
-import { buildThreadJid, isSyntheticThreadJid } from './jid.js';
+import {
+  buildThreadJid,
+  getParentJid,
+  isSyntheticThreadJid,
+} from './jid.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup } from './types.js';
 
@@ -63,6 +67,28 @@ export class AppState {
     return threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
   }
 
+  /**
+   * Canonical toggle key for threadToggles.
+   * Always normalizes the JID to a plain channel JID first, so SET and GET
+   * paths produce identical keys regardless of what JID form the caller has.
+   *
+   * Formats:
+   *   Thread-level:    {channelJid}:{threadTs}
+   *   Per-agent plan:  {channelJid}:{threadTs}:{groupFolder}
+   *   Channel-level:   {channelJid}
+   */
+  toggleKey(
+    jid: string,
+    threadTs?: string,
+    groupFolder?: string,
+  ): string {
+    // Always normalize to plain channel JID — strips :g: and :t:
+    const base = getParentJid(jid) || jid;
+    if (groupFolder && threadTs) return `${base}:${threadTs}:${groupFolder}`;
+    if (threadTs) return `${base}:${threadTs}`;
+    return base;
+  }
+
   getToggleState(
     jid: string,
     threadTs?: string,
@@ -72,12 +98,16 @@ export class AppState {
       | { verbose: boolean; thinking: boolean; planMode: boolean }
       | undefined;
 
-    // Synthetic JID already encodes the thread
+    // Look up thread-level toggle using canonical key
     if (isSyntheticThreadJid(jid)) {
-      override = this.threadToggles.get(jid);
+      // Extract threadTs from synthetic JID for canonical key
+      const syntheticMatch = jid.match(/:t:(.+)$/);
+      const extractedTs = syntheticMatch?.[1];
+      if (extractedTs) {
+        override = this.threadToggles.get(this.toggleKey(jid, extractedTs));
+      }
     } else if (threadTs) {
-      const key = `${jid}:${threadTs}`;
-      override = this.threadToggles.get(key);
+      override = this.threadToggles.get(this.toggleKey(jid, threadTs));
     }
 
     // Fall back to group defaults for missing fields
@@ -91,17 +121,8 @@ export class AppState {
     if (!override) {
       // Check for per-agent plan mode key (multi-agent threads)
       if (groupFolder && threadTs) {
-        const planKey = `${jid}:${threadTs}:${groupFolder}`;
+        const planKey = this.toggleKey(jid, threadTs, groupFolder);
         const planOverride = this.threadToggles.get(planKey);
-        logger.info(
-          {
-            planKey,
-            found: !!planOverride,
-            toggleMapSize: this.threadToggles.size,
-            toggleKeys: [...this.threadToggles.keys()],
-          },
-          'getToggleState plan key lookup',
-        );
         if (planOverride) {
           return { ...defaults, planMode: planOverride.planMode };
         }
@@ -111,7 +132,7 @@ export class AppState {
 
     // Per-agent plan mode key overrides the thread-level planMode
     if (groupFolder && threadTs) {
-      const planKey = `${jid}:${threadTs}:${groupFolder}`;
+      const planKey = this.toggleKey(jid, threadTs, groupFolder);
       const planOverride = this.threadToggles.get(planKey);
       if (planOverride) {
         return { ...override, planMode: planOverride.planMode };

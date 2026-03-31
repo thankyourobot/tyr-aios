@@ -39,11 +39,26 @@ export function parseSlackJid(jid: string): {
 
 /** Build a synthetic thread JID from a channel JID and thread timestamp. */
 export function buildThreadJid(channelJid: string, threadTs: string): string {
+  if (channelJid.includes(':t:')) {
+    throw new Error(
+      `buildThreadJid: input already contains :t: — got "${channelJid}"`,
+    );
+  }
+  if (channelJid.includes(':g:')) {
+    throw new Error(
+      `buildThreadJid: input contains :g: — strip group first. Got "${channelJid}"`,
+    );
+  }
   return `${channelJid}:t:${threadTs}`;
 }
 
 /** Build a group-qualified JID by appending :g:{groupFolder} to a base JID. */
 export function buildGroupJid(baseJid: string, groupFolder: string): string {
+  if (baseJid.includes(':g:')) {
+    throw new Error(
+      `buildGroupJid: input already contains :g: — got "${baseJid}"`,
+    );
+  }
   return `${baseJid}:g:${groupFolder}`;
 }
 

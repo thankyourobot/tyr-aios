@@ -1,4 +1,5 @@
 import { getDb } from '../db.js';
+import { buildThreadJid } from '../jid.js';
 import { NewMessage } from '../types.js';
 
 export interface ChatInfo {
@@ -230,7 +231,7 @@ export function getThreadMessages(
   timestamp: string;
 }> {
   // Match both channel JID and synthetic thread JID for backward compatibility
-  const syntheticJid = `${chatJid}:t:${threadTs}`;
+  const syntheticJid = buildThreadJid(chatJid, threadTs);
   return getDb()
     .prepare(
       `SELECT id, content, sender_name, is_bot_message, timestamp

@@ -85,7 +85,9 @@ describe('AppState', () => {
     });
 
     it('returns thread override when set via threadToggles (synthetic JID)', () => {
-      state.threadToggles.set('slack:C123:t:111.000', {
+      // Use toggleKey() to store — matches how production code sets toggles
+      const key = state.toggleKey('slack:C123:t:111.000', '111.000');
+      state.threadToggles.set(key, {
         verbose: true,
         thinking: true,
         planMode: false,
