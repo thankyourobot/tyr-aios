@@ -415,7 +415,11 @@ async function startMessageLoop(): Promise<void> {
               }
             }
             for (const target of targets) {
-              state.queue.enqueueMessageCheck(chatJid, undefined, target.folder);
+              state.queue.enqueueMessageCheck(
+                chatJid,
+                lastGroupMsg.threadTs,
+                target.folder,
+              );
             }
             continue;
           }
@@ -560,7 +564,7 @@ function recoverPendingMessages(): void {
             },
             'Recovery: found unprocessed multi-group messages',
           );
-          state.queue.enqueueMessageCheck(chatJid, undefined, target.folder);
+          state.queue.enqueueMessageCheck(chatJid, lastMsg.threadTs, target.folder);
         }
       }
       continue;
@@ -758,7 +762,11 @@ async function main(): Promise<void> {
       groupFolder: string;
     }) => {
       // Toggle plan mode OFF for this thread+agent
-      const planKey = state.toggleKey(params.chatJid, params.threadTs, params.groupFolder);
+      const planKey = state.toggleKey(
+        params.chatJid,
+        params.threadTs,
+        params.groupFolder,
+      );
       const current = state.getToggleState(
         params.chatJid,
         params.threadTs,
@@ -849,7 +857,11 @@ async function main(): Promise<void> {
           const newValue = arg !== 'off'; // bare /plan = on, /plan off = cancel
 
           if (inThread) {
-            const tKey = state.toggleKey(channelJid, params.threadTs, group?.folder);
+            const tKey = state.toggleKey(
+              channelJid,
+              params.threadTs,
+              group?.folder,
+            );
             const current = state.getToggleState(
               channelJid,
               params.threadTs,
