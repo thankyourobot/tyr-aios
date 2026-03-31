@@ -517,7 +517,10 @@ async function startMessageLoop(): Promise<void> {
             messagesToSend[messagesToSend.length - 1].threadTs || null;
 
           // Try to pipe to an existing container for this specific thread (or root)
-          if (!isDm && state.queue.sendMessage(chatJid, msgThread, formatted)) {
+          if (
+            !isDm &&
+            state.queue.sendMessage(chatJid, msgThread, formatted, group.folder)
+          ) {
             logger.debug(
               {
                 chatJid,
@@ -544,7 +547,7 @@ async function startMessageLoop(): Promise<void> {
 
             // If the message will be queued (concurrency limit or same-thread active),
             // add a "busy" reaction so the user knows the agent received it
-            if (state.queue.wouldQueue(chatJid, msgThread)) {
+            if (state.queue.wouldQueue(chatJid, msgThread, group.folder)) {
               const lastMsg = messagesToSend[messagesToSend.length - 1];
               channel
                 .addReaction?.(chatJid, lastMsg.id, BUSY_EMOJI)
@@ -562,7 +565,7 @@ async function startMessageLoop(): Promise<void> {
               state.pendingBusyReactions.set(busyReactionKey, existing);
             }
 
-            state.queue.enqueueMessageCheck(chatJid, msgThread);
+            state.queue.enqueueMessageCheck(chatJid, msgThread, group.folder);
           }
         }
       }
@@ -617,7 +620,7 @@ function recoverPendingMessages(): void {
         { group: group.name, pendingCount: pending.length },
         'Recovery: found unprocessed messages',
       );
-      state.queue.enqueueMessageCheck(chatJid);
+      state.queue.enqueueMessageCheck(chatJid, undefined, group.folder);
     }
   }
 
@@ -637,9 +640,13 @@ function recoverPendingMessages(): void {
         if (isSyntheticThreadJid(chatJid)) {
           const { threadTs: recoveryThreadTs } = parseSlackJid(chatJid);
           const baseRecoveryJid = getParentJid(chatJid) || chatJid;
-          state.queue.enqueueMessageCheck(baseRecoveryJid, recoveryThreadTs);
+          state.queue.enqueueMessageCheck(
+            baseRecoveryJid,
+            recoveryThreadTs,
+            mainGroup.group.folder,
+          );
         } else {
-          state.queue.enqueueMessageCheck(chatJid);
+          state.queue.enqueueMessageCheck(chatJid, undefined, mainGroup.group.folder);
         }
       }
     }
@@ -727,13 +734,23 @@ async function main(): Promise<void> {
                   !isMultiGroupChannel(channelJid) &&
                   isSyntheticThreadJid(chatJid)
                 ) {
-                  // Single-group: IPC pipe with thread-aware routing (use base JID for consistent state.queue keys)
+                  // Single-group: IPC pipe with thread-aware routing
                   const formatted = formatMessages([msg], TIMEZONE);
                   const { threadTs: evtThreadTs } = parseSlackJid(chatJid);
+                  const pipeGroup = resolveGroup(channelJid);
                   if (
-                    !state.queue.sendMessage(channelJid, evtThreadTs, formatted)
+                    !state.queue.sendMessage(
+                      channelJid,
+                      evtThreadTs,
+                      formatted,
+                      pipeGroup?.folder,
+                    )
                   ) {
-                    state.queue.enqueueMessageCheck(channelJid, evtThreadTs);
+                    state.queue.enqueueMessageCheck(
+                      channelJid,
+                      evtThreadTs,
+                      pipeGroup?.folder,
+                    );
                   } else {
                     state.lastAgentTimestamp[
                       state.getCursorKey(channelJid, evtThreadTs)
@@ -837,7 +854,7 @@ async function main(): Promise<void> {
         timestamp: new Date().toISOString(),
         threadTs: params.threadTs,
       });
-      state.queue.enqueueMessageCheck(baseJid, params.threadTs);
+      state.queue.enqueueMessageCheck(baseJid, params.threadTs, params.groupFolder);
     },
     onSlashCommand: async (params: {
       command: string;
