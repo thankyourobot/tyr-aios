@@ -284,7 +284,10 @@ export async function runContainerAgent(
   const threadKey = input.threadTs || '__root__';
   const groupIpcDir = resolveGroupIpcPath(group.folder);
   const threadInputDir = path.join(groupIpcDir, 'input', threadKey);
-  fs.mkdirSync(threadInputDir, { recursive: true });
+  fs.mkdirSync(threadInputDir, { recursive: true, mode: 0o777 });
+  // Ensure container user (uid 1000) can read/write/unlink files in this directory.
+  // The host runs as root, so mkdirSync creates root-owned dirs; chown to container user.
+  try { fs.chownSync(threadInputDir, 1000, 1000); } catch { /* ignore on non-Linux */ }
   mounts.push({
     hostPath: threadInputDir,
     containerPath: '/workspace/ipc/input',
