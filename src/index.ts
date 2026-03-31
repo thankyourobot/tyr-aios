@@ -25,6 +25,7 @@ import {
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
+  getThreadMembers,
   getThreadResponseUuids,
   cleanupOldThreadData,
 } from './db.js';
@@ -77,11 +78,11 @@ async function handleCommand(
 ): Promise<boolean> {
   // Strip leading @mentions so commands work with "@Agent *plan ..." syntax
   const text = msg.content.trim().replace(/^(<@[A-Z0-9]+>\s*)+/, '');
-  const group = resolveGroup(chatJid);
+  const group = resolveGroupForCommand(chatJid, msg.threadTs);
 
   // /stop command — stops container for the thread where *stop was sent
   if (text === '*stop') {
-    const stopped = await state.queue.stopGroup(chatJid, msg.threadTs);
+    const stopped = await state.queue.stopGroup(chatJid, msg.threadTs, group?.folder);
     const displayOpts: SendMessageOpts = {
       displayName: group?.displayName,
       displayEmoji: group?.displayEmoji,
@@ -297,6 +298,30 @@ async function handleCommand(
 // Delegators for group management (thin wrappers around GroupManager)
 function resolveGroup(chatJid: string): RegisteredGroup | null {
   return groupManager.resolveGroup(chatJid);
+}
+
+/**
+ * Resolve the correct group for a command in multi-agent threads.
+ * Uses thread membership to identify which agent is active in the thread,
+ * falling back to the default resolveGroup for single-agent channels.
+ */
+function resolveGroupForCommand(
+  chatJid: string,
+  threadTs?: string,
+): RegisteredGroup | null {
+  const group = resolveGroup(chatJid);
+  const channelJid = getParentJid(chatJid) || chatJid;
+  if (threadTs && groupManager.isMultiGroupChannel(channelJid)) {
+    const members = getThreadMembers(channelJid, threadTs);
+    if (members.length > 0) {
+      const channelGroups = state.groupsByJid.get(channelJid);
+      const memberGroup = channelGroups?.find((g) =>
+        members.includes(g.folder),
+      );
+      if (memberGroup) return memberGroup;
+    }
+  }
+  return group;
 }
 
 function isMultiGroupChannel(channelJid: string): boolean {
@@ -802,13 +827,14 @@ async function main(): Promise<void> {
       triggerId: string;
     }): Promise<string | null> => {
       const channelJid = `slack:${params.channelId}`;
-      const group = resolveGroup(channelJid);
+      const group = resolveGroupForCommand(channelJid, params.threadTs);
 
       switch (params.command) {
         case 'stop': {
           const stopped = await state.queue.stopGroup(
             channelJid,
             params.threadTs,
+            group?.folder,
           );
           return stopped
             ? `Stopped ${group?.name || 'agent'}`
