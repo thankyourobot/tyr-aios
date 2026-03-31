@@ -278,6 +278,7 @@ describe('MessageProcessor', () => {
         'slack:C123',
         '111.000',
         'formatted',
+        'strategy',
       );
     });
 
@@ -298,6 +299,7 @@ describe('MessageProcessor', () => {
       expect(state.queue.enqueueMessageCheck).toHaveBeenCalledWith(
         'slack:C123',
         '111.000',
+        'strategy',
       );
     });
   });

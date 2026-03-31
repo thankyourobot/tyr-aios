@@ -203,9 +203,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
     // Exception: show typing when this is the only agent in the thread (no ambiguity about who's responding).
     const triggeringMsg = missedMessages[missedMessages.length - 1];
     const threadMembers =
-      groupFolder && threadTs
-        ? getThreadMembers(channelJid, threadTs)
-        : [];
+      groupFolder && threadTs ? getThreadMembers(channelJid, threadTs) : [];
     const isSoleThreadAgent = threadMembers.length <= 1;
     const isMentioned =
       !groupFolder ||
@@ -484,8 +482,20 @@ ${formatMessages([parentMsg], TIMEZONE)}
       // Single-group: route using base channel JID + threadTs for consistent queue keying
       if (isSyntheticThreadJid(chatJid)) {
         const formatted = formatMessages([msg], TIMEZONE);
-        if (!this.state.queue.sendMessage(channelJid, threadTs, formatted)) {
-          this.state.queue.enqueueMessageCheck(channelJid, threadTs);
+        const singleGroup = this.groupManager.resolveGroup(channelJid);
+        if (
+          !this.state.queue.sendMessage(
+            channelJid,
+            threadTs,
+            formatted,
+            singleGroup?.folder,
+          )
+        ) {
+          this.state.queue.enqueueMessageCheck(
+            channelJid,
+            threadTs,
+            singleGroup?.folder,
+          );
         } else {
           this.state.lastAgentTimestamp[
             this.state.getCursorKey(channelJid, threadTs)
