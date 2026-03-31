@@ -321,14 +321,16 @@ export class GroupQueue {
       threadKey,
     );
     try {
-      fs.mkdirSync(inputDir, { recursive: true, mode: 0o777 });
-      try { fs.chownSync(inputDir, 1000, 1000); } catch { /* ignore */ }
+      fs.mkdirSync(inputDir, { recursive: true });
+      try {
+        fs.chownSync(inputDir, 1000, 1000);
+      } catch {
+        /* ignore */
+      }
       const filename = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
       const filepath = path.join(inputDir, filename);
       const tempPath = `${filepath}.tmp`;
-      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }), {
-        mode: 0o666,
-      });
+      fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', text }));
       fs.renameSync(tempPath, filepath);
       return true;
     } catch {
@@ -356,9 +358,13 @@ export class GroupQueue {
       threadKey,
     );
     try {
-      fs.mkdirSync(inputDir, { recursive: true, mode: 0o777 });
-      try { fs.chownSync(inputDir, 1000, 1000); } catch { /* ignore */ }
-      fs.writeFileSync(path.join(inputDir, '_close'), '', { mode: 0o666 });
+      fs.mkdirSync(inputDir, { recursive: true });
+      try {
+        fs.chownSync(inputDir, 1000, 1000);
+      } catch {
+        /* ignore */
+      }
+      fs.writeFileSync(path.join(inputDir, '_close'), '');
     } catch {
       // ignore
     }
