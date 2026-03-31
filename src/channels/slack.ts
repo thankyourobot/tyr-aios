@@ -282,7 +282,8 @@ export class SlackChannel implements Channel {
         const displayOverrides: Record<string, string> = {};
         if (!group?.botToken) {
           if (group?.displayName) displayOverrides.username = group.displayName;
-          if (group?.displayIconUrl) displayOverrides.icon_url = group.displayIconUrl;
+          if (group?.displayIconUrl)
+            displayOverrides.icon_url = group.displayIconUrl;
           else if (group?.displayEmoji)
             displayOverrides.icon_emoji = `:${group.displayEmoji}:`;
         }
@@ -690,15 +691,17 @@ export class SlackChannel implements Channel {
   ): Promise<void> {
     const { channelId } = parseSlackJid(jid);
     try {
-      const client = this.getClient(displayOpts?.botToken);
+      // Always use the main app client for interactive messages (buttons/modals)
+      // so Slack routes interactions back to our app's action handlers.
+      // Use display overrides to show the correct agent identity.
       const overrides: Record<string, string> = {};
-      if (!displayOpts?.botToken) {
-        if (displayOpts?.displayName) overrides.username = displayOpts.displayName;
-        if (displayOpts?.displayIconUrl) overrides.icon_url = displayOpts.displayIconUrl;
-        else if (displayOpts?.displayEmoji)
-          overrides.icon_emoji = `:${displayOpts.displayEmoji}:`;
-      }
-      await client.chat.postEphemeral({
+      if (displayOpts?.displayName)
+        overrides.username = displayOpts.displayName;
+      if (displayOpts?.displayIconUrl)
+        overrides.icon_url = displayOpts.displayIconUrl;
+      else if (displayOpts?.displayEmoji)
+        overrides.icon_emoji = `:${displayOpts.displayEmoji}:`;
+      await this.app.client.chat.postEphemeral({
         channel: channelId,
         user: userId,
         thread_ts: threadTs,
