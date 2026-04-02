@@ -689,17 +689,6 @@ async function main(): Promise<void> {
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
-      logger.info(
-        {
-          chatJid,
-          sender: msg.sender_name,
-          isBotMsg: msg.is_bot_message,
-          isFromMe: msg.is_from_me,
-          threadTs: msg.threadTs,
-          contentPreview: msg.content.slice(0, 50),
-        },
-        'DEBUG onMessage received',
-      );
       // Sender allowlist drop mode: discard messages from denied senders before storing
       if (!msg.is_from_me && !msg.is_bot_message && resolveGroup(chatJid)) {
         const cfg = loadSenderAllowlist();

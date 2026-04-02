@@ -156,20 +156,6 @@ export class GroupQueue {
     const state = this.getGroup(chatJid, threadTs, groupFolder);
     state.lastActivity = Date.now();
 
-    logger.info(
-      {
-        key,
-        chatJid,
-        threadTs: threadTs || '__root__',
-        groupFolder: groupFolder || '__default__',
-        isActive: state.active,
-        activeKeys: [...this.groups.entries()]
-          .filter(([, s]) => s.active)
-          .map(([k]) => k),
-      },
-      'DEBUG enqueueMessageCheck',
-    );
-
     if (state.active) {
       state.pendingMessages = true;
       logger.debug(
@@ -291,23 +277,7 @@ export class GroupQueue {
     text: string,
     groupFolder?: string | null,
   ): boolean {
-    const key = queueKey(chatJid, threadTs, groupFolder);
     const state = this.getGroup(chatJid, threadTs, groupFolder);
-    logger.info(
-      {
-        key,
-        chatJid,
-        threadTs: threadTs || '__root__',
-        groupFolder: groupFolder || '__default__',
-        isActive: state.active,
-        hasGroupFolder: !!state.groupFolder,
-        isTaskContainer: state.isTaskContainer,
-        activeKeys: [...this.groups.entries()]
-          .filter(([, s]) => s.active)
-          .map(([k]) => k),
-      },
-      'DEBUG sendMessage',
-    );
     if (!state.active || !state.groupFolder || state.isTaskContainer)
       return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
