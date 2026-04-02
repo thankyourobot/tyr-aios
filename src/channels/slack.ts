@@ -245,39 +245,12 @@ export class SlackChannel implements Channel {
         // Create source thread link
         const threadLink = `https://thankyourobot.slack.com/archives/${channelId}/p${threadTs.replace('.', '')}`;
 
-        // Fetch the assistant's response at the fork point from Slack API
+        // Find the assistant's response at the fork point from our DB
+        // (Slack API conversations.replies doesn't reliably return messages
+        // posted by per-agent bot tokens when queried by the main app)
         const msgLink = `https://thankyourobot.slack.com/archives/${channelId}/p${selectedSlackTs.replace('.', '')}?thread_ts=${threadTs}&cid=${channelId}`;
-        let agentResponseText = '';
-        try {
-          const replies = await client.conversations.replies({
-            channel: channelId,
-            ts: threadTs,
-            latest: String(parseFloat(selectedSlackTs) + 0.001),
-            oldest: String(parseFloat(selectedSlackTs) - 0.001),
-            inclusive: true,
-            limit: 5,
-          });
-          logger.info(
-            {
-              selectedSlackTs,
-              messageCount: replies.messages?.length,
-              timestamps: replies.messages?.map((m) => m.ts),
-              hasText: replies.messages?.map((m) => !!m.text),
-            },
-            'Rewind: conversations.replies raw response',
-          );
-          const agentMsg = replies.messages?.find(
-            (m) => m.ts === selectedSlackTs,
-          );
-          if (agentMsg?.text) {
-            agentResponseText = agentMsg.text;
-          }
-        } catch (err) {
-          logger.warn(
-            { err },
-            'Failed to fetch agent response for rewind context',
-          );
-        }
+        const agentMsg = threadMsgs.find((m) => m.id === selectedSlackTs);
+        const agentResponseText = agentMsg?.content || '';
         logger.info(
           { agentResponseTextLen: agentResponseText.length, selectedSlackTs },
           'Rewind: fetched agent response for context',
