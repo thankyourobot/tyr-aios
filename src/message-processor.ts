@@ -587,18 +587,15 @@ ${formatMessages([parentMsg], TIMEZONE)}
           effectiveTs,
           group.folder,
         );
-      } else {
-        this.state.lastAgentTimestamp[
-          this.state.getCursorKey(channelJid, effectiveTs)
-        ] = msg.timestamp;
-        this.saveFn();
-        if (effectiveTs) {
-          const typingJid = buildThreadJid(channelJid, effectiveTs);
-          const channel = findChannel(this.state.channels, channelJid);
-          channel
-            ?.setTyping?.(typingJid, true, group.botToken)
-            ?.catch(() => {});
-        }
+      } else if (effectiveTs) {
+        // Message piped to active container. Don't advance the shared thread
+        // cursor — other agents in this thread still need to find this message
+        // via their own processGroupMessages.
+        const typingJid = buildThreadJid(channelJid, effectiveTs);
+        const channel = findChannel(this.state.channels, channelJid);
+        channel
+          ?.setTyping?.(typingJid, true, group.botToken)
+          ?.catch(() => {});
       }
     }
   }
