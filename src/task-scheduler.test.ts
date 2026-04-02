@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import { channelJid } from './jid.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -22,7 +23,7 @@ describe('task scheduler', () => {
     createTask({
       id: 'task-invalid-folder',
       group_folder: '../../outside',
-      chat_jid: 'bad@g.us',
+      chat_jid: channelJid('bad@g.us'),
       prompt: 'run',
       schedule_type: 'once',
       schedule_value: '2026-02-22T00:00:00.000Z',
@@ -57,7 +58,7 @@ describe('task scheduler', () => {
     const task = {
       id: 'drift-test',
       group_folder: 'test',
-      chat_jid: 'test@g.us',
+      chat_jid: channelJid('test@g.us'),
       prompt: 'test',
       schedule_type: 'interval' as const,
       schedule_value: '60000', // 1 minute
@@ -81,7 +82,7 @@ describe('task scheduler', () => {
     const task = {
       id: 'once-test',
       group_folder: 'test',
-      chat_jid: 'test@g.us',
+      chat_jid: channelJid('test@g.us'),
       prompt: 'test',
       schedule_type: 'once' as const,
       schedule_value: '2026-01-01T00:00:00.000Z',
@@ -105,7 +106,7 @@ describe('task scheduler', () => {
     const task = {
       id: 'skip-test',
       group_folder: 'test',
-      chat_jid: 'test@g.us',
+      chat_jid: channelJid('test@g.us'),
       prompt: 'test',
       schedule_type: 'interval' as const,
       schedule_value: String(ms),

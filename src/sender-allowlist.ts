@@ -1,7 +1,7 @@
 import fs from 'fs';
 
 import { SENDER_ALLOWLIST_PATH } from './config.js';
-import { getParentJid } from './jid.js';
+import { AnyJid, getParentJid } from './jid.js';
 import { logger } from './logger.js';
 
 export interface ChatAllowlistEntry {
@@ -94,7 +94,7 @@ function getEntry(
   cfg: SenderAllowlistConfig,
 ): ChatAllowlistEntry {
   if (cfg.chats[chatJid]) return cfg.chats[chatJid];
-  const parentJid = getParentJid(chatJid);
+  const parentJid = getParentJid(chatJid as AnyJid);
   if (parentJid && cfg.chats[parentJid]) return cfg.chats[parentJid];
   return cfg.default;
 }

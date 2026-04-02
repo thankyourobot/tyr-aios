@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentExecutor } from './agent-executor.js';
 import type { AppState } from './app-state.js';
 import type { GroupManager } from './group-manager.js';
+import { channelJid } from './jid.js';
 import type { RegisteredGroup, ContainerOutput } from './types.js';
 
 // --- Mocks ---
@@ -167,7 +168,7 @@ describe('AgentExecutor', () => {
       const result = await executor.runAgent(
         makeGroup(),
         'hello',
-        'slack:C123',
+        channelJid('slack:C123'),
       );
 
       expect(result).toBe('success');
@@ -187,7 +188,7 @@ describe('AgentExecutor', () => {
       await executor.runAgent(
         makeGroup(),
         'hello',
-        'slack:C123',
+        channelJid('slack:C123'),
         undefined,
         undefined,
         '111.000',
@@ -218,7 +219,7 @@ describe('AgentExecutor', () => {
       await executor.runAgent(
         makeGroup(),
         'follow-up',
-        'slack:C123',
+        channelJid('slack:C123'),
         undefined,
         undefined,
         '111.000',
@@ -240,7 +241,7 @@ describe('AgentExecutor', () => {
       const result = await executor.runAgent(
         makeGroup(),
         'hello',
-        'slack:C123',
+        channelJid('slack:C123'),
       );
 
       expect(result).toBe('error');
@@ -252,7 +253,7 @@ describe('AgentExecutor', () => {
       const result = await executor.runAgent(
         makeGroup(),
         'hello',
-        'slack:C123',
+        channelJid('slack:C123'),
       );
 
       expect(result).toBe('error');
@@ -266,7 +267,7 @@ describe('AgentExecutor', () => {
 
       await executor.rewindSession({
         groupFolder: 'strategy',
-        chatJid: 'slack:C123',
+        chatJid: channelJid('slack:C123'),
         sourceThreadTs: '111.000',
         newThreadTs: '222.000',
         sdkUuid: 'uuid-abc',
@@ -281,7 +282,7 @@ describe('AgentExecutor', () => {
 
       await executor.rewindSession({
         groupFolder: 'nonexistent',
-        chatJid: 'slack:C123',
+        chatJid: channelJid('slack:C123'),
         sourceThreadTs: '111.000',
         newThreadTs: '222.000',
         sdkUuid: 'uuid-abc',

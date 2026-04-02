@@ -1,5 +1,14 @@
 import { getDb } from '../db.js';
+import type { ChannelJid } from '../jid.js';
 import { ScheduledTask, TaskRunLog } from '../types.js';
+
+/** DB rows have chat_jid as string; cast to ChannelJid at boundary. */
+type ScheduledTaskRow = Omit<ScheduledTask, 'chat_jid'> & {
+  chat_jid: string;
+};
+function castTask(row: ScheduledTaskRow): ScheduledTask {
+  return { ...row, chat_jid: row.chat_jid as ChannelJid };
+}
 
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
@@ -26,23 +35,26 @@ export function createTask(
 }
 
 export function getTaskById(id: string): ScheduledTask | undefined {
-  return getDb()
+  const row = getDb()
     .prepare('SELECT * FROM scheduled_tasks WHERE id = ?')
-    .get(id) as ScheduledTask | undefined;
+    .get(id) as ScheduledTaskRow | undefined;
+  return row ? castTask(row) : undefined;
 }
 
 export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
-  return getDb()
+  const rows = getDb()
     .prepare(
       'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
     )
-    .all(groupFolder) as ScheduledTask[];
+    .all(groupFolder) as ScheduledTaskRow[];
+  return rows.map(castTask);
 }
 
 export function getAllTasks(): ScheduledTask[] {
-  return getDb()
+  const rows = getDb()
     .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
-    .all() as ScheduledTask[];
+    .all() as ScheduledTaskRow[];
+  return rows.map(castTask);
 }
 
 export function updateTask(
@@ -93,7 +105,7 @@ export function deleteTask(id: string): void {
 
 export function getDueTasks(): ScheduledTask[] {
   const now = new Date().toISOString();
-  return getDb()
+  const rows = getDb()
     .prepare(
       `
     SELECT * FROM scheduled_tasks
@@ -101,7 +113,8 @@ export function getDueTasks(): ScheduledTask[] {
     ORDER BY next_run
   `,
     )
-    .all(now) as ScheduledTask[];
+    .all(now) as ScheduledTaskRow[];
+  return rows.map(castTask);
 }
 
 export function updateTaskAfterRun(

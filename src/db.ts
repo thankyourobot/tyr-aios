@@ -5,6 +5,7 @@ import path from 'path';
 import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
+import { channelJid } from './jid.js';
 
 // Direct imports for migrateJsonState (re-exports don't create local bindings)
 import { setRouterState, setSession } from './stores/session-store.js';
@@ -357,7 +358,7 @@ function migrateJsonState(): void {
   if (groups) {
     for (const [jid, group] of Object.entries(groups)) {
       try {
-        setRegisteredGroup(jid, group);
+        setRegisteredGroup(channelJid(jid), group);
       } catch (err) {
         logger.warn(
           { jid, folder: group.folder, err },

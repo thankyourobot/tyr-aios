@@ -99,6 +99,7 @@ vi.mock('../env.js', () => ({
 import { SlackChannel, SlackChannelOpts } from './slack.js';
 import { updateChatName } from '../db.js';
 import { readEnvFile } from '../env.js';
+import { channelJid, threadJid } from '../jid.js';
 
 // --- Test helpers ---
 
@@ -590,7 +591,7 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
       await channel.connect();
 
-      await channel.sendMessage('slack:C0123456789', 'Hello');
+      await channel.sendMessage(channelJid('slack:C0123456789'), 'Hello');
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
         channel: 'C0123456789',
@@ -603,7 +604,7 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
       await channel.connect();
 
-      await channel.sendMessage('slack:D9876543210', 'DM message');
+      await channel.sendMessage(channelJid('slack:D9876543210'), 'DM message');
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
         channel: 'D9876543210',
@@ -616,7 +617,7 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
 
       // Don't connect — should queue
-      await channel.sendMessage('slack:C0123456789', 'Queued message');
+      await channel.sendMessage(channelJid('slack:C0123456789'), 'Queued message');
 
       expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
     });
@@ -632,7 +633,7 @@ describe('SlackChannel', () => {
 
       // Should not throw
       await expect(
-        channel.sendMessage('slack:C0123456789', 'Will fail'),
+        channel.sendMessage(channelJid('slack:C0123456789'), 'Will fail'),
       ).resolves.toBeUndefined();
     });
 
@@ -643,7 +644,7 @@ describe('SlackChannel', () => {
 
       // Create a message longer than 4000 chars
       const longText = 'A'.repeat(4500);
-      await channel.sendMessage('slack:C0123456789', longText);
+      await channel.sendMessage(channelJid('slack:C0123456789'), longText);
 
       // Should be split into 2 messages: 4000 + 500
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(2);
@@ -663,7 +664,7 @@ describe('SlackChannel', () => {
       await channel.connect();
 
       const text = 'B'.repeat(4000);
-      await channel.sendMessage('slack:C0123456789', text);
+      await channel.sendMessage(channelJid('slack:C0123456789'), text);
 
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(1);
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledWith({
@@ -678,7 +679,7 @@ describe('SlackChannel', () => {
       await channel.connect();
 
       const longText = 'C'.repeat(8500);
-      await channel.sendMessage('slack:C0123456789', longText);
+      await channel.sendMessage(channelJid('slack:C0123456789'), longText);
 
       // 4000 + 4000 + 500 = 3 messages
       expect(currentApp().client.chat.postMessage).toHaveBeenCalledTimes(3);
@@ -689,8 +690,8 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
 
       // Queue messages while disconnected
-      await channel.sendMessage('slack:C0123456789', 'First queued');
-      await channel.sendMessage('slack:C0123456789', 'Second queued');
+      await channel.sendMessage(channelJid('slack:C0123456789'), 'First queued');
+      await channel.sendMessage(channelJid('slack:C0123456789'), 'Second queued');
 
       expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
 
@@ -713,32 +714,32 @@ describe('SlackChannel', () => {
   describe('ownsJid', () => {
     it('owns slack: JIDs', () => {
       const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('slack:C0123456789')).toBe(true);
+      expect(channel.ownsJid(channelJid('slack:C0123456789'))).toBe(true);
     });
 
     it('owns slack: DM JIDs', () => {
       const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('slack:D0123456789')).toBe(true);
+      expect(channel.ownsJid(channelJid('slack:D0123456789'))).toBe(true);
     });
 
     it('does not own WhatsApp group JIDs', () => {
       const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('12345@g.us')).toBe(false);
+      expect(channel.ownsJid(channelJid('12345@g.us'))).toBe(false);
     });
 
     it('does not own WhatsApp DM JIDs', () => {
       const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('12345@s.whatsapp.net')).toBe(false);
+      expect(channel.ownsJid(channelJid('12345@s.whatsapp.net'))).toBe(false);
     });
 
     it('does not own Telegram JIDs', () => {
       const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('tg:123456')).toBe(false);
+      expect(channel.ownsJid(channelJid('tg:123456'))).toBe(false);
     });
 
     it('does not own unknown JID formats', () => {
       const channel = new SlackChannel(createTestOpts());
-      expect(channel.ownsJid('random-string')).toBe(false);
+      expect(channel.ownsJid(channelJid('random-string'))).toBe(false);
     });
   });
 
@@ -789,7 +790,7 @@ describe('SlackChannel', () => {
 
       // Should not throw — Slack has no bot typing indicator API
       await expect(
-        channel.setTyping('slack:C0123456789', true),
+        channel.setTyping(channelJid('slack:C0123456789'), true),
       ).resolves.toBeUndefined();
     });
 
@@ -798,7 +799,7 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
 
       await expect(
-        channel.setTyping('slack:C0123456789', false),
+        channel.setTyping(channelJid('slack:C0123456789'), false),
       ).resolves.toBeUndefined();
     });
   });

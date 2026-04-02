@@ -12,6 +12,7 @@ import {
   setRegisteredGroup,
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
+import type { AnyJid, ChannelJid } from './jid.js';
 import { getParentJid } from './jid.js';
 import { logger } from './logger.js';
 import type { AvailableGroup } from './snapshot-writer.js';
@@ -39,7 +40,7 @@ export class GroupManager {
    * Resolve a group from a JID.
    * Tries direct lookup, then parent channel JID (for thread JIDs), then main group fallback.
    */
-  resolveGroup(chatJid: string): RegisteredGroup | null {
+  resolveGroup(chatJid: AnyJid): RegisteredGroup | null {
     let group = this.state.registeredGroups[chatJid];
     if (group) return group;
     const parentJid = getParentJid(chatJid);
@@ -76,7 +77,7 @@ export class GroupManager {
     }
   }
 
-  registerGroup(jid: string, group: RegisteredGroup): void {
+  registerGroup(jid: ChannelJid, group: RegisteredGroup): void {
     let groupDir: string;
     try {
       groupDir = resolveGroupFolderPath(group.folder);
@@ -122,7 +123,7 @@ export class GroupManager {
   /**
    * Check if a JID is a multi-group channel (more than 1 group registered).
    */
-  isMultiGroupChannel(channelJid: string): boolean {
+  isMultiGroupChannel(channelJid: ChannelJid): boolean {
     const groups = this.state.groupsByJid.get(channelJid);
     return !!groups && groups.length > 1;
   }
@@ -185,7 +186,7 @@ export class GroupManager {
    * Handles @mention dispatch, thread membership, director defaults, and anti-loop.
    */
   resolveTargetGroups(
-    channelJid: string,
+    channelJid: ChannelJid,
     threadTs: string | undefined,
     msg: NewMessage,
   ): RegisteredGroup[] {

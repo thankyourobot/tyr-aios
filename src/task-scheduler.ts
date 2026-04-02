@@ -272,7 +272,7 @@ export function startSchedulerLoop(deps: SchedulerDependencies): void {
         }
 
         deps.queue.enqueueTask(currentTask.chat_jid, currentTask.id, () =>
-          runTask(currentTask, deps),
+          runTask(currentTask, deps), currentTask.group_folder,
         );
       }
     } catch (err) {

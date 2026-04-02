@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
+import { channelJid } from './jid.js';
 import {
   escapeXml,
   formatMessages,
@@ -12,7 +13,7 @@ import { NewMessage } from './types.js';
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {
     id: '1',
-    chat_jid: 'group@g.us',
+    chat_jid: channelJid('group@g.us'),
     sender: '123@s.whatsapp.net',
     sender_name: 'Alice',
     content: 'hello',

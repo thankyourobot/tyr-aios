@@ -9,6 +9,7 @@ import {
   setRegisteredGroup,
 } from './db.js';
 import { processTaskIpc, IpcDeps } from './ipc.js';
+import { channelJid } from './jid.js';
 import { RegisteredGroup } from './types.js';
 
 // Set up registered groups used across tests
@@ -47,16 +48,16 @@ beforeEach(() => {
   };
 
   // Populate DB as well
-  setRegisteredGroup('main@g.us', MAIN_GROUP);
-  setRegisteredGroup('other@g.us', OTHER_GROUP);
-  setRegisteredGroup('third@g.us', THIRD_GROUP);
+  setRegisteredGroup(channelJid('main@g.us'), MAIN_GROUP);
+  setRegisteredGroup(channelJid('other@g.us'), OTHER_GROUP);
+  setRegisteredGroup(channelJid('third@g.us'), THIRD_GROUP);
 
   deps = {
     sendMessage: async () => {},
     registeredGroups: () => groups,
-    registerGroup: (jid, group) => {
+    registerGroup: (jid: string, group: RegisteredGroup) => {
       groups[jid] = group;
-      setRegisteredGroup(jid, group);
+      setRegisteredGroup(channelJid(jid), group);
       // Mock the fs.mkdirSync that registerGroup does
     },
     syncGroups: async () => {},
@@ -151,7 +152,7 @@ describe('pause_task authorization', () => {
     createTask({
       id: 'task-main',
       group_folder: 'whatsapp_main',
-      chat_jid: 'main@g.us',
+      chat_jid: channelJid('main@g.us'),
       prompt: 'main task',
       schedule_type: 'once',
       schedule_value: '2025-06-01T00:00:00',
@@ -163,7 +164,7 @@ describe('pause_task authorization', () => {
     createTask({
       id: 'task-other',
       group_folder: 'other-group',
-      chat_jid: 'other@g.us',
+      chat_jid: channelJid('other@g.us'),
       prompt: 'other task',
       schedule_type: 'once',
       schedule_value: '2025-06-01T00:00:00',
@@ -212,7 +213,7 @@ describe('resume_task authorization', () => {
     createTask({
       id: 'task-paused',
       group_folder: 'other-group',
-      chat_jid: 'other@g.us',
+      chat_jid: channelJid('other@g.us'),
       prompt: 'paused task',
       schedule_type: 'once',
       schedule_value: '2025-06-01T00:00:00',
@@ -261,7 +262,7 @@ describe('cancel_task authorization', () => {
     createTask({
       id: 'task-to-cancel',
       group_folder: 'other-group',
-      chat_jid: 'other@g.us',
+      chat_jid: channelJid('other@g.us'),
       prompt: 'cancel me',
       schedule_type: 'once',
       schedule_value: '2025-06-01T00:00:00',
@@ -284,7 +285,7 @@ describe('cancel_task authorization', () => {
     createTask({
       id: 'task-own',
       group_folder: 'other-group',
-      chat_jid: 'other@g.us',
+      chat_jid: channelJid('other@g.us'),
       prompt: 'my task',
       schedule_type: 'once',
       schedule_value: '2025-06-01T00:00:00',
@@ -307,7 +308,7 @@ describe('cancel_task authorization', () => {
     createTask({
       id: 'task-foreign',
       group_folder: 'whatsapp_main',
-      chat_jid: 'main@g.us',
+      chat_jid: channelJid('main@g.us'),
       prompt: 'not yours',
       schedule_type: 'once',
       schedule_value: '2025-06-01T00:00:00',
@@ -653,7 +654,7 @@ describe('register_group success', () => {
     );
 
     // Verify group was registered in DB
-    const group = getRegisteredGroup('new@g.us');
+    const group = getRegisteredGroup(channelJid('new@g.us'));
     expect(group).toBeDefined();
     expect(group!.name).toBe('New Group');
     expect(group!.folder).toBe('new-group');
@@ -673,6 +674,6 @@ describe('register_group success', () => {
       deps,
     );
 
-    expect(getRegisteredGroup('partial@g.us')).toBeUndefined();
+    expect(getRegisteredGroup(channelJid('partial@g.us'))).toBeUndefined();
   });
 });

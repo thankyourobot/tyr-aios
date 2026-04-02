@@ -19,6 +19,7 @@ import {
   deletePendingFork,
 } from './db.js';
 import type { GroupManager } from './group-manager.js';
+import type { AnyJid, ChannelJid } from './jid.js';
 import {
   buildThreadJid,
   getParentJid,
@@ -59,12 +60,12 @@ export class MessageProcessor {
    * groupFolder is passed separately for multi-agent dispatch.
    */
   async processGroupMessages(
-    chatJid: string,
+    chatJid: ChannelJid,
     threadTs?: string,
     groupFolder?: string,
   ): Promise<boolean> {
     // chatJid may be a synthetic thread JID from drain — normalize to channel
-    const channelJid = getParentJid(chatJid) || chatJid;
+    const channelJid: ChannelJid = getParentJid(chatJid) ?? chatJid;
 
     let group: RegisteredGroup | null;
     if (groupFolder) {
@@ -89,7 +90,7 @@ export class MessageProcessor {
       const channel_ = findChannel(this.state.channels, channelJid);
       for (const { jid, messageTs } of busyReactions) {
         channel_
-          ?.removeReaction?.(jid, messageTs, BUSY_EMOJI)
+          ?.removeReaction?.(jid as AnyJid, messageTs, BUSY_EMOJI)
           ?.catch((err) =>
             logger.debug({ chatJid, err }, 'Failed to remove busy reaction'),
           );
@@ -203,7 +204,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           { group: group.name },
           'Idle timeout, closing container stdin',
         );
-        this.state.queue.closeStdin(chatJid, lastThreadTs, groupFolder);
+        this.state.queue.closeStdin(chatJid, lastThreadTs, group.folder);
       }, IDLE_TIMEOUT);
     };
 
@@ -440,7 +441,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
         }
 
         if (result.status === 'success') {
-          this.state.queue.notifyIdle(chatJid, lastThreadTs, groupFolder);
+          this.state.queue.notifyIdle(chatJid, lastThreadTs, group.folder);
         }
 
         if (result.status === 'error') {
@@ -494,18 +495,19 @@ ${formatMessages([parentMsg], TIMEZONE)}
    * Dispatch a human message to target groups in a multi-group channel.
    * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
-  async dispatchMessage(chatJid: string, msg: NewMessage): Promise<void> {
-    const channelJid = getParentJid(chatJid) || chatJid;
+  async dispatchMessage(chatJid: AnyJid, msg: NewMessage): Promise<void> {
+    const channelJid: ChannelJid = getParentJid(chatJid) ?? (chatJid as ChannelJid);
     const { threadTs } = parseSlackJid(chatJid);
 
     if (!this.groupManager.isMultiGroupChannel(channelJid)) {
       // Single-group: route using base channel JID + threadTs for consistent queue keying
       if (isSyntheticThreadJid(chatJid)) {
         const singleGroup = this.groupManager.resolveGroup(channelJid);
+        if (!singleGroup) return;
         const pipeFiles = msg.files || [];
         const fileAnnotation = await this.agentExecutor.downloadFiles(
           pipeFiles,
-          singleGroup?.folder || '',
+          singleGroup.folder,
         );
         const formatted = formatMessages([msg], TIMEZONE) + fileAnnotation;
         if (
@@ -513,13 +515,13 @@ ${formatMessages([parentMsg], TIMEZONE)}
             channelJid,
             threadTs,
             formatted,
-            singleGroup?.folder,
+            singleGroup.folder,
           )
         ) {
           this.state.queue.enqueueMessageCheck(
             channelJid,
             threadTs,
-            singleGroup?.folder,
+            singleGroup.folder,
           );
         } else {
           this.state.lastAgentTimestamp[
@@ -605,8 +607,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
    * Dispatch a bot message that contains @mentions to target agents.
    * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
-  dispatchBotMessage(chatJid: string, msg: NewMessage): void {
-    const channelJid = getParentJid(chatJid) || chatJid;
+  dispatchBotMessage(chatJid: AnyJid, msg: NewMessage): void {
+    const channelJid: ChannelJid = getParentJid(chatJid) ?? (chatJid as ChannelJid);
     const { threadTs } = parseSlackJid(chatJid);
 
     if (!this.groupManager.isMultiGroupChannel(channelJid)) return;

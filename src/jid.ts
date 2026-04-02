@@ -11,16 +11,43 @@
  * It is passed as a separate `groupFolder` parameter through the system.
  */
 
-const THREAD_JID_REGEX = /^(slack:[^:]+):t:(.+)$/;
+// --- Branded types ---
+
+export type ChannelJid = string & { readonly __brand: 'ChannelJid' };
+export type ThreadJid = string & { readonly __brand: 'ThreadJid' };
+export type AnyJid = ChannelJid | ThreadJid;
+
+// --- Constructors ---
+
+/** Brand a raw string as a ChannelJid. Throws if it contains `:t:`. */
+export function channelJid(raw: string): ChannelJid {
+  if (raw.includes(':t:')) {
+    throw new Error(`channelJid: input contains :t: — got "${raw}"`);
+  }
+  return raw as ChannelJid;
+}
+
+/** Brand a raw string as a ThreadJid. Throws if it does not contain `:t:`. */
+export function threadJid(raw: string): ThreadJid {
+  if (!raw.includes(':t:')) {
+    throw new Error(`threadJid: input does not contain :t: — got "${raw}"`);
+  }
+  return raw as ThreadJid;
+}
+
+// --- Utilities ---
+
+// Matches any JID with :t: thread separator (format-agnostic, not Slack-specific)
+const THREAD_JID_REGEX = /^(.+?):t:(.+)$/;
 
 /**
  * Parse a Slack JID to extract the channel ID and optional thread timestamp.
  */
-export function parseSlackJid(jid: string): {
+export function parseSlackJid(jid: AnyJid): {
   channelId: string;
   threadTs?: string;
 } {
-  const stripped = jid.replace(/^slack:/, '');
+  const stripped = (jid as string).replace(/^slack:/, '');
   const threadMatch = stripped.match(/^(.+?):t:(.+)$/);
   if (threadMatch) {
     return { channelId: threadMatch[1], threadTs: threadMatch[2] };
@@ -29,13 +56,11 @@ export function parseSlackJid(jid: string): {
 }
 
 /** Build a synthetic thread JID from a channel JID and thread timestamp. */
-export function buildThreadJid(channelJid: string, threadTs: string): string {
-  if (channelJid.includes(':t:')) {
-    throw new Error(
-      `buildThreadJid: input already contains :t: — got "${channelJid}"`,
-    );
-  }
-  return `${channelJid}:t:${threadTs}`;
+export function buildThreadJid(
+  cJid: ChannelJid,
+  threadTs: string,
+): ThreadJid {
+  return `${cJid}:t:${threadTs}` as ThreadJid;
 }
 
 /**
@@ -43,12 +68,12 @@ export function buildThreadJid(channelJid: string, threadTs: string): string {
  * Strips `:t:` suffix to get the plain channel JID.
  * Returns null if already a plain channel JID.
  */
-export function getParentJid(jid: string): string | null {
-  const match = jid.match(THREAD_JID_REGEX);
-  return match ? match[1] : null;
+export function getParentJid(jid: AnyJid): ChannelJid | null {
+  const match = (jid as string).match(THREAD_JID_REGEX);
+  return match ? (match[1] as ChannelJid) : null;
 }
 
-/** Check if a JID is a synthetic thread JID. */
-export function isSyntheticThreadJid(jid: string): boolean {
+/** Type guard: check if a JID is a synthetic thread JID. */
+export function isSyntheticThreadJid(jid: string): jid is ThreadJid {
   return THREAD_JID_REGEX.test(jid);
 }

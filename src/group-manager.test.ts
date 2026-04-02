@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import type { AppState } from './app-state.js';
 import { GroupManager } from './group-manager.js';
+import { channelJid, threadJid, type ChannelJid, type AnyJid } from './jid.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
 
 // --- Mocks ---
@@ -59,7 +60,7 @@ function makeGroup(
 }
 
 // Multi-group channel setup: growth/Ryan is director, 3 members
-const CHANNEL_JID = 'slack:C_ALL_DIRECTORS';
+const CHANNEL_JID = channelJid('slack:C_ALL_DIRECTORS');
 
 const growthRyan = makeGroup({
   name: 'Growth Directors',
@@ -103,7 +104,7 @@ const allChannelGroups = [
 function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
   return {
     id: 'msg-1',
-    chat_jid: CHANNEL_JID,
+    chat_jid: CHANNEL_JID as AnyJid,
     sender: 'U_HUMAN',
     sender_name: 'Human',
     content: 'hello everyone',
@@ -113,12 +114,12 @@ function makeMsg(overrides: Partial<NewMessage> = {}): NewMessage {
 }
 
 function createMultiGroupState(): AppState {
-  const groupsByJid = new Map<string, RegisteredGroup[]>();
+  const groupsByJid = new Map<ChannelJid, RegisteredGroup[]>();
   groupsByJid.set(CHANNEL_JID, allChannelGroups);
 
   const groupsByFolder = new Map<
     string,
-    { jid: string; group: RegisteredGroup }
+    { jid: ChannelJid; group: RegisteredGroup }
   >();
   for (const g of allChannelGroups) {
     groupsByFolder.set(g.folder, { jid: CHANNEL_JID, group: g });
@@ -130,7 +131,7 @@ function createMultiGroupState(): AppState {
   }
 
   const registeredGroups: Record<string, RegisteredGroup> = {
-    [CHANNEL_JID]: growthRyan, // director wins
+    [CHANNEL_JID as string]: growthRyan, // director wins
   };
 
   return {
@@ -327,8 +328,8 @@ describe('GroupManager', () => {
 
     it('14. parent JID fallback returns parent group', () => {
       // synthetic thread JID — parent is the channel
-      const threadJid = `${CHANNEL_JID}:t:1711700000.000100`;
-      const group = gm.resolveGroup(threadJid);
+      const tJid = threadJid(`${CHANNEL_JID}:t:1711700000.000100`);
+      const group = gm.resolveGroup(tJid);
       expect(group).toBe(growthRyan);
     });
 
@@ -340,7 +341,7 @@ describe('GroupManager', () => {
       });
       state.registeredGroups['slack:C_MAIN'] = mainGroup;
 
-      const group = gm.resolveGroup('slack:C_TOTALLY_UNKNOWN');
+      const group = gm.resolveGroup(channelJid('slack:C_TOTALLY_UNKNOWN'));
       expect(group).toBe(mainGroup);
     });
 
@@ -353,7 +354,7 @@ describe('GroupManager', () => {
       state.registeredGroups['slack:C_MAIN'] = mainGroup;
 
       // groupFolder is now passed separately, not encoded in JID
-      const group = gm.resolveGroup('slack:C_UNKNOWN_CHANNEL');
+      const group = gm.resolveGroup(channelJid('slack:C_UNKNOWN_CHANNEL'));
       expect(group).toBe(mainGroup);
     });
   });
@@ -364,7 +365,7 @@ describe('GroupManager', () => {
 
   describe('isMultiGroupChannel', () => {
     it('17. single registration → false', () => {
-      const singleJid = 'slack:C_SINGLE';
+      const singleJid = channelJid('slack:C_SINGLE');
       state.groupsByJid.set(singleJid, [growthRyan]);
       expect(gm.isMultiGroupChannel(singleJid)).toBe(false);
     });
@@ -374,7 +375,7 @@ describe('GroupManager', () => {
     });
 
     it('unknown channel → false', () => {
-      expect(gm.isMultiGroupChannel('slack:C_NONEXISTENT')).toBe(false);
+      expect(gm.isMultiGroupChannel(channelJid('slack:C_NONEXISTENT'))).toBe(false);
     });
   });
 
@@ -412,7 +413,7 @@ describe('GroupManager', () => {
       });
       state.registeredGroups['slack:C_MAIN'] = mainGroup;
       const result = gm.getMainGroup();
-      expect(result).toEqual({ jid: 'slack:C_MAIN', group: mainGroup });
+      expect(result).toEqual({ jid: channelJid('slack:C_MAIN'), group: mainGroup });
     });
 
     it('returns null when no main group exists', () => {
@@ -427,19 +428,19 @@ describe('GroupManager', () => {
 
   describe('resolveTargetGroups — single-group channel', () => {
     it('always returns that single group', () => {
-      const singleJid = 'slack:C_SINGLE';
+      const singleJid = channelJid('slack:C_SINGLE');
       const singleGroup = makeGroup({
         name: 'Solo',
         folder: 'solo',
         channelRole: 'director',
       });
-      state.registeredGroups[singleJid] = singleGroup;
+      state.registeredGroups[singleJid as string] = singleGroup;
       state.groupsByJid.set(singleJid, [singleGroup]);
 
       const targets = gm.resolveTargetGroups(
         singleJid,
         undefined,
-        makeMsg({ chat_jid: singleJid }),
+        makeMsg({ chat_jid: singleJid as AnyJid }),
       );
       expect(targets).toEqual([singleGroup]);
     });
@@ -448,7 +449,7 @@ describe('GroupManager', () => {
       // Remove all registered groups to ensure no fallback
       state.registeredGroups = {};
       const targets = gm.resolveTargetGroups(
-        'slack:C_GHOST',
+        channelJid('slack:C_GHOST'),
         undefined,
         makeMsg(),
       );

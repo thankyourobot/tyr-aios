@@ -16,7 +16,7 @@ import {
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import type { GroupManager } from './group-manager.js';
-import { buildThreadJid } from './jid.js';
+import { buildThreadJid, channelJid, type ChannelJid } from './jid.js';
 import { logger } from './logger.js';
 import { findChannel } from './router.js';
 import {
@@ -85,7 +85,7 @@ export class AgentExecutor {
   async runAgent(
     group: RegisteredGroup,
     prompt: string,
-    chatJid: string,
+    chatJid: ChannelJid,
     onOutput?: (output: ContainerOutput) => Promise<void>,
     toggleState?: { verbose: boolean; thinking: boolean; planMode: boolean },
     threadTs?: string,
@@ -136,7 +136,7 @@ export class AgentExecutor {
     ).toISOString();
     const agentJids = getJidsForFolder(group.folder);
     const activityChannels = agentJids.map(({ jid, name, channelRole }) => {
-      const msgs = getMessagesSinceIncludingBots(jid, sinceTimestamp, 50);
+      const msgs = getMessagesSinceIncludingBots(channelJid(jid), sinceTimestamp, 50);
       return {
         jid,
         name,
@@ -262,7 +262,7 @@ export class AgentExecutor {
 
   async rewindSession(params: {
     groupFolder: string;
-    chatJid: string;
+    chatJid: ChannelJid;
     sourceThreadTs: string;
     newThreadTs: string;
     sdkUuid: string;
@@ -309,7 +309,7 @@ export class AgentExecutor {
       const result = await this.runAgent(
         group,
         '[Session forked from previous thread. Continue from where we left off.]',
-        syntheticJid,
+        chatJid,
         async (output) => {
           if (output.result) {
             const text = output.result

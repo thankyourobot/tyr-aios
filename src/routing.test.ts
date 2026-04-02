@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import { _initTestDatabase, getAllChats, storeChatMetadata } from './db.js';
 import { getAvailableGroups, _setRegisteredGroups } from './index.js';
+import { channelJid } from './jid.js';
 
 beforeEach(() => {
   _initTestDatabase();
@@ -29,21 +30,21 @@ describe('JID ownership patterns', () => {
 describe('getAvailableGroups', () => {
   it('returns only groups, excludes DMs', () => {
     storeChatMetadata(
-      'group1@g.us',
+      channelJid('group1@g.us'),
       '2024-01-01T00:00:01.000Z',
       'Group 1',
       'whatsapp',
       true,
     );
     storeChatMetadata(
-      'user@s.whatsapp.net',
+      channelJid('user@s.whatsapp.net'),
       '2024-01-01T00:00:02.000Z',
       'User DM',
       'whatsapp',
       false,
     );
     storeChatMetadata(
-      'group2@g.us',
+      channelJid('group2@g.us'),
       '2024-01-01T00:00:03.000Z',
       'Group 2',
       'whatsapp',
@@ -58,9 +59,9 @@ describe('getAvailableGroups', () => {
   });
 
   it('excludes __group_sync__ sentinel', () => {
-    storeChatMetadata('__group_sync__', '2024-01-01T00:00:00.000Z');
+    storeChatMetadata(channelJid('__group_sync__'), '2024-01-01T00:00:00.000Z');
     storeChatMetadata(
-      'group@g.us',
+      channelJid('group@g.us'),
       '2024-01-01T00:00:01.000Z',
       'Group',
       'whatsapp',
@@ -74,14 +75,14 @@ describe('getAvailableGroups', () => {
 
   it('marks registered groups correctly', () => {
     storeChatMetadata(
-      'reg@g.us',
+      channelJid('reg@g.us'),
       '2024-01-01T00:00:01.000Z',
       'Registered',
       'whatsapp',
       true,
     );
     storeChatMetadata(
-      'unreg@g.us',
+      channelJid('unreg@g.us'),
       '2024-01-01T00:00:02.000Z',
       'Unregistered',
       'whatsapp',
@@ -107,21 +108,21 @@ describe('getAvailableGroups', () => {
 
   it('returns groups ordered by most recent activity', () => {
     storeChatMetadata(
-      'old@g.us',
+      channelJid('old@g.us'),
       '2024-01-01T00:00:01.000Z',
       'Old',
       'whatsapp',
       true,
     );
     storeChatMetadata(
-      'new@g.us',
+      channelJid('new@g.us'),
       '2024-01-01T00:00:05.000Z',
       'New',
       'whatsapp',
       true,
     );
     storeChatMetadata(
-      'mid@g.us',
+      channelJid('mid@g.us'),
       '2024-01-01T00:00:03.000Z',
       'Mid',
       'whatsapp',
@@ -137,13 +138,13 @@ describe('getAvailableGroups', () => {
   it('excludes non-group chats regardless of JID format', () => {
     // Unknown JID format stored without is_group should not appear
     storeChatMetadata(
-      'unknown-format-123',
+      channelJid('unknown-format-123'),
       '2024-01-01T00:00:01.000Z',
       'Unknown',
     );
     // Explicitly non-group with unusual JID
     storeChatMetadata(
-      'custom:abc',
+      channelJid('custom:abc'),
       '2024-01-01T00:00:02.000Z',
       'Custom DM',
       'custom',
@@ -151,7 +152,7 @@ describe('getAvailableGroups', () => {
     );
     // A real group for contrast
     storeChatMetadata(
-      'group@g.us',
+      channelJid('group@g.us'),
       '2024-01-01T00:00:03.000Z',
       'Group',
       'whatsapp',

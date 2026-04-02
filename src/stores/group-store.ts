@@ -1,4 +1,5 @@
 import { getDb } from '../db.js';
+import type { ChannelJid } from '../jid.js';
 import { RegisteredGroup } from '../types.js';
 import { isValidGroupFolder } from '../group-folder.js';
 import { logger } from '../logger.js';
@@ -52,7 +53,7 @@ function rowToRegisteredGroup(
 }
 
 export function getRegisteredGroup(
-  jid: string,
+  jid: ChannelJid,
 ): (RegisteredGroup & { jid: string }) | undefined {
   // With composite PK, a jid may have multiple rows — return the director (or first)
   const rows = getDb()
@@ -72,7 +73,7 @@ export function getRegisteredGroup(
   return rowToRegisteredGroup(row);
 }
 
-export function setRegisteredGroup(jid: string, group: RegisteredGroup): void {
+export function setRegisteredGroup(jid: ChannelJid, group: RegisteredGroup): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }
@@ -200,7 +201,7 @@ export function getJidsForFolder(folder: string): Array<{
 // --- Thread membership for multi-agent @mention routing ---
 
 export function getThreadMembers(
-  channelJid: string,
+  channelJid: ChannelJid,
   threadTs: string,
 ): string[] {
   const rows = getDb()
@@ -212,7 +213,7 @@ export function getThreadMembers(
 }
 
 export function addThreadMember(
-  channelJid: string,
+  channelJid: ChannelJid,
   threadTs: string,
   groupFolder: string,
 ): void {
@@ -224,7 +225,7 @@ export function addThreadMember(
 }
 
 export function isThreadMember(
-  channelJid: string,
+  channelJid: ChannelJid,
   threadTs: string,
   groupFolder: string,
 ): boolean {
@@ -238,7 +239,7 @@ export function isThreadMember(
 
 /** Record a bot-triggered processing event for rate limiting. */
 export function recordBotTrigger(
-  channelJid: string,
+  channelJid: ChannelJid,
   threadTs: string,
   groupFolder: string,
 ): void {
@@ -251,7 +252,7 @@ export function recordBotTrigger(
 
 /** Count bot-triggered processing events in a time window for rate limiting. */
 export function countBotTriggers(
-  channelJid: string,
+  channelJid: ChannelJid,
   threadTs: string,
   groupFolder: string,
   sinceMinutes: number,

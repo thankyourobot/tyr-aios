@@ -1,3 +1,4 @@
+import type { AnyJid } from './jid.js';
 import { Channel, NewMessage, SendMessageOpts } from './types.js';
 import { formatLocalTime } from './timezone.js';
 
@@ -38,7 +39,7 @@ export function formatOutbound(rawText: string): string {
 
 export function routeOutbound(
   channels: Channel[],
-  jid: string,
+  jid: AnyJid,
   text: string,
   opts?: SendMessageOpts,
 ): Promise<void> {
@@ -49,7 +50,7 @@ export function routeOutbound(
 
 export function findChannel(
   channels: Channel[],
-  jid: string,
+  jid: AnyJid,
 ): Channel | undefined {
   return channels.find((c) => c.ownsJid(jid));
 }

@@ -1,3 +1,5 @@
+import type { AnyJid, ChannelJid } from './jid.js';
+
 export interface AdditionalMount {
   hostPath: string; // Absolute path on host (supports ~ for home)
   containerPath?: string; // Optional — defaults to basename of hostPath. Mounted at /workspace/extra/{value}
@@ -62,7 +64,7 @@ export interface FileAttachment {
 
 export interface NewMessage {
   id: string;
-  chat_jid: string;
+  chat_jid: AnyJid;
   sender: string;
   sender_name: string;
   content: string;
@@ -85,7 +87,7 @@ export interface SendMessageOpts {
 export interface ScheduledTask {
   id: string;
   group_folder: string;
-  chat_jid: string;
+  chat_jid: ChannelJid;
   prompt: string;
   schedule_type: 'cron' | 'interval' | 'once';
   schedule_value: string;
@@ -111,20 +113,20 @@ export interface TaskRunLog {
 export interface Channel {
   name: string;
   connect(): Promise<void>;
-  sendMessage(jid: string, text: string, opts?: SendMessageOpts): Promise<void>;
+  sendMessage(jid: AnyJid, text: string, opts?: SendMessageOpts): Promise<void>;
   isConnected(): boolean;
-  ownsJid(jid: string): boolean;
+  ownsJid(jid: AnyJid): boolean;
   disconnect(): Promise<void>;
   // Optional: typing indicator. Channels that support it implement it.
-  setTyping?(jid: string, isTyping: boolean, botToken?: string): Promise<void>;
+  setTyping?(jid: AnyJid, isTyping: boolean, botToken?: string): Promise<void>;
   sendVerboseMessage?(
-    jid: string,
+    jid: AnyJid,
     text: string,
     type: 'verbose' | 'thinking',
     opts?: SendMessageOpts,
   ): Promise<void>;
   sendBlocks?(
-    jid: string,
+    jid: AnyJid,
     blocks: unknown[],
     fallbackText: string,
     opts?: SendMessageOpts,
@@ -132,12 +134,12 @@ export interface Channel {
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
   // Optional: add emoji reaction to a message
-  addReaction?(jid: string, messageTs: string, emoji: string): Promise<void>;
+  addReaction?(jid: AnyJid, messageTs: string, emoji: string): Promise<void>;
   // Optional: remove emoji reaction from a message
-  removeReaction?(jid: string, messageTs: string, emoji: string): Promise<void>;
+  removeReaction?(jid: AnyJid, messageTs: string, emoji: string): Promise<void>;
   // Optional: post rewind button for *rewind command
   postRewindButton?(
-    jid: string,
+    jid: AnyJid,
     userId: string,
     threadTs: string,
     groupFolder: string,
@@ -151,13 +153,13 @@ export interface Channel {
 }
 
 // Callback type that channels use to deliver inbound messages
-export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;
+export type OnInboundMessage = (chatJid: AnyJid, message: NewMessage) => void;
 
 // Callback for chat metadata discovery.
 // name is optional — channels that deliver names inline (Telegram) pass it here;
 // channels that sync names separately (via syncGroups) omit it.
 export type OnChatMetadata = (
-  chatJid: string,
+  chatJid: ChannelJid,
   timestamp: string,
   name?: string,
   channel?: string,
@@ -170,7 +172,7 @@ export interface ContainerInput {
   prompt: string;
   sessionId?: string;
   groupFolder: string;
-  chatJid: string;
+  chatJid: AnyJid;
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;

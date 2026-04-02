@@ -6,6 +6,7 @@ import {
 } from './db.js';
 import { readEnvFile } from './env.js';
 import { GroupQueue } from './group-queue.js';
+import type { AnyJid, ChannelJid } from './jid.js';
 import {
   buildThreadJid,
   getParentJid,
@@ -48,13 +49,13 @@ export class AppState {
   filebrowserBaseUrl?: string;
 
   // Late-bound group resolver (set after GroupManager is created)
-  private resolveGroupFn?: (jid: string) => RegisteredGroup | null;
+  private resolveGroupFn?: (jid: AnyJid) => RegisteredGroup | null;
 
   constructor() {
     this.queue = new GroupQueue();
   }
 
-  setGroupResolver(fn: (jid: string) => RegisteredGroup | null): void {
+  setGroupResolver(fn: (jid: AnyJid) => RegisteredGroup | null): void {
     this.resolveGroupFn = fn;
   }
 
@@ -63,7 +64,7 @@ export class AppState {
    * Thread messages: synthetic JID (matches how messages are stored in DB).
    * Root messages: base JID as-is.
    */
-  getCursorKey(baseJid: string, threadTs?: string | null): string {
+  getCursorKey(baseJid: ChannelJid, threadTs?: string | null): string {
     return threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
   }
 
@@ -78,7 +79,7 @@ export class AppState {
    *   Channel-level:   {channelJid}
    */
   toggleKey(
-    jid: string,
+    jid: AnyJid,
     threadTs?: string,
     groupFolder?: string,
   ): string {
@@ -90,7 +91,7 @@ export class AppState {
   }
 
   getToggleState(
-    jid: string,
+    jid: AnyJid,
     threadTs?: string,
     groupFolder?: string,
   ): { verbose: boolean; thinking: boolean; planMode: boolean } {

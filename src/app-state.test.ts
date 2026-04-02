@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AppState } from './app-state.js';
+import { channelJid, threadJid } from './jid.js';
 import type { RegisteredGroup } from './types.js';
 
 vi.mock('./db.js', () => ({
@@ -43,15 +44,15 @@ describe('AppState', () => {
 
   describe('getCursorKey', () => {
     it('returns baseJid when no threadTs', () => {
-      expect(state.getCursorKey('slack:C123')).toBe('slack:C123');
+      expect(state.getCursorKey(channelJid('slack:C123'))).toBe('slack:C123');
     });
 
     it('returns baseJid when threadTs is null', () => {
-      expect(state.getCursorKey('slack:C123', null)).toBe('slack:C123');
+      expect(state.getCursorKey(channelJid('slack:C123'), null)).toBe('slack:C123');
     });
 
     it('returns synthetic thread JID when threadTs is provided', () => {
-      expect(state.getCursorKey('slack:C123', '1711100000.000')).toBe(
+      expect(state.getCursorKey(channelJid('slack:C123'), '1711100000.000')).toBe(
         'slack:C123:t:1711100000.000',
       );
     });
@@ -59,7 +60,7 @@ describe('AppState', () => {
 
   describe('getToggleState', () => {
     it('returns defaults when no resolver set', () => {
-      const result = state.getToggleState('slack:C123');
+      const result = state.getToggleState(channelJid('slack:C123'));
       expect(result).toEqual({
         verbose: false,
         thinking: false,
@@ -76,7 +77,7 @@ describe('AppState', () => {
         verboseDefault: true,
         thinkingDefault: false,
       }));
-      const result = state.getToggleState('slack:C123');
+      const result = state.getToggleState(channelJid('slack:C123'));
       expect(result).toEqual({
         verbose: true,
         thinking: false,
@@ -86,13 +87,13 @@ describe('AppState', () => {
 
     it('returns thread override when set via threadToggles (synthetic JID)', () => {
       // Use toggleKey() to store — matches how production code sets toggles
-      const key = state.toggleKey('slack:C123:t:111.000', '111.000');
+      const key = state.toggleKey(threadJid('slack:C123:t:111.000'), '111.000');
       state.threadToggles.set(key, {
         verbose: true,
         thinking: true,
         planMode: false,
       });
-      const result = state.getToggleState('slack:C123:t:111.000');
+      const result = state.getToggleState(threadJid('slack:C123:t:111.000'));
       expect(result).toEqual({
         verbose: true,
         thinking: true,
@@ -106,7 +107,7 @@ describe('AppState', () => {
         thinking: true,
         planMode: false,
       });
-      const result = state.getToggleState('slack:C123', '111.000');
+      const result = state.getToggleState(channelJid('slack:C123'), '111.000');
       expect(result).toEqual({
         verbose: false,
         thinking: true,
@@ -120,7 +121,7 @@ describe('AppState', () => {
         thinking: false,
         planMode: true,
       });
-      const result = state.getToggleState('slack:C123', '111.000', 'strategy');
+      const result = state.getToggleState(channelJid('slack:C123'), '111.000', 'strategy');
       expect(result.planMode).toBe(true);
     });
   });

@@ -7,6 +7,7 @@ import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
+import { channelJid } from './jid.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -226,7 +227,7 @@ export async function processTaskIpc(
         data.targetJid
       ) {
         // Resolve the target group from JID
-        const targetJid = data.targetJid as string;
+        const targetJid = channelJid(data.targetJid as string);
         const targetGroupEntry = registeredGroups[targetJid];
 
         if (!targetGroupEntry) {

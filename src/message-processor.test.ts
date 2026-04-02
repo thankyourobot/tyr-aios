@@ -3,6 +3,7 @@ import { MessageProcessor } from './message-processor.js';
 import type { AppState } from './app-state.js';
 import type { GroupManager } from './group-manager.js';
 import type { AgentExecutor } from './agent-executor.js';
+import { channelJid, threadJid, type AnyJid, type ChannelJid } from './jid.js';
 import { RegisteredGroup, NewMessage } from './types.js';
 
 // Track which JID getMessagesSince is called with
@@ -147,15 +148,15 @@ describe('MessageProcessor', () => {
         requiresTrigger: false,
       });
       state.groupsByFolder.set('growth', {
-        jid: 'slack:C0AN59XN8B1',
+        jid: channelJid('slack:C0AN59XN8B1'),
         group: growth,
       });
-      state.groupsByJid.set('slack:C0AN59XN8B1', [growth]);
+      state.groupsByJid.set(channelJid('slack:C0AN59XN8B1'), [growth]);
       state.registeredGroups['slack:C0AN59XN8B1'] = growth;
 
       // Call with plain channel JID + threadTs + groupFolder (as queue now dispatches)
       await processor.processGroupMessages(
-        'slack:C0AN59XN8B1',
+        channelJid('slack:C0AN59XN8B1'),
         '1234567.890',
         'growth',
       );
@@ -171,7 +172,7 @@ describe('MessageProcessor', () => {
       });
       state.registeredGroups['slack:C0AL6C8U21L'] = strategy;
 
-      await processor.processGroupMessages('slack:C0AL6C8U21L');
+      await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
 
       expect(capturedFetchJid).toBe('slack:C0AL6C8U21L');
     });
@@ -183,7 +184,7 @@ describe('MessageProcessor', () => {
       });
       state.registeredGroups['slack:C0AL6C8U21L'] = strategy;
 
-      await processor.processGroupMessages('slack:C0AL6C8U21L', '9999999.000');
+      await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'), '9999999.000');
 
       expect(capturedFetchJid).toBe('slack:C0AL6C8U21L:t:9999999.000');
     });
@@ -191,7 +192,7 @@ describe('MessageProcessor', () => {
 
   describe('processGroupMessages — dispatch flow', () => {
     it('returns true (no container) when no messages found', async () => {
-      const result = await processor.processGroupMessages('slack:C0AL6C8U21L');
+      const result = await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
       expect(result).toBe(true);
     });
 
@@ -216,7 +217,7 @@ describe('MessageProcessor', () => {
         rewindSession: vi.fn(),
       } as any);
 
-      const result = await processor.processGroupMessages('slack:C0AL6C8U21L');
+      const result = await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
 
       expect(result).toBe(true);
       expect(mockRunAgent).toHaveBeenCalledWith(
@@ -255,7 +256,7 @@ describe('MessageProcessor', () => {
       const saveFn = vi.fn();
       processor.setSaveFn(saveFn);
 
-      const result = await processor.processGroupMessages('slack:C0AL6C8U21L');
+      const result = await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
 
       expect(result).toBe(false);
       // Cursor should be rolled back
@@ -267,7 +268,7 @@ describe('MessageProcessor', () => {
     it('pipes message via IPC for single-group thread', async () => {
       const msg: NewMessage = {
         id: 'msg-3',
-        chat_jid: 'slack:C123:t:111.000',
+        chat_jid: threadJid('slack:C123:t:111.000'),
         sender: 'U456',
         sender_name: 'User',
         content: 'hello',
@@ -276,7 +277,7 @@ describe('MessageProcessor', () => {
       };
       (state.queue.sendMessage as any).mockReturnValue(true);
 
-      await processor.dispatchMessage('slack:C123:t:111.000', msg);
+      await processor.dispatchMessage(threadJid('slack:C123:t:111.000'), msg);
 
       expect(state.queue.sendMessage).toHaveBeenCalledWith(
         'slack:C123',
@@ -289,7 +290,7 @@ describe('MessageProcessor', () => {
     it('enqueues when IPC pipe not available', async () => {
       const msg: NewMessage = {
         id: 'msg-4',
-        chat_jid: 'slack:C123:t:111.000',
+        chat_jid: threadJid('slack:C123:t:111.000'),
         sender: 'U456',
         sender_name: 'User',
         content: 'hello',
@@ -298,7 +299,7 @@ describe('MessageProcessor', () => {
       };
       (state.queue.sendMessage as any).mockReturnValue(false);
 
-      await processor.dispatchMessage('slack:C123:t:111.000', msg);
+      await processor.dispatchMessage(threadJid('slack:C123:t:111.000'), msg);
 
       expect(state.queue.enqueueMessageCheck).toHaveBeenCalledWith(
         'slack:C123',
@@ -312,9 +313,9 @@ describe('MessageProcessor', () => {
     it('does nothing for single-group channels', () => {
       vi.mocked(groupManager.isMultiGroupChannel as any).mockReturnValue(false);
 
-      processor.dispatchBotMessage('slack:C123', {
+      processor.dispatchBotMessage(channelJid('slack:C123'), {
         id: 'bot-1',
-        chat_jid: 'slack:C123',
+        chat_jid: channelJid('slack:C123') as AnyJid,
         sender: 'UBOT',
         sender_name: 'Bot',
         content: '<@U999> hello',
@@ -332,9 +333,9 @@ describe('MessageProcessor', () => {
         makeGroup('growth'),
       ]);
 
-      processor.dispatchBotMessage('slack:C123', {
+      processor.dispatchBotMessage(channelJid('slack:C123'), {
         id: 'bot-2',
-        chat_jid: 'slack:C123',
+        chat_jid: channelJid('slack:C123') as AnyJid,
         sender: 'UBOT',
         sender_name: 'Bot',
         content: '<@UGROWTH> check this',

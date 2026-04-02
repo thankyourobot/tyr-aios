@@ -1,4 +1,5 @@
 import { getDb } from '../db.js';
+import type { AnyJid, ChannelJid } from '../jid.js';
 import { buildThreadJid } from '../jid.js';
 import { NewMessage } from '../types.js';
 
@@ -15,7 +16,7 @@ export interface ChatInfo {
  * Used for all chats to enable group discovery without storing sensitive content.
  */
 export function storeChatMetadata(
-  chatJid: string,
+  chatJid: ChannelJid,
   timestamp: string,
   name?: string,
   channel?: string,
@@ -59,7 +60,7 @@ export function storeChatMetadata(
  * New chats get the current time as their initial timestamp.
  * Used during group metadata sync.
  */
-export function updateChatName(chatJid: string, name: string): void {
+export function updateChatName(chatJid: ChannelJid, name: string): void {
   getDb()
     .prepare(
       `
@@ -160,15 +161,17 @@ export function getNewMessages(
 
   const rows = getDb()
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as (NewMessage & {
-    files?: string;
-  })[];
+    .all(lastTimestamp, ...jids, `${botPrefix}:%`, limit) as (Omit<
+    NewMessage,
+    'chat_jid'
+  > & { chat_jid: string; files?: string })[];
 
   let newTimestamp = lastTimestamp;
-  const messages = rows.map((row) => {
+  const messages: NewMessage[] = rows.map((row) => {
     if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
     return {
       ...row,
+      chat_jid: row.chat_jid as AnyJid,
       files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
     };
   });
@@ -177,23 +180,26 @@ export function getNewMessages(
 }
 
 export function getMessageById(
-  chatJid: string,
+  chatJid: ChannelJid,
   messageId: string,
 ): NewMessage | undefined {
   const row = getDb()
     .prepare(
       'SELECT id, chat_jid, sender, sender_name, content, timestamp, is_from_me, is_bot_message, thread_ts AS threadTs, files FROM messages WHERE chat_jid = ? AND id = ?',
     )
-    .get(chatJid, messageId) as (NewMessage & { files?: string }) | undefined;
+    .get(chatJid, messageId) as
+    | (Omit<NewMessage, 'chat_jid'> & { chat_jid: string; files?: string })
+    | undefined;
   if (!row) return undefined;
   return {
     ...row,
+    chat_jid: row.chat_jid as AnyJid,
     files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
   };
 }
 
 export function getMessagesSince(
-  chatJid: string,
+  chatJid: AnyJid,
   sinceTimestamp: string,
   botPrefix: string,
   limit: number = 200,
@@ -211,17 +217,19 @@ export function getMessagesSince(
   `;
   const rows = getDb()
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as (NewMessage & {
-    files?: string;
-  })[];
+    .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as (Omit<
+    NewMessage,
+    'chat_jid'
+  > & { chat_jid: string; files?: string })[];
   return rows.map((row) => ({
     ...row,
+    chat_jid: row.chat_jid as AnyJid,
     files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
   }));
 }
 
 export function getThreadMessages(
-  chatJid: string,
+  chatJid: ChannelJid,
   threadTs: string,
 ): Array<{
   id: string;
@@ -253,7 +261,7 @@ export function getThreadMessages(
  * Used when an agent needs to see other agents' messages in the conversation.
  */
 export function getMessagesSinceIncludingBots(
-  chatJid: string,
+  chatJid: AnyJid,
   sinceTimestamp: string,
   limit: number = 200,
 ): NewMessage[] {
@@ -270,9 +278,13 @@ export function getMessagesSinceIncludingBots(
   `;
   const rows = getDb()
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, limit) as (NewMessage & { files?: string })[];
+    .all(chatJid, sinceTimestamp, limit) as (Omit<NewMessage, 'chat_jid'> & {
+    chat_jid: string;
+    files?: string;
+  })[];
   return rows.map((row) => ({
     ...row,
+    chat_jid: row.chat_jid as AnyJid,
     files: typeof row.files === 'string' ? JSON.parse(row.files) : undefined,
   }));
 }

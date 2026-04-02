@@ -87,6 +87,7 @@ vi.mock('child_process', async () => {
 });
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { channelJid } from './jid.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -99,7 +100,7 @@ const testGroup: RegisteredGroup = {
 const testInput = {
   prompt: 'Hello',
   groupFolder: 'test-group',
-  chatJid: 'test@g.us',
+  chatJid: channelJid('test@g.us'),
   isMain: false,
 };
 

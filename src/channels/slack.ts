@@ -12,7 +12,7 @@ import {
   getThreadMessages,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
-import { buildThreadJid, parseSlackJid } from '../jid.js';
+import { type AnyJid, channelJid, buildThreadJid, parseSlackJid } from '../jid.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -75,7 +75,7 @@ export class SlackChannel implements Channel {
   private botId: string | undefined; // bot_id from auth.test (for distinguishing our bot from other agent bots)
   private connected = false;
   private outgoingQueue: Array<{
-    jid: string;
+    jid: AnyJid;
     text: string;
     opts?: SendMessageOpts;
   }> = [];
@@ -137,7 +137,7 @@ export class SlackChannel implements Channel {
         }
 
         // Build options from USER messages — each represents "fork before I sent this"
-        const jid = `slack:${channelId}`;
+        const jid = channelJid(`slack:${channelId}`);
         const threadMsgs = getThreadMessages(jid, threadTs);
         const userMsgs = threadMsgs.filter((m) => !m.is_bot_message);
 
@@ -232,7 +232,7 @@ export class SlackChannel implements Channel {
         }
 
         // Find the user message AFTER the fork point (the message the user chose to fork before)
-        const jid = `slack:${channelId}`;
+        const jid = channelJid(`slack:${channelId}`);
         const threadMsgs = getThreadMessages(jid, threadTs);
         let msgPreview = '';
         for (const m of threadMsgs) {
@@ -396,16 +396,16 @@ export class SlackChannel implements Channel {
       // Capture thread_ts for thread reply support
       const threadTs = (event as { thread_ts?: string }).thread_ts || undefined;
 
-      const channelJid = `slack:${msg.channel}`;
-      const targetJid = threadTs
-        ? buildThreadJid(channelJid, threadTs)
-        : channelJid;
+      const cJid = channelJid(`slack:${msg.channel}`);
+      const targetJid: AnyJid = threadTs
+        ? buildThreadJid(cJid, threadTs)
+        : cJid;
       const timestamp = new Date(parseFloat(msg.ts) * 1000).toISOString();
       const isGroup = msg.channel_type !== 'im';
 
       // Always report metadata for group discovery (use channel JID, not synthetic)
       this.opts.onChatMetadata(
-        channelJid,
+        cJid,
         timestamp,
         undefined,
         'slack',
@@ -416,7 +416,7 @@ export class SlackChannel implements Channel {
       // handle it via main group fallback. Don't reroute — keep original JID
       // so replies go back to the correct channel (critical for DMs).
       const groups = this.opts.registeredGroups();
-      if (!groups[channelJid]) {
+      if (!groups[cJid]) {
         const hasMain = Object.values(groups).some((g) => g.isMain);
         if (!hasMain) return; // No main group configured, drop message
       }
@@ -537,7 +537,7 @@ export class SlackChannel implements Channel {
   }
 
   async sendMessage(
-    jid: string,
+    jid: AnyJid,
     text: string,
     opts?: SendMessageOpts,
   ): Promise<void> {
@@ -596,7 +596,7 @@ export class SlackChannel implements Channel {
   }
 
   async sendVerboseMessage(
-    jid: string,
+    jid: AnyJid,
     text: string,
     type: 'verbose' | 'thinking',
     opts?: SendMessageOpts,
@@ -633,7 +633,7 @@ export class SlackChannel implements Channel {
   }
 
   async sendBlocks(
-    jid: string,
+    jid: AnyJid,
     blocks: unknown[],
     fallbackText: string,
     opts?: SendMessageOpts,
@@ -662,7 +662,7 @@ export class SlackChannel implements Channel {
     return this.connected;
   }
 
-  ownsJid(jid: string): boolean {
+  ownsJid(jid: AnyJid): boolean {
     return jid.startsWith('slack:');
   }
 
@@ -672,7 +672,7 @@ export class SlackChannel implements Channel {
   }
 
   async postRewindButton(
-    jid: string,
+    jid: AnyJid,
     userId: string,
     threadTs: string,
     groupFolder: string,
@@ -723,7 +723,7 @@ export class SlackChannel implements Channel {
   }
 
   async setTyping(
-    jid: string,
+    jid: AnyJid,
     isTyping: boolean,
     botToken?: string,
   ): Promise<void> {
@@ -752,7 +752,7 @@ export class SlackChannel implements Channel {
   }
 
   async addReaction(
-    jid: string,
+    jid: AnyJid,
     messageTs: string,
     emoji: string,
   ): Promise<void> {
@@ -770,7 +770,7 @@ export class SlackChannel implements Channel {
   }
 
   async removeReaction(
-    jid: string,
+    jid: AnyJid,
     messageTs: string,
     emoji: string,
   ): Promise<void> {
@@ -808,7 +808,7 @@ export class SlackChannel implements Channel {
 
         for (const ch of result.channels || []) {
           if (ch.id && ch.name && ch.is_member) {
-            updateChatName(`slack:${ch.id}`, ch.name);
+            updateChatName(channelJid(`slack:${ch.id}`), ch.name);
             count++;
           }
         }
