@@ -20,6 +20,9 @@ vi.mock('./db.js', () => ({
   getMessageById: vi.fn(),
   addThreadMember: vi.fn(),
   storeResponseUuid: vi.fn(),
+  getPendingFork: vi.fn(() => null),
+  deletePendingFork: vi.fn(),
+  getThreadMembers: vi.fn(() => []),
 }));
 
 vi.mock('./config.js', () => ({
@@ -222,6 +225,7 @@ describe('MessageProcessor', () => {
         expect.any(String),
         expect.any(Function),
         expect.objectContaining({ verbose: false }),
+        undefined,
         undefined,
       );
     });

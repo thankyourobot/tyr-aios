@@ -111,6 +111,67 @@ export function getResponseUuid(
   return row?.sdk_uuid;
 }
 
+// --- Pending forks (lazy rewind) ---
+
+export function setPendingFork(
+  groupFolder: string,
+  threadTs: string,
+  sourceSessionId: string,
+  resumeAt: string,
+): void {
+  getDb()
+    .prepare(
+      `CREATE TABLE IF NOT EXISTS pending_forks (
+        group_folder TEXT NOT NULL,
+        thread_ts TEXT NOT NULL,
+        source_session_id TEXT NOT NULL,
+        resume_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (group_folder, thread_ts)
+      )`,
+    )
+    .run();
+  getDb()
+    .prepare(
+      'INSERT OR REPLACE INTO pending_forks (group_folder, thread_ts, source_session_id, resume_at, created_at) VALUES (?, ?, ?, ?, ?)',
+    )
+    .run(groupFolder, threadTs, sourceSessionId, resumeAt, new Date().toISOString());
+}
+
+export function getPendingFork(
+  groupFolder: string,
+  threadTs: string,
+): { sourceSessionId: string; resumeAt: string } | null {
+  try {
+    const row = getDb()
+      .prepare(
+        'SELECT source_session_id, resume_at FROM pending_forks WHERE group_folder = ? AND thread_ts = ?',
+      )
+      .get(groupFolder, threadTs) as
+      | { source_session_id: string; resume_at: string }
+      | undefined;
+    if (!row) return null;
+    return { sourceSessionId: row.source_session_id, resumeAt: row.resume_at };
+  } catch {
+    return null; // Table doesn't exist yet
+  }
+}
+
+export function deletePendingFork(
+  groupFolder: string,
+  threadTs: string,
+): void {
+  try {
+    getDb()
+      .prepare(
+        'DELETE FROM pending_forks WHERE group_folder = ? AND thread_ts = ?',
+      )
+      .run(groupFolder, threadTs);
+  } catch {
+    // Table doesn't exist yet — nothing to delete
+  }
+}
+
 export function getThreadResponseUuids(
   groupFolder: string,
   threadTs: string,

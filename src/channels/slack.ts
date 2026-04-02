@@ -251,10 +251,6 @@ export class SlackChannel implements Channel {
         const msgLink = `https://thankyourobot.slack.com/archives/${channelId}/p${selectedSlackTs.replace('.', '')}?thread_ts=${threadTs}&cid=${channelId}`;
         const agentMsg = threadMsgs.find((m) => m.id === selectedSlackTs);
         const agentResponseText = agentMsg?.content || '';
-        logger.info(
-          { agentResponseTextLen: agentResponseText.length, selectedSlackTs },
-          'Rewind: fetched agent response for context',
-        );
 
         // Post a new top-level message to create the rewind thread
         // Use groupFolder (from modal metadata) to find the correct agent

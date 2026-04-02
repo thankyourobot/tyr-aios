@@ -27,6 +27,9 @@ import {
   storeMessage,
   getThreadMembers,
   getThreadResponseUuids,
+  getThreadSession,
+  setPendingFork,
+  addThreadMember,
   cleanupOldThreadData,
 } from './db.js';
 import { AgentExecutor } from './agent-executor.js';
@@ -729,11 +732,10 @@ async function main(): Promise<void> {
                 ) {
                   // Single-group: IPC pipe with thread-aware routing
                   const pipeFiles = msg.files || [];
-                  const pipeFileAnnotation =
-                    await agentExecutor.downloadFiles(
-                      pipeFiles,
-                      resolveGroup(channelJid)?.folder || '',
-                    );
+                  const pipeFileAnnotation = await agentExecutor.downloadFiles(
+                    pipeFiles,
+                    resolveGroup(channelJid)?.folder || '',
+                  );
                   const formatted =
                     formatMessages([msg], TIMEZONE) + pipeFileAnnotation;
                   const { threadTs: evtThreadTs } = parseSlackJid(chatJid);
@@ -829,7 +831,28 @@ async function main(): Promise<void> {
       sourceThreadTs: string;
       newThreadTs: string;
       sdkUuid: string;
-    }) => agentExecutor.rewindSession(p),
+    }) => {
+      // Lazy fork: store fork params for when the user sends their first message.
+      // No container is spawned — the agent doesn't know a fork happened.
+      const sourceSessionId =
+        getThreadSession(p.groupFolder, p.sourceThreadTs) ||
+        state.sessions[p.groupFolder];
+      if (!sourceSessionId) {
+        logger.warn(
+          { groupFolder: p.groupFolder, sourceThreadTs: p.sourceThreadTs },
+          'No source session found for rewind, skipping fork setup',
+        );
+        return;
+      }
+      setPendingFork(p.groupFolder, p.newThreadTs, sourceSessionId, p.sdkUuid);
+      // Register thread membership so multi-agent routing works for follow-ups
+      const channelJid = getParentJid(p.chatJid) || p.chatJid;
+      addThreadMember(channelJid, p.newThreadTs, p.groupFolder);
+      logger.info(
+        { groupFolder: p.groupFolder, newThreadTs: p.newThreadTs },
+        'Rewind: stored pending fork and registered thread member',
+      );
+    },
     onPlanApprove: async (params: {
       chatJid: string;
       threadTs: string;

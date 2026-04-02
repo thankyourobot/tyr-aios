@@ -15,6 +15,8 @@ import {
   getMessagesSinceIncludingBots,
   getThreadMembers,
   storeResponseUuid,
+  getPendingFork,
+  deletePendingFork,
 } from './db.js';
 import type { GroupManager } from './group-manager.js';
 import {
@@ -76,6 +78,10 @@ export class MessageProcessor {
     }
     if (!group) return true;
 
+    // Check for pending fork (lazy rewind — fork happens on first real user message)
+    const pendingFork =
+      threadTs ? getPendingFork(group.folder, threadTs) : null;
+
     // Remove any "busy" reactions now that we're processing this group's messages
     const busyKey = `${chatJid}::${threadTs || '__root__'}`;
     const busyReactions = this.state.pendingBusyReactions.get(busyKey);
@@ -109,10 +115,12 @@ export class MessageProcessor {
       this.state.lastAgentTimestamp[cursorKey] ||
       this.state.lastAgentTimestamp[channelJid] ||
       '';
-    // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation
-    const missedMessages = groupFolder
-      ? getMessagesSinceIncludingBots(fetchJid, sinceTimestamp)
-      : getMessagesSince(fetchJid, sinceTimestamp, ASSISTANT_NAME);
+    // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation.
+    // Exception: pending fork — exclude bot messages so the agent doesn't see "Rewound from source thread".
+    const missedMessages =
+      groupFolder && !pendingFork
+        ? getMessagesSinceIncludingBots(fetchJid, sinceTimestamp)
+        : getMessagesSince(fetchJid, sinceTimestamp, ASSISTANT_NAME);
 
     if (missedMessages.length === 0) return true;
 
@@ -441,6 +449,12 @@ ${formatMessages([parentMsg], TIMEZONE)}
       },
       toggleState,
       lastThreadTs !== lastMsg.id ? lastThreadTs : undefined,
+      pendingFork
+        ? {
+            sourceSessionId: pendingFork.sourceSessionId,
+            resumeSessionAt: pendingFork.resumeAt,
+          }
+        : undefined,
     );
 
     if (isMentioned)
@@ -465,6 +479,12 @@ ${formatMessages([parentMsg], TIMEZONE)}
         'Agent error, rolled back message cursor for retry',
       );
       return false;
+    }
+
+    // Clean up pending fork after successful run — prevents bot message
+    // exclusion from persisting on subsequent messages in this thread.
+    if (pendingFork && threadTs) {
+      deletePendingFork(group.folder, threadTs);
     }
 
     return true;
