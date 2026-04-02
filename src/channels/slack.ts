@@ -257,6 +257,15 @@ export class SlackChannel implements Channel {
             inclusive: true,
             limit: 5,
           });
+          logger.info(
+            {
+              selectedSlackTs,
+              messageCount: replies.messages?.length,
+              timestamps: replies.messages?.map((m) => m.ts),
+              hasText: replies.messages?.map((m) => !!m.text),
+            },
+            'Rewind: conversations.replies raw response',
+          );
           const agentMsg = replies.messages?.find(
             (m) => m.ts === selectedSlackTs,
           );
