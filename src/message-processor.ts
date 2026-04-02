@@ -474,15 +474,20 @@ ${formatMessages([parentMsg], TIMEZONE)}
    * Dispatch a human message to target groups in a multi-group channel.
    * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
-  dispatchMessage(chatJid: string, msg: NewMessage): void {
+  async dispatchMessage(chatJid: string, msg: NewMessage): Promise<void> {
     const channelJid = getParentJid(chatJid) || chatJid;
     const { threadTs } = parseSlackJid(chatJid);
 
     if (!this.groupManager.isMultiGroupChannel(channelJid)) {
       // Single-group: route using base channel JID + threadTs for consistent queue keying
       if (isSyntheticThreadJid(chatJid)) {
-        const formatted = formatMessages([msg], TIMEZONE);
         const singleGroup = this.groupManager.resolveGroup(channelJid);
+        const pipeFiles = msg.files || [];
+        const fileAnnotation = await this.agentExecutor.downloadFiles(
+          pipeFiles,
+          singleGroup?.folder || '',
+        );
+        const formatted = formatMessages([msg], TIMEZONE) + fileAnnotation;
         if (
           !this.state.queue.sendMessage(
             channelJid,
@@ -541,7 +546,12 @@ ${formatMessages([parentMsg], TIMEZONE)}
     }
     for (const group of targets) {
       const effectiveTs = threadTs || msg.threadTs;
-      const formatted = formatMessages([msg], TIMEZONE, true);
+      const pipeFiles = msg.files || [];
+      const fileAnnotation = await this.agentExecutor.downloadFiles(
+        pipeFiles,
+        group.folder,
+      );
+      const formatted = formatMessages([msg], TIMEZONE, true) + fileAnnotation;
       if (
         !this.state.queue.sendMessage(
           channelJid,

@@ -260,7 +260,7 @@ describe('MessageProcessor', () => {
   });
 
   describe('dispatchMessage', () => {
-    it('pipes message via IPC for single-group thread', () => {
+    it('pipes message via IPC for single-group thread', async () => {
       const msg: NewMessage = {
         id: 'msg-3',
         chat_jid: 'slack:C123:t:111.000',
@@ -272,7 +272,7 @@ describe('MessageProcessor', () => {
       };
       (state.queue.sendMessage as any).mockReturnValue(true);
 
-      processor.dispatchMessage('slack:C123:t:111.000', msg);
+      await processor.dispatchMessage('slack:C123:t:111.000', msg);
 
       expect(state.queue.sendMessage).toHaveBeenCalledWith(
         'slack:C123',
@@ -282,7 +282,7 @@ describe('MessageProcessor', () => {
       );
     });
 
-    it('enqueues when IPC pipe not available', () => {
+    it('enqueues when IPC pipe not available', async () => {
       const msg: NewMessage = {
         id: 'msg-4',
         chat_jid: 'slack:C123:t:111.000',
@@ -294,7 +294,7 @@ describe('MessageProcessor', () => {
       };
       (state.queue.sendMessage as any).mockReturnValue(false);
 
-      processor.dispatchMessage('slack:C123:t:111.000', msg);
+      await processor.dispatchMessage('slack:C123:t:111.000', msg);
 
       expect(state.queue.enqueueMessageCheck).toHaveBeenCalledWith(
         'slack:C123',

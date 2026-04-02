@@ -722,7 +722,7 @@ async function main(): Promise<void> {
         const channel = findChannel(state.channels, chatJid);
         if (channel) {
           handleCommand(chatJid, msg, channel)
-            .then((consumed) => {
+            .then(async (consumed) => {
               if (!consumed) {
                 storeMessage(msg);
                 // Multi-group dispatch for human messages
@@ -739,7 +739,14 @@ async function main(): Promise<void> {
                   isSyntheticThreadJid(chatJid)
                 ) {
                   // Single-group: IPC pipe with thread-aware routing
-                  const formatted = formatMessages([msg], TIMEZONE);
+                  const pipeFiles = msg.files || [];
+                  const pipeFileAnnotation =
+                    await agentExecutor.downloadFiles(
+                      pipeFiles,
+                      resolveGroup(channelJid)?.folder || '',
+                    );
+                  const formatted =
+                    formatMessages([msg], TIMEZONE) + pipeFileAnnotation;
                   const { threadTs: evtThreadTs } = parseSlackJid(chatJid);
                   const pipeGroup = resolveGroup(channelJid);
                   if (
