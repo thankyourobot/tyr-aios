@@ -255,7 +255,7 @@ export class SlackChannel implements Channel {
             latest: String(parseFloat(selectedSlackTs) + 0.001),
             oldest: String(parseFloat(selectedSlackTs) - 0.001),
             inclusive: true,
-            limit: 1,
+            limit: 5,
           });
           const agentMsg = replies.messages?.find(
             (m) => m.ts === selectedSlackTs,
@@ -269,6 +269,10 @@ export class SlackChannel implements Channel {
             'Failed to fetch agent response for rewind context',
           );
         }
+        logger.info(
+          { agentResponseTextLen: agentResponseText.length, selectedSlackTs },
+          'Rewind: fetched agent response for context',
+        );
 
         // Post a new top-level message to create the rewind thread
         // Use groupFolder (from modal metadata) to find the correct agent
@@ -308,12 +312,24 @@ export class SlackChannel implements Channel {
             agentResponseText.length > 500
               ? agentResponseText.slice(0, 500) + '...'
               : agentResponseText;
-          await rewindClient.chat.postMessage({
-            channel: channelId,
-            thread_ts: newThreadTs,
-            text: `<${msgLink}|Last response before fork>:\n\n${contextText}`,
-            ...displayOverrides,
-          });
+          try {
+            await rewindClient.chat.postMessage({
+              channel: channelId,
+              thread_ts: newThreadTs,
+              text: `<${msgLink}|Last response before fork>:\n\n${contextText}`,
+              ...displayOverrides,
+            });
+          } catch (err) {
+            logger.warn(
+              { err, channelId, newThreadTs },
+              'Rewind: failed to post context reply',
+            );
+          }
+        } else {
+          logger.warn(
+            { selectedSlackTs, channelId },
+            'Rewind: no agent response text found, skipping context reply',
+          );
         }
 
         // Trigger the rewind via callback
