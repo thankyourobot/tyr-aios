@@ -501,6 +501,13 @@ ${formatMessages([parentMsg], TIMEZONE)}
             this.state.getCursorKey(channelJid, threadTs)
           ] = msg.timestamp;
           this.saveFn();
+          if (threadTs) {
+            const typingJid = buildThreadJid(channelJid, threadTs);
+            const channel = findChannel(this.state.channels, channelJid);
+            channel
+              ?.setTyping?.(typingJid, true, singleGroup?.botToken)
+              ?.catch(() => {});
+          }
         }
       }
       return;
@@ -553,6 +560,13 @@ ${formatMessages([parentMsg], TIMEZONE)}
           this.state.getCursorKey(channelJid, effectiveTs)
         ] = msg.timestamp;
         this.saveFn();
+        if (effectiveTs) {
+          const typingJid = buildThreadJid(channelJid, effectiveTs);
+          const channel = findChannel(this.state.channels, channelJid);
+          channel
+            ?.setTyping?.(typingJid, true, group.botToken)
+            ?.catch(() => {});
+        }
       }
     }
   }

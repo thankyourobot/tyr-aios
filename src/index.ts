@@ -646,7 +646,11 @@ function recoverPendingMessages(): void {
             mainGroup.group.folder,
           );
         } else {
-          state.queue.enqueueMessageCheck(chatJid, undefined, mainGroup.group.folder);
+          state.queue.enqueueMessageCheck(
+            chatJid,
+            undefined,
+            mainGroup.group.folder,
+          );
         }
       }
     }
@@ -756,6 +760,12 @@ async function main(): Promise<void> {
                       state.getCursorKey(channelJid, evtThreadTs)
                     ] = msg.timestamp;
                     saveState();
+                    if (evtThreadTs) {
+                      const typingJid = buildThreadJid(channelJid, evtThreadTs);
+                      channel
+                        .setTyping?.(typingJid, true, pipeGroup?.botToken)
+                        ?.catch(() => {});
+                    }
                   }
                 }
               }
@@ -854,7 +864,11 @@ async function main(): Promise<void> {
         timestamp: new Date().toISOString(),
         threadTs: params.threadTs,
       });
-      state.queue.enqueueMessageCheck(baseJid, params.threadTs, params.groupFolder);
+      state.queue.enqueueMessageCheck(
+        baseJid,
+        params.threadTs,
+        params.groupFolder,
+      );
     },
     onSlashCommand: async (params: {
       command: string;
