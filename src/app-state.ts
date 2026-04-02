@@ -64,8 +64,9 @@ export class AppState {
    * Thread messages: synthetic JID (matches how messages are stored in DB).
    * Root messages: base JID as-is.
    */
-  getCursorKey(baseJid: ChannelJid, threadTs?: string | null): string {
-    return threadTs ? buildThreadJid(baseJid, threadTs) : baseJid;
+  getCursorKey(baseJid: ChannelJid, threadTs?: string | null, groupFolder?: string): string {
+    const base = threadTs ? (buildThreadJid(baseJid, threadTs) as string) : (baseJid as string);
+    return groupFolder ? `${base}::${groupFolder}` : base;
   }
 
   /**

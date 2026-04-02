@@ -111,9 +111,10 @@ export class MessageProcessor {
     const fetchJid = threadTs
       ? buildThreadJid(channelJid, threadTs)
       : channelJid;
-    const cursorKey = this.state.getCursorKey(channelJid, threadTs);
+    const cursorKey = this.state.getCursorKey(channelJid, threadTs, groupFolder);
     const sinceTimestamp =
       this.state.lastAgentTimestamp[cursorKey] ||
+      this.state.lastAgentTimestamp[this.state.getCursorKey(channelJid, threadTs)] ||
       this.state.lastAgentTimestamp[channelJid] ||
       '';
     // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation.
@@ -175,7 +176,9 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
     // Advance cursor so the piping path in startMessageLoop won't re-fetch
     // these messages. Save the old cursor so we can roll back on error.
-    const previousCursor = this.state.lastAgentTimestamp[cursorKey] || '';
+    const previousCursor = this.state.lastAgentTimestamp[cursorKey]
+      || this.state.lastAgentTimestamp[this.state.getCursorKey(channelJid, threadTs)]
+      || '';
     this.state.lastAgentTimestamp[cursorKey] =
       missedMessages[missedMessages.length - 1].timestamp;
     this.saveFn();
