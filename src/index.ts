@@ -89,7 +89,7 @@ async function handleCommand(
   // /stop command — stops container for the thread where *stop was sent
   if (text === '*stop') {
     if (!group) {
-      await channel.sendMessage(chatJid, 'No active agent to stop', {
+      await channel.sendMessage(chatJid, 'No agent running', {
         threadTs: msg.threadTs,
       });
       return true;
@@ -108,7 +108,7 @@ async function handleCommand(
     };
     await channel.sendMessage(
       chatJid,
-      stopped ? `Stopped ${group.name}` : 'No active agent to stop',
+      stopped ? 'Stopped' : 'No agent running',
       displayOpts,
     );
     return true;
@@ -912,15 +912,15 @@ async function main(): Promise<void> {
 
       switch (params.command) {
         case 'stop': {
-          if (!group) return 'No active agent to stop';
+          if (!group) return 'No agent running';
           const stopped = await state.queue.stopGroup(
             slashJid,
             params.threadTs,
             group.folder,
           );
           return stopped
-            ? `Stopped ${group.name}`
-            : 'No active agent to stop';
+            ? 'Stopped'
+            : 'No agent running';
         }
 
         case 'verbose':
