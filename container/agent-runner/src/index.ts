@@ -699,6 +699,7 @@ async function runQuery(
 }
 
 async function main(): Promise<void> {
+  lcmLog('=== agent-runner main() started (LCM debug build) ===');
   let containerInput: ContainerInput;
 
   try {
@@ -764,6 +765,7 @@ async function main(): Promise<void> {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
       const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      lcmLog(`runQuery returned (newSession=${queryResult.newSessionId || 'none'}, closed=${queryResult.closedDuringQuery}, lastInput=${queryResult.lastInputTokens || 'none'})`);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
