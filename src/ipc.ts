@@ -120,21 +120,39 @@ export function startIpcWatcher(deps: IpcDeps): void {
               }
               // Handle plan_ready from plan mode hook
               if (data.type === 'plan_ready' && data.chatJid && data.plan) {
-                if (deps.onPlanReady) {
+                const isAuthorized =
+                  isMain ||
+                  deps.isGroupInChannel?.(data.chatJid, sourceGroup) ||
+                  registeredGroups[data.chatJid]?.folder === sourceGroup;
+                if (isAuthorized && deps.onPlanReady) {
                   await deps.onPlanReady(data.chatJid, sourceGroup, data.plan, data.threadTs);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC plan_ready handled',
                   );
+                } else if (!isAuthorized) {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized plan_ready attempt blocked',
+                  );
                 }
               }
               // Handle ask_user from plan mode hook
               if (data.type === 'ask_user' && data.chatJid && data.questions) {
-                if (deps.onAskUser) {
+                const isAuthorized =
+                  isMain ||
+                  deps.isGroupInChannel?.(data.chatJid, sourceGroup) ||
+                  registeredGroups[data.chatJid]?.folder === sourceGroup;
+                if (isAuthorized && deps.onAskUser) {
                   await deps.onAskUser(data.chatJid, sourceGroup, data.questions as unknown[], data.threadTs);
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC ask_user handled',
+                  );
+                } else if (!isAuthorized) {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized ask_user attempt blocked',
                   );
                 }
               }

@@ -182,6 +182,7 @@ export interface ContainerInput {
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
   threadTs?: string;
+  replyThreadTs?: string;
   forkFromSession?: boolean;
   resumeSessionAt?: string;
 }

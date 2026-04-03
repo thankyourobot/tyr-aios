@@ -19,7 +19,7 @@ const CLOSE_SENTINEL = '/workspace/ipc/input/_close';
 
 const chatJid = process.env.NANOCLAW_CHAT_JID || '';
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER || '';
-const threadTs = process.env.NANOCLAW_THREAD_TS || '';
+const replyThreadTs = process.env.NANOCLAW_REPLY_THREAD_TS || '';
 
 interface HookInput {
   hook_event_name: string;
@@ -98,7 +98,7 @@ async function main() {
       plan: plan || '(No plan file found — the agent may have described the plan in conversation instead.)',
       chatJid,
       groupFolder,
-      threadTs: threadTs || undefined,
+      threadTs: replyThreadTs || undefined,
       timestamp: new Date().toISOString(),
     });
 
@@ -115,7 +115,7 @@ async function main() {
       questions,
       chatJid,
       groupFolder,
-      threadTs: threadTs || undefined,
+      threadTs: replyThreadTs || undefined,
       timestamp: new Date().toISOString(),
     });
 

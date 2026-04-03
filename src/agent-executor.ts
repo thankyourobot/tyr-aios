@@ -90,6 +90,7 @@ export class AgentExecutor {
     toggleState?: { verbose: boolean; thinking: boolean; planMode: boolean },
     threadTs?: string,
     rewindOpts?: { sourceSessionId: string; resumeSessionAt: string },
+    replyThreadTs?: string,
   ): Promise<'success' | 'error'> {
     const isMain = group.isMain === true;
     // Thread-aware session routing
@@ -221,6 +222,7 @@ export class AgentExecutor {
           maxThinkingTokens: effectiveToggle.thinking ? 10000 : undefined,
           filebrowserBaseUrl: this.state.filebrowserBaseUrl || undefined,
           threadTs,
+          replyThreadTs,
           forkFromSession: shouldFork,
           resumeSessionAt: rewindOpts?.resumeSessionAt,
         },

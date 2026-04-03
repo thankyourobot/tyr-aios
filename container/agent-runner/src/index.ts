@@ -33,6 +33,7 @@ interface ContainerInput {
   maxThinkingTokens?: number;
   filebrowserBaseUrl?: string;
   threadTs?: string;
+  replyThreadTs?: string;
   forkFromSession?: boolean;
   resumeSessionAt?: string;
 }
@@ -535,8 +536,8 @@ async function main(): Promise<void> {
   // Pass context to hooks (plan-mode-hook.ts reads these)
   sdkEnv.NANOCLAW_CHAT_JID = containerInput.chatJid;
   sdkEnv.NANOCLAW_GROUP_FOLDER = containerInput.groupFolder;
-  if (containerInput.threadTs) {
-    sdkEnv.NANOCLAW_THREAD_TS = containerInput.threadTs;
+  if (containerInput.replyThreadTs) {
+    sdkEnv.NANOCLAW_REPLY_THREAD_TS = containerInput.replyThreadTs;
   }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));

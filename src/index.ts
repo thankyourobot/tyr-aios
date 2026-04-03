@@ -1245,13 +1245,14 @@ async function main(): Promise<void> {
           },
         });
         if (q.options && q.options.length > 0) {
+          const blockSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
           blocks.push({
             type: 'actions',
-            block_id: `ask_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            block_id: `ask_${blockSuffix}`,
             elements: q.options.map((opt, i) => ({
               type: 'button',
               text: { type: 'plain_text', text: opt.label },
-              action_id: `ask_user_answer_${i}`,
+              action_id: `ask_user_answer_${blockSuffix}_${i}`,
               value: JSON.stringify({
                 chatJid: getParentJid(chatJid as AnyJid) ?? chatJid,
                 threadTs: threadTs || '',

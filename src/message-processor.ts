@@ -425,6 +425,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
             resumeSessionAt: pendingFork.resumeAt,
           }
         : undefined,
+      lastThreadTs, // Always pass for hook IPC threading (even root messages)
     );
 
     if (isMentioned)
