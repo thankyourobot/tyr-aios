@@ -12,6 +12,9 @@
 
 import fs from 'fs';
 import path from 'path';
+import { parseTranscript as lcmParseTranscript, getConversationId, shouldSummarize } from './lcm-helpers.js';
+import { initLcmDatabase, storeMessages, storeSummary, getSummariesForConversation, getMaxSequence, contentHash } from './lcm-store.js';
+import { createLeafSummary, createCondensedSummary, LCM_CONDENSE_THRESHOLD } from './lcm-summarize.js';
 
 export interface PreCompactInput {
   session_id: string;
@@ -184,13 +187,109 @@ async function main(): Promise<void> {
 
   try {
     archiveTranscript(input, assistantName);
-    process.stdout.write(JSON.stringify({ continue: true }));
-    process.exit(0);
   } catch (err) {
     log(`Archive failed: ${err instanceof Error ? err.message : String(err)}`);
     process.stdout.write(JSON.stringify({ continue: false }));
     process.exit(2);
   }
+
+  // LCM: Persist messages and create summaries (non-fatal — archive already succeeded)
+  if (process.env.LCM_ENABLED !== 'false') {
+    try {
+      const LCM_DB_PATH = '/home/node/.claude/lcm.db';
+      const LCM_FRESHNESS_WINDOW = parseInt(process.env.LCM_FRESHNESS_WINDOW || '32', 10);
+
+      const groupFolder = process.env.NANOCLAW_GROUP_FOLDER;
+      const chatJid = process.env.NANOCLAW_CHAT_JID;
+      const threadTs = process.env.NANOCLAW_THREAD_TS;
+      if (!groupFolder || !chatJid) {
+        log('LCM: Missing NANOCLAW_GROUP_FOLDER or NANOCLAW_CHAT_JID env vars, skipping');
+      } else {
+        const db = initLcmDatabase(LCM_DB_PATH);
+        if (db) {
+          const conversationId = getConversationId({ groupFolder, chatJid, threadTs });
+          const content = fs.readFileSync(input.transcript_path, 'utf-8');
+          const messages = lcmParseTranscript(content);
+
+          if (messages.length > 0) {
+            const currentMaxSeq = getMaxSequence(conversationId);
+            const startSequence = currentMaxSeq + 1;
+            const newlyInserted = storeMessages(conversationId, messages, startSequence);
+            log(`LCM: Stored ${newlyInserted}/${messages.length} messages (dedup)`);
+
+            if (newlyInserted > 0 && shouldSummarize(conversationId)) {
+              const summaries = getSummariesForConversation(conversationId);
+              const maxSummarizedSeq = summaries.length > 0
+                ? Math.max(...summaries.map(s => s.max_sequence ?? -1))
+                : -1;
+
+              const toSummarize = messages.filter((_, i) => {
+                const seq = startSequence + i;
+                return seq > maxSummarizedSeq;
+              }).slice(0, Math.max(0, messages.length - LCM_FRESHNESS_WINDOW));
+
+              if (toSummarize.length > 0) {
+                const minSeq = maxSummarizedSeq + 1;
+                const maxSeq = minSeq + toSummarize.length - 1;
+                const messageIds = toSummarize.map(msg => contentHash(conversationId, msg.role, msg.content));
+
+                log(`LCM: Creating leaf summary for messages ${minSeq}-${maxSeq}`);
+                const leafResult = await createLeafSummary(toSummarize, messageIds, minSeq, maxSeq);
+                storeSummary({
+                  id: leafResult.id,
+                  conversation_id: conversationId,
+                  depth: 0,
+                  content: leafResult.content,
+                  source_message_ids: JSON.stringify(leafResult.sourceMessageIds),
+                  parent_summary_ids: null,
+                  child_summary_ids: null,
+                  min_sequence: leafResult.minSequence,
+                  max_sequence: leafResult.maxSequence,
+                  created_at: new Date().toISOString(),
+                });
+
+                // Check condensation
+                const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
+                const condensedSummaries = getSummariesForConversation(conversationId).filter(s => s.depth > 0);
+                const coveredLeafIds = new Set<string>();
+                for (const cs of condensedSummaries) {
+                  if (cs.child_summary_ids) {
+                    for (const childId of JSON.parse(cs.child_summary_ids) as string[]) {
+                      coveredLeafIds.add(childId);
+                    }
+                  }
+                }
+                const uncoveredLeaves = leafSummaries.filter(s => !coveredLeafIds.has(s.id));
+
+                if (uncoveredLeaves.length >= LCM_CONDENSE_THRESHOLD) {
+                  const toCondense = uncoveredLeaves.slice(0, LCM_CONDENSE_THRESHOLD);
+                  log(`LCM: Condensing ${toCondense.length} leaf summaries`);
+                  const condensedResult = await createCondensedSummary(toCondense);
+                  storeSummary({
+                    id: condensedResult.id,
+                    conversation_id: conversationId,
+                    depth: condensedResult.depth,
+                    content: condensedResult.content,
+                    source_message_ids: null,
+                    parent_summary_ids: null,
+                    child_summary_ids: JSON.stringify(condensedResult.childSummaryIds),
+                    min_sequence: condensedResult.minSequence,
+                    max_sequence: condensedResult.maxSequence,
+                    created_at: new Date().toISOString(),
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (lcmErr) {
+      log(`LCM error (non-fatal): ${lcmErr instanceof Error ? lcmErr.message : String(lcmErr)}`);
+    }
+  }
+
+  process.stdout.write(JSON.stringify({ continue: true }));
+  process.exit(0);
 }
 
 // Only run main when executed directly (not imported for tests)
