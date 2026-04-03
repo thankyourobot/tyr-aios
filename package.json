@@ -19,12 +19,12 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@slack/bolt": "^4.6.0",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "yaml": "^2.8.2",
-    "@slack/bolt": "^4.6.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -32,6 +32,7 @@
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^4.0.18",
     "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
@@ -39,6 +40,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "lint-staged": {
+    "src/**/*.ts": "prettier --write"
   },
   "overrides": {
     "axios": "1.13.6"
