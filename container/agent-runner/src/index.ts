@@ -321,31 +321,37 @@ function findLatestTranscript(): string | null {
  * Called after every query (always-persist) and from PreCompact hook (belt & suspenders).
  * All errors are non-fatal.
  */
+function lcmLog(message: string): void {
+  log(message);
+  // Also write to a file for debugging (container stderr may not be visible)
+  try { fs.appendFileSync('/home/node/.claude/lcm-debug.log', `${new Date().toISOString()} ${message}\n`); } catch { /* ignore */ }
+}
+
 async function persistToLcm(conversationId: string, assistantName?: string): Promise<void> {
-  log(`LCM: persistToLcm called (conversationId=${conversationId}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
+  lcmLog(`persistToLcm called (conversationId=${conversationId}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
   if (process.env.LCM_ENABLED === 'false') return;
 
   try {
     const db = initLcmDatabase(LCM_DB_PATH);
-    if (!db) { log('LCM: initLcmDatabase returned null'); return; }
+    if (!db) { lcmLog('initLcmDatabase returned null'); return; }
 
-    log(`LCM: Finding transcript in ${LCM_TRANSCRIPT_DIR}`);
+    lcmLog(`Finding transcript in ${LCM_TRANSCRIPT_DIR}`);
     const transcriptPath = findLatestTranscript();
     if (!transcriptPath) {
-      log('LCM: No transcript found');
+      lcmLog('No transcript found');
       return;
     }
-    log(`LCM: Found transcript: ${transcriptPath}`);
+    lcmLog(`Found transcript: ${transcriptPath}`);
 
     const content = fs.readFileSync(transcriptPath, 'utf-8');
     const messages = parseTranscript(content);
-    log(`LCM: Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
+    lcmLog(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
     if (messages.length === 0) return;
 
     const currentMaxSeq = getMaxSequence(conversationId);
     const startSequence = currentMaxSeq + 1;
     const newlyInserted = storeMessages(conversationId, messages, startSequence);
-    log(`LCM: Stored ${newlyInserted}/${messages.length} messages (dedup)`);
+    lcmLog(`Stored ${newlyInserted}/${messages.length} messages (dedup)`);
 
     if (newlyInserted === 0) return;
 
@@ -417,7 +423,7 @@ async function persistToLcm(conversationId: string, assistantName?: string): Pro
       });
     }
   } catch (err) {
-    log(`LCM persist error (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    lcmLog(`persist error (non-fatal): ${err instanceof Error ? err.stack || err.message : String(err)}`);
   }
 }
 
