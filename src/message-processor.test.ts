@@ -184,7 +184,10 @@ describe('MessageProcessor', () => {
       });
       state.registeredGroups['slack:C0AL6C8U21L'] = strategy;
 
-      await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'), '9999999.000');
+      await processor.processGroupMessages(
+        channelJid('slack:C0AL6C8U21L'),
+        '9999999.000',
+      );
 
       expect(capturedFetchJid).toBe('slack:C0AL6C8U21L:t:9999999.000');
     });
@@ -192,7 +195,9 @@ describe('MessageProcessor', () => {
 
   describe('processGroupMessages — dispatch flow', () => {
     it('returns true (no container) when no messages found', async () => {
-      const result = await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
+      const result = await processor.processGroupMessages(
+        channelJid('slack:C0AL6C8U21L'),
+      );
       expect(result).toBe(true);
     });
 
@@ -217,7 +222,9 @@ describe('MessageProcessor', () => {
         rewindSession: vi.fn(),
       } as any);
 
-      const result = await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
+      const result = await processor.processGroupMessages(
+        channelJid('slack:C0AL6C8U21L'),
+      );
 
       expect(result).toBe(true);
       expect(mockRunAgent).toHaveBeenCalledWith(
@@ -256,7 +263,9 @@ describe('MessageProcessor', () => {
       const saveFn = vi.fn();
       processor.setSaveFn(saveFn);
 
-      const result = await processor.processGroupMessages(channelJid('slack:C0AL6C8U21L'));
+      const result = await processor.processGroupMessages(
+        channelJid('slack:C0AL6C8U21L'),
+      );
 
       expect(result).toBe(false);
       // Cursor should be rolled back

@@ -7,11 +7,7 @@ import {
 import { readEnvFile } from './env.js';
 import { GroupQueue } from './group-queue.js';
 import type { AnyJid, ChannelJid } from './jid.js';
-import {
-  buildThreadJid,
-  getParentJid,
-  isSyntheticThreadJid,
-} from './jid.js';
+import { buildThreadJid, getParentJid, isSyntheticThreadJid } from './jid.js';
 import { logger } from './logger.js';
 import { Channel, RegisteredGroup } from './types.js';
 
@@ -64,8 +60,14 @@ export class AppState {
    * Thread messages: synthetic JID (matches how messages are stored in DB).
    * Root messages: base JID as-is.
    */
-  getCursorKey(baseJid: ChannelJid, threadTs?: string | null, groupFolder?: string): string {
-    const base = threadTs ? (buildThreadJid(baseJid, threadTs) as string) : (baseJid as string);
+  getCursorKey(
+    baseJid: ChannelJid,
+    threadTs?: string | null,
+    groupFolder?: string,
+  ): string {
+    const base = threadTs
+      ? (buildThreadJid(baseJid, threadTs) as string)
+      : (baseJid as string);
     return groupFolder ? `${base}::${groupFolder}` : base;
   }
 
@@ -79,11 +81,7 @@ export class AppState {
    *   Per-agent plan:  {channelJid}:{threadTs}:{groupFolder}
    *   Channel-level:   {channelJid}
    */
-  toggleKey(
-    jid: AnyJid,
-    threadTs?: string,
-    groupFolder?: string,
-  ): string {
+  toggleKey(jid: AnyJid, threadTs?: string, groupFolder?: string): string {
     // Always normalize to plain channel JID — strips :t: if present
     const base = getParentJid(jid) || jid;
     if (groupFolder && threadTs) return `${base}:${threadTs}:${groupFolder}`;

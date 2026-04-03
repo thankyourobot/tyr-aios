@@ -136,7 +136,11 @@ export class AgentExecutor {
     ).toISOString();
     const agentJids = getJidsForFolder(group.folder);
     const activityChannels = agentJids.map(({ jid, name, channelRole }) => {
-      const msgs = getMessagesSinceIncludingBots(channelJid(jid), sinceTimestamp, 50);
+      const msgs = getMessagesSinceIncludingBots(
+        channelJid(jid),
+        sinceTimestamp,
+        50,
+      );
       return {
         jid,
         name,

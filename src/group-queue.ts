@@ -91,7 +91,10 @@ export class GroupQueue {
    * Find the thread timestamp for an active container matching a chatJid and groupFolder.
    * Used by IPC handlers that need to target a specific thread.
    */
-  getActiveThreadTs(chatJid: ChannelJid, groupFolder?: string): string | undefined {
+  getActiveThreadTs(
+    chatJid: ChannelJid,
+    groupFolder?: string,
+  ): string | undefined {
     for (const [key, state] of this.groups) {
       if (
         state.active &&

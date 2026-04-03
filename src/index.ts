@@ -154,7 +154,10 @@ async function handleCommand(
       if (isVerbose) group.verboseDefault = newValue;
       else group.thinkingDefault = newValue;
       // Persist to DB
-      setRegisteredGroup(getParentJid(chatJid) ?? (chatJid as ChannelJid), group);
+      setRegisteredGroup(
+        getParentJid(chatJid) ?? (chatJid as ChannelJid),
+        group,
+      );
     }
 
     const scope = inThread
@@ -206,7 +209,10 @@ async function handleCommand(
     } else {
       if (!group) return false;
       group.planModeDefault = newValue;
-      setRegisteredGroup(getParentJid(chatJid) ?? (chatJid as ChannelJid), group);
+      setRegisteredGroup(
+        getParentJid(chatJid) ?? (chatJid as ChannelJid),
+        group,
+      );
     }
 
     // *plan <prompt>: keep full message (agent sees *plan intent), let it flow through
@@ -641,7 +647,9 @@ function recoverPendingMessages(): void {
   // Recover DMs and synthetic thread JIDs: check state.lastAgentTimestamp entries that are not registered groups
   const mainGroup = groupManager.getMainGroup();
   if (mainGroup) {
-    for (const [chatJidRaw, cursor] of Object.entries(state.lastAgentTimestamp)) {
+    for (const [chatJidRaw, cursor] of Object.entries(
+      state.lastAgentTimestamp,
+    )) {
       if (state.registeredGroups[chatJidRaw]) continue;
       const chatJid = chatJidRaw as AnyJid;
       const pending = getMessagesSince(chatJid, cursor, ASSISTANT_NAME);
@@ -654,7 +662,8 @@ function recoverPendingMessages(): void {
         // Use consistent keying: base JID + threadTs (not synthetic JID)
         if (isSyntheticThreadJid(chatJidRaw)) {
           const { threadTs: recoveryThreadTs } = parseSlackJid(chatJid);
-          const baseRecoveryJid = getParentJid(chatJid) ?? (chatJid as ChannelJid);
+          const baseRecoveryJid =
+            getParentJid(chatJid) ?? (chatJid as ChannelJid);
           state.queue.enqueueMessageCheck(
             baseRecoveryJid,
             recoveryThreadTs,
@@ -859,7 +868,8 @@ async function main(): Promise<void> {
       }
       setPendingFork(p.groupFolder, p.newThreadTs, sourceSessionId, p.sdkUuid);
       // Register thread membership so multi-agent routing works for follow-ups
-      const rewindChJid = getParentJid(p.chatJid as AnyJid) ?? (p.chatJid as ChannelJid);
+      const rewindChJid =
+        getParentJid(p.chatJid as AnyJid) ?? (p.chatJid as ChannelJid);
       addThreadMember(rewindChJid, p.newThreadTs, p.groupFolder);
       logger.info(
         { groupFolder: p.groupFolder, newThreadTs: p.newThreadTs },
@@ -887,7 +897,8 @@ async function main(): Promise<void> {
 
       // Store synthetic approval message and enqueue for processing
       // (container is likely already exited from idle timeout)
-      const approveBaseJid = getParentJid(approveJid) ?? (approveJid as ChannelJid);
+      const approveBaseJid =
+        getParentJid(approveJid) ?? (approveJid as ChannelJid);
       storeMessage({
         id: Date.now().toString(),
         chat_jid: buildThreadJid(approveBaseJid, params.threadTs),
@@ -922,9 +933,7 @@ async function main(): Promise<void> {
             params.threadTs,
             group.folder,
           );
-          return stopped
-            ? 'Stopped'
-            : 'No agent running';
+          return stopped ? 'Stopped' : 'No agent running';
         }
 
         case 'verbose':
@@ -1104,7 +1113,8 @@ async function main(): Promise<void> {
     writeGroupsSnapshot: (gf, im, ag, rj) =>
       writeGroupsSnapshot(gf, im, ag, rj),
     isGroupInChannel: (chatJid: string, groupFolder: string): boolean => {
-      const ipcChJid = getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
+      const ipcChJid =
+        getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
       const groups = state.groupsByJid.get(ipcChJid);
       return !!groups?.some((g) => g.folder === groupFolder);
     },

@@ -56,10 +56,7 @@ export function parseSlackJid(jid: AnyJid): {
 }
 
 /** Build a synthetic thread JID from a channel JID and thread timestamp. */
-export function buildThreadJid(
-  cJid: ChannelJid,
-  threadTs: string,
-): ThreadJid {
+export function buildThreadJid(cJid: ChannelJid, threadTs: string): ThreadJid {
   return `${cJid}:t:${threadTs}` as ThreadJid;
 }
 

@@ -135,7 +135,13 @@ export function setPendingFork(
     .prepare(
       'INSERT OR REPLACE INTO pending_forks (group_folder, thread_ts, source_session_id, resume_at, created_at) VALUES (?, ?, ?, ?, ?)',
     )
-    .run(groupFolder, threadTs, sourceSessionId, resumeAt, new Date().toISOString());
+    .run(
+      groupFolder,
+      threadTs,
+      sourceSessionId,
+      resumeAt,
+      new Date().toISOString(),
+    );
 }
 
 export function getPendingFork(
@@ -157,10 +163,7 @@ export function getPendingFork(
   }
 }
 
-export function deletePendingFork(
-  groupFolder: string,
-  threadTs: string,
-): void {
+export function deletePendingFork(groupFolder: string, threadTs: string): void {
   try {
     getDb()
       .prepare(

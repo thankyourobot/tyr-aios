@@ -375,7 +375,9 @@ describe('GroupManager', () => {
     });
 
     it('unknown channel → false', () => {
-      expect(gm.isMultiGroupChannel(channelJid('slack:C_NONEXISTENT'))).toBe(false);
+      expect(gm.isMultiGroupChannel(channelJid('slack:C_NONEXISTENT'))).toBe(
+        false,
+      );
     });
   });
 
@@ -413,7 +415,10 @@ describe('GroupManager', () => {
       });
       state.registeredGroups['slack:C_MAIN'] = mainGroup;
       const result = gm.getMainGroup();
-      expect(result).toEqual({ jid: channelJid('slack:C_MAIN'), group: mainGroup });
+      expect(result).toEqual({
+        jid: channelJid('slack:C_MAIN'),
+        group: mainGroup,
+      });
     });
 
     it('returns null when no main group exists', () => {

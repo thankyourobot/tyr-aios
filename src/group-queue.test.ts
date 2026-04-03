@@ -304,13 +304,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Register a process so closeStdin has a groupFolder
-    queue.registerProcess(
-      G1,
-      null,
-      {} as any,
-      'container-1',
-      GF,
-    );
+    queue.registerProcess(G1, null, {} as any, 'container-1', GF);
 
     // Enqueue a task while container is active but NOT idle
     const taskFn = vi.fn(async () => {});
@@ -345,13 +339,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Register process and mark idle
-    queue.registerProcess(
-      G1,
-      null,
-      {} as any,
-      'container-1',
-      GF,
-    );
+    queue.registerProcess(G1, null, {} as any, 'container-1', GF);
     queue.notifyIdle(G1, null, GF);
 
     // Clear previous writes, then enqueue a task
@@ -385,13 +373,7 @@ describe('GroupQueue', () => {
     queue.setProcessMessagesFn(processMessages);
     queue.enqueueMessageCheck(G1, null, GF);
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
-      G1,
-      null,
-      {} as any,
-      'container-1',
-      GF,
-    );
+    queue.registerProcess(G1, null, {} as any, 'container-1', GF);
 
     // Container becomes idle
     queue.notifyIdle(G1, null, GF);
@@ -427,13 +409,7 @@ describe('GroupQueue', () => {
     // Start a task (sets isTaskContainer = true)
     queue.enqueueTask(G1, 'task-1', taskFn, GF);
     await vi.advanceTimersByTimeAsync(10);
-    queue.registerProcess(
-      G1,
-      null,
-      {} as any,
-      'container-1',
-      GF,
-    );
+    queue.registerProcess(G1, null, {} as any, 'container-1', GF);
 
     // sendMessage should return false — user messages must not go to task containers
     const result = queue.sendMessage(G1, null, 'hello', GF);
@@ -649,13 +625,7 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     // Register process and enqueue a task (no idle yet — no preemption)
-    queue.registerProcess(
-      G1,
-      null,
-      {} as any,
-      'container-1',
-      GF,
-    );
+    queue.registerProcess(G1, null, {} as any, 'container-1', GF);
 
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
     writeFileSync.mockClear();

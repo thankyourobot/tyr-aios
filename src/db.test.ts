@@ -311,14 +311,22 @@ describe('storeChatMetadata', () => {
   });
 
   it('stores chat with explicit name', () => {
-    storeChatMetadata(channelJid('group@g.us'), '2024-01-01T00:00:00.000Z', 'My Group');
+    storeChatMetadata(
+      channelJid('group@g.us'),
+      '2024-01-01T00:00:00.000Z',
+      'My Group',
+    );
     const chats = getAllChats();
     expect(chats[0].name).toBe('My Group');
   });
 
   it('updates name on subsequent call with name', () => {
     storeChatMetadata(channelJid('group@g.us'), '2024-01-01T00:00:00.000Z');
-    storeChatMetadata(channelJid('group@g.us'), '2024-01-01T00:00:01.000Z', 'Updated Name');
+    storeChatMetadata(
+      channelJid('group@g.us'),
+      '2024-01-01T00:00:01.000Z',
+      'Updated Name',
+    );
     const chats = getAllChats();
     expect(chats).toHaveLength(1);
     expect(chats[0].name).toBe('Updated Name');

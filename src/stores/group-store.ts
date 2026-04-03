@@ -73,7 +73,10 @@ export function getRegisteredGroup(
   return rowToRegisteredGroup(row);
 }
 
-export function setRegisteredGroup(jid: ChannelJid, group: RegisteredGroup): void {
+export function setRegisteredGroup(
+  jid: ChannelJid,
+  group: RegisteredGroup,
+): void {
   if (!isValidGroupFolder(group.folder)) {
     throw new Error(`Invalid group folder "${group.folder}" for JID ${jid}`);
   }

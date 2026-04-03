@@ -12,7 +12,12 @@ import {
   getThreadMessages,
 } from '../db.js';
 import { readEnvFile } from '../env.js';
-import { type AnyJid, channelJid, buildThreadJid, parseSlackJid } from '../jid.js';
+import {
+  type AnyJid,
+  channelJid,
+  buildThreadJid,
+  parseSlackJid,
+} from '../jid.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -404,13 +409,7 @@ export class SlackChannel implements Channel {
       const isGroup = msg.channel_type !== 'im';
 
       // Always report metadata for group discovery (use channel JID, not synthetic)
-      this.opts.onChatMetadata(
-        cJid,
-        timestamp,
-        undefined,
-        'slack',
-        isGroup,
-      );
+      this.opts.onChatMetadata(cJid, timestamp, undefined, 'slack', isGroup);
 
       // Check if this JID is registered; if not, we'll let the message loop
       // handle it via main group fallback. Don't reroute — keep original JID

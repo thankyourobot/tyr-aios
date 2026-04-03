@@ -48,13 +48,15 @@ describe('AppState', () => {
     });
 
     it('returns baseJid when threadTs is null', () => {
-      expect(state.getCursorKey(channelJid('slack:C123'), null)).toBe('slack:C123');
+      expect(state.getCursorKey(channelJid('slack:C123'), null)).toBe(
+        'slack:C123',
+      );
     });
 
     it('returns synthetic thread JID when threadTs is provided', () => {
-      expect(state.getCursorKey(channelJid('slack:C123'), '1711100000.000')).toBe(
-        'slack:C123:t:1711100000.000',
-      );
+      expect(
+        state.getCursorKey(channelJid('slack:C123'), '1711100000.000'),
+      ).toBe('slack:C123:t:1711100000.000');
     });
   });
 
@@ -121,7 +123,11 @@ describe('AppState', () => {
         thinking: false,
         planMode: true,
       });
-      const result = state.getToggleState(channelJid('slack:C123'), '111.000', 'strategy');
+      const result = state.getToggleState(
+        channelJid('slack:C123'),
+        '111.000',
+        'strategy',
+      );
       expect(result.planMode).toBe(true);
     });
   });

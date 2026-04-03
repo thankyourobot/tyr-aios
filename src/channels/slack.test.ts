@@ -617,7 +617,10 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
 
       // Don't connect — should queue
-      await channel.sendMessage(channelJid('slack:C0123456789'), 'Queued message');
+      await channel.sendMessage(
+        channelJid('slack:C0123456789'),
+        'Queued message',
+      );
 
       expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
     });
@@ -690,8 +693,14 @@ describe('SlackChannel', () => {
       const channel = new SlackChannel(opts);
 
       // Queue messages while disconnected
-      await channel.sendMessage(channelJid('slack:C0123456789'), 'First queued');
-      await channel.sendMessage(channelJid('slack:C0123456789'), 'Second queued');
+      await channel.sendMessage(
+        channelJid('slack:C0123456789'),
+        'First queued',
+      );
+      await channel.sendMessage(
+        channelJid('slack:C0123456789'),
+        'Second queued',
+      );
 
       expect(currentApp().client.chat.postMessage).not.toHaveBeenCalled();
 
