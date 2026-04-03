@@ -11,8 +11,16 @@ import { channelJid } from './jid.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
+export interface IpcSendMessageOpts {
+  threadTs?: string;
+  botToken?: string;
+  displayName?: string;
+  displayEmoji?: string;
+  displayIconUrl?: string;
+}
+
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string, threadTs?: string) => Promise<void>;
+  sendMessage: (jid: string, text: string, opts?: IpcSendMessageOpts) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -106,7 +114,17 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   (targetGroup && targetGroup.folder === sourceGroup) ||
                   isChannelMember
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text, data.threadTs);
+                  // Resolve sender identity from the source group's registration
+                  const senderGroup = Object.values(registeredGroups).find(
+                    (g) => g.folder === sourceGroup,
+                  );
+                  await deps.sendMessage(data.chatJid, data.text, {
+                    threadTs: data.threadTs,
+                    botToken: senderGroup?.botToken,
+                    displayName: senderGroup?.displayName,
+                    displayEmoji: senderGroup?.displayEmoji,
+                    displayIconUrl: senderGroup?.displayIconUrl,
+                  });
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup, threadTs: data.threadTs },
                     'IPC message sent',

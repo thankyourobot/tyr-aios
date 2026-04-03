@@ -432,7 +432,12 @@ async function runQuery(
         for (const block of userContent) {
           if (block.type === 'tool_result' && block.is_error) {
             const errorText = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
-            writeOutput({ status: 'success', result: `\u274c Tool failed: ${errorText.slice(0, 300)}`, type: 'verbose' });
+            // Rewrite hook deny messages to be informational instead of alarming
+            if (errorText.includes('forwarded to the user via Slack') || errorText.includes('submitted for user approval via Slack')) {
+              writeOutput({ status: 'success', result: `\u2709\uFE0F ${errorText.slice(0, 300)}`, type: 'verbose' });
+            } else {
+              writeOutput({ status: 'success', result: `\u274c Tool failed: ${errorText.slice(0, 300)}`, type: 'verbose' });
+            }
           }
         }
       }

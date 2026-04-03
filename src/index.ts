@@ -1145,10 +1145,10 @@ async function main(): Promise<void> {
     },
   });
   startIpcWatcher({
-    sendMessage: (jid, text, threadTs) => {
+    sendMessage: (jid, text, opts) => {
       const channel = findChannel(state.channels, jid as AnyJid);
       if (!channel) throw new Error(`No channel for JID: ${jid}`);
-      return channel.sendMessage(jid as AnyJid, text, threadTs ? { threadTs } : undefined);
+      return channel.sendMessage(jid as AnyJid, text, opts);
     },
     registeredGroups: () => state.registeredGroups,
     registerGroup,
