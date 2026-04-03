@@ -758,9 +758,16 @@ async function main(): Promise<void> {
       // LCM: Always persist messages after every query
       await persistToLcm(conversationId, containerInput.assistantName);
 
-      // LCM: Proactive compaction — reset session when context usage exceeds threshold
-      if (shouldProactivelyCompact(queryResult.lastInputTokens)) {
-        log('LCM: Proactive compaction triggered — resetting session');
+      // LCM: Check for on-demand compact signal from lcm_compact MCP tool
+      const lcmCompactSignal = path.join(IPC_INPUT_DIR, '_lcm_compact');
+      const onDemandCompact = fs.existsSync(lcmCompactSignal);
+      if (onDemandCompact) {
+        try { fs.unlinkSync(lcmCompactSignal); } catch { /* ignore */ }
+      }
+
+      // LCM: Proactive compaction or on-demand compact — reset session
+      if (onDemandCompact || shouldProactivelyCompact(queryResult.lastInputTokens)) {
+        log(`LCM: ${onDemandCompact ? 'On-demand' : 'Proactive'} compaction triggered — resetting session`);
         sessionId = undefined;
         resumeAt = undefined;
       }

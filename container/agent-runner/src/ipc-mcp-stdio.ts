@@ -12,6 +12,15 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import { ulid } from 'ulid';
+import {
+  initLcmDatabase,
+  searchMessages,
+  searchSummaries,
+  getSummaryById,
+  getMessagesForSummary,
+  getChildSummaries,
+  getMessagesBySequenceRange,
+} from './lcm-store.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -633,6 +642,196 @@ server.tool(
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+// --- LCM Memory Tools ---
+
+const LCM_DB_PATH = '/home/node/.claude/lcm.db';
+
+function ensureLcmDb(): boolean {
+  try {
+    if (!fs.existsSync(LCM_DB_PATH)) return false;
+    const db = initLcmDatabase(LCM_DB_PATH);
+    return db !== null;
+  } catch {
+    return false;
+  }
+}
+
+server.tool(
+  'lcm_grep',
+  'Search compacted conversation history using full-text search. Returns matching messages and/or summaries from previous conversation segments. Use this to find specific topics, decisions, or details from earlier in the conversation.',
+  {
+    query: z.string().describe('Search query (supports FTS5 syntax: AND, OR, NOT, "exact phrase")'),
+    scope: z.enum(['messages', 'summaries', 'both']).default('both').describe('Search scope'),
+    limit: z.number().default(10).describe('Maximum results to return'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const results: string[] = [];
+
+    if (args.scope === 'messages' || args.scope === 'both') {
+      const msgs = searchMessages(args.query, args.limit);
+      for (const m of msgs) {
+        const snippet = m.content.slice(0, 300) + (m.content.length > 300 ? '...' : '');
+        results.push(`[message] role=${m.role} seq=${m.sequence} conv=${m.conversation_id}\n${snippet}`);
+      }
+    }
+
+    if (args.scope === 'summaries' || args.scope === 'both') {
+      const sums = searchSummaries(args.query, args.limit);
+      for (const s of sums) {
+        const snippet = s.content.slice(0, 300) + (s.content.length > 300 ? '...' : '');
+        results.push(`[summary] id=${s.id} depth=${s.depth} seq=${s.min_sequence}-${s.max_sequence}\n${snippet}`);
+      }
+    }
+
+    if (results.length === 0) {
+      return { content: [{ type: 'text' as const, text: `No results for "${args.query}".` }] };
+    }
+
+    return { content: [{ type: 'text' as const, text: results.join('\n\n---\n\n') }] };
+  },
+);
+
+server.tool(
+  'lcm_describe',
+  'Inspect a specific LCM summary node. Returns metadata including depth, token count, relationships, and a content preview.',
+  {
+    id: z.string().describe('Summary ID (starts with "sum_")'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const summary = getSummaryById(args.id);
+    if (!summary) {
+      return { content: [{ type: 'text' as const, text: `Summary "${args.id}" not found.` }], isError: true };
+    }
+
+    const sourceCount = summary.source_message_ids ? JSON.parse(summary.source_message_ids).length : 0;
+    const childCount = summary.child_summary_ids ? JSON.parse(summary.child_summary_ids).length : 0;
+    const preview = summary.content.slice(0, 500) + (summary.content.length > 500 ? '...' : '');
+
+    const info = [
+      `ID: ${summary.id}`,
+      `Depth: ${summary.depth} (${summary.depth === 0 ? 'leaf — summarizes raw messages' : 'condensed — summarizes other summaries'})`,
+      `Conversation: ${summary.conversation_id}`,
+      `Tokens: ~${summary.token_estimate}`,
+      `Sequence range: ${summary.min_sequence}-${summary.max_sequence}`,
+      `Created: ${summary.created_at}`,
+      `Source messages: ${sourceCount}`,
+      `Child summaries: ${childCount}`,
+      summary.child_summary_ids ? `Child IDs: ${summary.child_summary_ids}` : null,
+      '',
+      `Content preview:\n${preview}`,
+    ].filter(Boolean).join('\n');
+
+    return { content: [{ type: 'text' as const, text: info }] };
+  },
+);
+
+server.tool(
+  'lcm_expand',
+  'Drill into a summary to recover details. For leaf summaries (depth 0), returns the original messages. For condensed summaries (depth 1+), returns child summaries. Use this when a summary mentions something you need more detail on.',
+  {
+    id: z.string().describe('Summary ID to expand'),
+    levels: z.number().default(1).describe('DAG levels to traverse (1 = immediate children only)'),
+    include_messages: z.boolean().default(true).describe('For leaf summaries, include original raw messages'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const summary = getSummaryById(args.id);
+    if (!summary) {
+      return { content: [{ type: 'text' as const, text: `Summary "${args.id}" not found.` }], isError: true };
+    }
+
+    const TOKEN_CAP = 50000;
+    let totalChars = 0;
+    const output: string[] = [];
+
+    if (summary.depth === 0 && args.include_messages) {
+      // Leaf summary — return source messages
+      const msgs = getMessagesForSummary(summary.id);
+      if (msgs.length > 0) {
+        output.push(`## Original messages for ${summary.id} (${msgs.length} messages)`);
+        for (const m of msgs) {
+          if (totalChars > TOKEN_CAP * 4) {
+            output.push('[... truncated — token cap reached]');
+            break;
+          }
+          output.push(`[${m.role}] (seq ${m.sequence}):\n${m.content}`);
+          totalChars += m.content.length;
+        }
+      } else if (summary.min_sequence !== null && summary.max_sequence !== null) {
+        // Fallback: get by sequence range
+        const rangeMsgs = getMessagesBySequenceRange(summary.conversation_id, summary.min_sequence, summary.max_sequence);
+        output.push(`## Messages by sequence range ${summary.min_sequence}-${summary.max_sequence} (${rangeMsgs.length} messages)`);
+        for (const m of rangeMsgs) {
+          if (totalChars > TOKEN_CAP * 4) {
+            output.push('[... truncated — token cap reached]');
+            break;
+          }
+          output.push(`[${m.role}] (seq ${m.sequence}):\n${m.content}`);
+          totalChars += m.content.length;
+        }
+      }
+    } else if (summary.depth > 0) {
+      // Condensed summary — return child summaries
+      const expandLevel = (parentId: string, depth: number) => {
+        if (depth > args.levels) return;
+        const children = getChildSummaries(parentId);
+        for (const child of children) {
+          if (totalChars > TOKEN_CAP * 4) {
+            output.push('[... truncated — token cap reached]');
+            return;
+          }
+          output.push(`## ${child.id} (depth ${child.depth}, seq ${child.min_sequence}-${child.max_sequence})`);
+          output.push(child.content);
+          totalChars += child.content.length;
+
+          if (depth < args.levels) {
+            expandLevel(child.id, depth + 1);
+          }
+        }
+      };
+
+      output.push(`## Expanding ${summary.id} (depth ${summary.depth})`);
+      expandLevel(summary.id, 1);
+    }
+
+    if (output.length === 0) {
+      return { content: [{ type: 'text' as const, text: 'No content to expand.' }] };
+    }
+
+    return { content: [{ type: 'text' as const, text: output.join('\n\n') }] };
+  },
+);
+
+server.tool(
+  'lcm_compact',
+  'Force compaction of the current conversation. Persists all messages to LCM, creates summaries, and signals a session reset. Use when you want to start fresh but preserve memory of the conversation so far.',
+  {},
+  async () => {
+    // Signal the agent-runner main loop to trigger compaction
+    const signalPath = '/workspace/ipc/input/_lcm_compact';
+    try {
+      fs.writeFileSync(signalPath, JSON.stringify({ timestamp: new Date().toISOString() }));
+      return { content: [{ type: 'text' as const, text: 'Compaction requested. Session will reset after current query completes, with LCM summaries injected into the new session.' }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Failed to signal compaction: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
     }
