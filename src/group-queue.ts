@@ -91,10 +91,7 @@ export class GroupQueue {
    * Find the thread timestamp for an active container matching a chatJid and groupFolder.
    * Used by IPC handlers that need to target a specific thread.
    */
-  getActiveThreadTs(
-    chatJid: ChannelJid,
-    groupFolder?: string,
-  ): string | undefined {
+  getActiveThreadTs(chatJid: ChannelJid, groupFolder?: string): string | undefined {
     for (const [key, state] of this.groups) {
       if (
         state.active &&
@@ -297,10 +294,14 @@ export class GroupQueue {
     if (!state.active || state.isTaskContainer) return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
-    // Root containers monitor input/ directly; thread containers use input/{threadTs}/
-    const inputDir = threadTs
-      ? path.join(DATA_DIR, 'ipc', state.groupFolder, 'input', threadTs)
-      : path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    const threadKey = threadTs || '__root__';
+    const inputDir = path.join(
+      DATA_DIR,
+      'ipc',
+      state.groupFolder,
+      'input',
+      threadKey,
+    );
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       try {
@@ -330,10 +331,14 @@ export class GroupQueue {
     const state = this.getGroup(chatJid, threadTs, groupFolder);
     if (!state.active) return;
 
-    // Root containers monitor input/ directly; thread containers use input/{threadTs}/
-    const inputDir = threadTs
-      ? path.join(DATA_DIR, 'ipc', state.groupFolder, 'input', threadTs)
-      : path.join(DATA_DIR, 'ipc', state.groupFolder, 'input');
+    const threadKey = threadTs || '__root__';
+    const inputDir = path.join(
+      DATA_DIR,
+      'ipc',
+      state.groupFolder,
+      'input',
+      threadKey,
+    );
     try {
       fs.mkdirSync(inputDir, { recursive: true });
       try {
