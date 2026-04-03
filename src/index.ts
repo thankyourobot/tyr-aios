@@ -432,6 +432,18 @@ async function startMessageLoop(): Promise<void> {
         for (const [chatJidRaw, groupMessages] of messagesByGroup) {
           const chatJid = chatJidRaw as AnyJid;
           const baseJid = getParentJid(chatJid) ?? (chatJid as ChannelJid);
+
+          logger.debug(
+            {
+              chatJid,
+              baseJid,
+              messageCount: groupMessages.length,
+              registeredGroup: !!state.registeredGroups[chatJid],
+              isMultiGroup: isMultiGroupChannel(baseJid),
+            },
+            'Polling loop: routing messages',
+          );
+
           // Multi-group channel: dispatch via resolveTargetGroups
           if (isMultiGroupChannel(baseJid)) {
             const lastGroupMsg = groupMessages[groupMessages.length - 1];
@@ -503,9 +515,21 @@ async function startMessageLoop(): Promise<void> {
 
           // Pull all messages since state.lastAgentTimestamp so non-trigger
           // context that accumulated between triggers is included.
+          const agentCursor = state.lastAgentTimestamp[state.getCursorKey(baseJid)] || '';
+          logger.debug(
+            {
+              chatJid,
+              cursorKey: state.getCursorKey(baseJid),
+              agentCursor,
+              group: group.name,
+              isDm,
+              needsTrigger,
+            },
+            'Polling loop: fetching pending messages',
+          );
           const allPending = getMessagesSince(
             chatJid,
-            state.lastAgentTimestamp[state.getCursorKey(baseJid)] || '',
+            agentCursor,
             ASSISTANT_NAME,
           );
           const messagesToSend =
@@ -524,6 +548,17 @@ async function startMessageLoop(): Promise<void> {
           // otherwise enqueue independently. No more thread-mismatch container killing.
           const msgThread =
             messagesToSend[messagesToSend.length - 1].threadTs || null;
+
+          logger.debug(
+            {
+              chatJid,
+              pendingCount: allPending.length,
+              sendCount: messagesToSend.length,
+              msgThread: msgThread || '__root__',
+              folder: group.folder,
+            },
+            'Polling loop: about to pipe/enqueue',
+          );
 
           // Try to pipe to an existing container for this specific thread (or root)
           if (
