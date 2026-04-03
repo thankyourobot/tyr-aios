@@ -1229,46 +1229,53 @@ async function main(): Promise<void> {
         return;
       }
 
-      // Format questions as Slack blocks
-      const blocks: Record<string, unknown>[] = [];
-      for (const q of questions as Array<{
+      const baseJid = getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
+      const typedQuestions = questions as Array<{
         question: string;
         header?: string;
         options?: Array<{ label: string; description?: string }>;
         multiSelect?: boolean;
-      }>) {
-        blocks.push({
+      }>;
+
+      // Show questions as text + single "Answer" button that opens a modal
+      const questionText = typedQuestions.map((q, i) => {
+        let text = q.header ? `*${q.header}:* ${q.question}` : `*${i + 1}.* ${q.question}`;
+        if (q.options?.length) {
+          text += '\n' + q.options.map((o) => `  • ${o.label}${o.description ? ` — ${o.description}` : ''}`).join('\n');
+        }
+        return text;
+      }).join('\n\n');
+
+      const blocks: Record<string, unknown>[] = [
+        {
           type: 'section',
-          text: {
-            type: 'mrkdwn',
-            text: q.header ? `*${q.header}:* ${q.question}` : q.question,
-          },
-        });
-        if (q.options && q.options.length > 0) {
-          const blockSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-          blocks.push({
-            type: 'actions',
-            block_id: `ask_${blockSuffix}`,
-            elements: q.options.map((opt, i) => ({
+          text: { type: 'mrkdwn', text: questionText },
+        },
+        {
+          type: 'actions',
+          block_id: `ask_modal_${Date.now()}`,
+          elements: [
+            {
               type: 'button',
-              text: { type: 'plain_text', text: opt.label },
-              action_id: `ask_user_answer_${blockSuffix}_${i}`,
+              text: { type: 'plain_text', text: 'Answer' },
+              style: 'primary',
+              action_id: 'ask_user_open_modal',
               value: JSON.stringify({
-                chatJid: getParentJid(chatJid as AnyJid) ?? chatJid,
+                chatJid: baseJid,
                 threadTs: threadTs || '',
                 groupFolder,
-                answer: opt.label,
+                questions: typedQuestions,
               }),
-            })),
-          });
-        }
-      }
+            },
+          ],
+        },
+      ];
 
-      if (channel.sendBlocks && blocks.length > 0) {
+      if (channel.sendBlocks) {
         await channel.sendBlocks(
           chatJid as AnyJid,
           blocks,
-          'Agent has a question',
+          'Agent has questions — click Answer to respond',
           {
             displayName: group.displayName,
             displayEmoji: group.displayEmoji,

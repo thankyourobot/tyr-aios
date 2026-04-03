@@ -350,17 +350,132 @@ export class SlackChannel implements Channel {
       }
     });
 
-    // Plan mode ask_user answer button handler
-    this.app.action(/^ask_user_answer_/, async ({ ack, body }) => {
+    // Plan mode ask_user — button opens modal for answering all questions
+    this.app.action('ask_user_open_modal', async ({ ack, body, client }) => {
       await ack();
       try {
         const action = (body as any).actions[0];
-        const { chatJid, threadTs, groupFolder, answer } = JSON.parse(action.value);
+        const { chatJid, threadTs, groupFolder, questions } = JSON.parse(action.value);
+        const triggerId = (body as any).trigger_id;
+
+        // Build modal blocks from questions
+        const modalBlocks: Record<string, unknown>[] = [];
+        for (let qi = 0; qi < questions.length; qi++) {
+          const q = questions[qi];
+          if (q.options?.length && !q.multiSelect) {
+            // Single-select: radio buttons
+            modalBlocks.push({
+              type: 'input',
+              block_id: `q_${qi}`,
+              label: { type: 'plain_text', text: q.header || `Question ${qi + 1}` },
+              element: {
+                type: 'radio_buttons',
+                action_id: `answer_${qi}`,
+                options: q.options.map((o: { label: string; description?: string }) => ({
+                  text: { type: 'plain_text', text: o.label },
+                  description: o.description ? { type: 'plain_text', text: o.description } : undefined,
+                  value: o.label,
+                })),
+              },
+              optional: true,
+            });
+          } else if (q.options?.length && q.multiSelect) {
+            // Multi-select: checkboxes
+            modalBlocks.push({
+              type: 'input',
+              block_id: `q_${qi}`,
+              label: { type: 'plain_text', text: q.header || `Question ${qi + 1}` },
+              element: {
+                type: 'checkboxes',
+                action_id: `answer_${qi}`,
+                options: q.options.map((o: { label: string; description?: string }) => ({
+                  text: { type: 'plain_text', text: o.label },
+                  description: o.description ? { type: 'plain_text', text: o.description } : undefined,
+                  value: o.label,
+                })),
+              },
+              optional: true,
+            });
+          }
+          // Add question text as context
+          modalBlocks.push({
+            type: 'context',
+            elements: [{ type: 'mrkdwn', text: q.question }],
+          });
+        }
+
+        // Add free text input at the bottom
+        modalBlocks.push({
+          type: 'input',
+          block_id: 'other',
+          label: { type: 'plain_text', text: 'Other / additional context' },
+          element: {
+            type: 'plain_text_input',
+            action_id: 'other_text',
+            multiline: true,
+            placeholder: { type: 'plain_text', text: 'Type here if the options above don\'t fit...' },
+          },
+          optional: true,
+        });
+
+        await client.views.open({
+          trigger_id: triggerId,
+          view: {
+            type: 'modal',
+            callback_id: 'ask_user_modal',
+            title: { type: 'plain_text', text: 'Answer questions' },
+            submit: { type: 'plain_text', text: 'Submit' },
+            close: { type: 'plain_text', text: 'Cancel' },
+            private_metadata: JSON.stringify({
+              chatJid,
+              threadTs,
+              groupFolder,
+              questions,
+            }),
+            blocks: modalBlocks,
+          } as any,
+        });
+      } catch (err) {
+        logger.warn({ err }, 'Failed to open ask_user modal');
+      }
+    });
+
+    // Ask user modal submission handler
+    this.app.view('ask_user_modal', async ({ ack, view }) => {
+      await ack();
+      try {
+        const { chatJid, threadTs, groupFolder, questions } = JSON.parse(
+          view.private_metadata,
+        );
+
+        // Extract answers from modal state
+        const answers: string[] = [];
+        for (let qi = 0; qi < questions.length; qi++) {
+          const block = view.state.values[`q_${qi}`];
+          if (block) {
+            const field = block[`answer_${qi}`];
+            if (field?.selected_option?.value) {
+              answers.push(`${questions[qi].header || `Q${qi + 1}`}: ${field.selected_option.value}`);
+            } else if (field?.selected_options?.length) {
+              const vals = field.selected_options.map((o: { value: string }) => o.value).join(', ');
+              answers.push(`${questions[qi].header || `Q${qi + 1}`}: ${vals}`);
+            }
+          }
+        }
+
+        // Add free text if provided
+        const otherText = view.state.values.other?.other_text?.value;
+        if (otherText) {
+          answers.push(otherText);
+        }
+
+        const answer = answers.join('\n') || '(No answers provided)';
+
         if (this.opts.onAskUserAnswer) {
           await this.opts.onAskUserAnswer({ chatJid, threadTs, groupFolder, answer });
         }
       } catch (err) {
-        logger.warn({ err }, 'Failed to process ask_user answer');
+        logger.warn({ err }, 'Failed to process ask_user modal submission');
       }
     });
 
