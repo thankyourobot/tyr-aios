@@ -1,9 +1,10 @@
 /**
- * PreToolUse hook for plan mode — intercepts ExitPlanMode and AskUserQuestion.
+ * PreToolUse hook — intercepts ExitPlanMode and AskUserQuestion.
  *
- * When the agent calls these native tools (which fail in headless mode),
- * this hook captures the data, writes it to IPC for the host to route
- * to Slack, and returns a friendly deny so the container exits gracefully.
+ * These native tools fail in headless CLI mode (permission-denied).
+ * This hook captures the data, writes it to IPC for the host to route
+ * to Slack, writes _close sentinel to deterministically stop the CLI,
+ * and returns deny.
  *
  * The user responds in Slack, and a new container resumes the session
  * with the user's response as a follow-up message.
@@ -14,6 +15,7 @@ import path from 'path';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
+const CLOSE_SENTINEL = '/workspace/ipc/input/_close';
 
 const chatJid = process.env.NANOCLAW_CHAT_JID || '';
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER || '';
@@ -57,6 +59,22 @@ function readPlanFile(): string {
   }
 }
 
+function denyAndStop(reason: string): void {
+  // Write _close sentinel — agent-runner polls every 500ms, will SIGTERM the CLI
+  fs.mkdirSync(path.dirname(CLOSE_SENTINEL), { recursive: true });
+  fs.writeFileSync(CLOSE_SENTINEL, '');
+
+  const output = {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  };
+  process.stdout.write(JSON.stringify(output));
+  process.exit(0);
+}
+
 async function main() {
   // Read hook input from stdin
   let raw = '';
@@ -84,16 +102,9 @@ async function main() {
       timestamp: new Date().toISOString(),
     });
 
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          'Plan submitted to Slack. Waiting for user approval. Your session will resume when the user responds.',
-      },
-    };
-    process.stdout.write(JSON.stringify(output));
-    process.exit(0);
+    denyAndStop(
+      'Your plan has been submitted for user approval via Slack. Your session will be resumed when the user responds.',
+    );
   }
 
   if (input.tool_name === 'AskUserQuestion') {
@@ -108,19 +119,12 @@ async function main() {
       timestamp: new Date().toISOString(),
     });
 
-    const output = {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason:
-          'Questions forwarded to user via Slack. Waiting for response. Your session will resume when the user answers.',
-      },
-    };
-    process.stdout.write(JSON.stringify(output));
-    process.exit(0);
+    denyAndStop(
+      'Your questions have been forwarded to the user via Slack. Your session will be resumed when the user responds.',
+    );
   }
 
-  // Not a plan mode tool — pass through
+  // Not a matched tool — pass through
   process.exit(0);
 }
 

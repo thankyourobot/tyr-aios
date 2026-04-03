@@ -208,7 +208,7 @@ export function writeHooksSettings(config: HooksConfig): void {
 
   if (config.planModeHookScriptPath) {
     hooks.PreToolUse = [{
-      matcher: 'ExitPlanMode|AskUserQuestion',
+      matcher: '^(ExitPlanMode|AskUserQuestion)$',
       hooks: [{
         type: 'command',
         command: `node ${config.planModeHookScriptPath}`,

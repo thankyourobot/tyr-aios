@@ -116,16 +116,16 @@ export async function* query(input: {
   const mcpConfigPath = writeMcpConfig(options.mcpServers);
 
   {
-    const hooksConfig: import('./cli-utils.js').HooksConfig = {};
+    const hooksConfig: import('./cli-utils.js').HooksConfig = {
+      // Always register plan mode hook — agents can enter plan mode autonomously,
+      // and AskUserQuestion fails in headless mode regardless of plan mode.
+      // The hook only matches ExitPlanMode|AskUserQuestion, so zero overhead when not called.
+      planModeHookScriptPath: path.join(__dirname, 'plan-mode-hook.js'),
+    };
     if (options.hooks?.PreCompact) {
       hooksConfig.precompactScriptPath = path.join(__dirname, 'precompact-hook.js');
     }
-    if (options.planMode) {
-      hooksConfig.planModeHookScriptPath = path.join(__dirname, 'plan-mode-hook.js');
-    }
-    if (hooksConfig.precompactScriptPath || hooksConfig.planModeHookScriptPath) {
-      writeHooksSettings(hooksConfig);
-    }
+    writeHooksSettings(hooksConfig);
   }
 
   let sessionId = options.resume;
