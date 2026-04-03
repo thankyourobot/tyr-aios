@@ -16,7 +16,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import { glob } from 'fs/promises';
 import { query, HookCallback, PreCompactHookInput } from './claude-backend.js';
 import { fileURLToPath } from 'url';
 import {
@@ -284,30 +283,37 @@ function formatToolUseSummary(
 // --- LCM ---
 
 const LCM_DB_PATH = '/home/node/.claude/lcm.db';
-const LCM_TRANSCRIPT_GLOB = '/home/node/.claude/projects/-workspace-group/*.jsonl';
 const LCM_FRESHNESS_WINDOW = parseInt(process.env.LCM_FRESHNESS_WINDOW || '32', 10);
+
+const LCM_TRANSCRIPT_DIR = '/home/node/.claude/projects/-workspace-group';
 
 /**
  * Find the most recently modified transcript JSONL file.
  */
-async function findLatestTranscript(): Promise<string | null> {
-  const files: string[] = [];
-  for await (const f of glob(LCM_TRANSCRIPT_GLOB)) {
-    files.push(f);
-  }
-  if (files.length === 0) return null;
-
-  // Pick the most recently modified
-  let latest = files[0];
-  let latestMtime = fs.statSync(latest).mtimeMs;
-  for (let i = 1; i < files.length; i++) {
-    const mtime = fs.statSync(files[i]).mtimeMs;
-    if (mtime > latestMtime) {
-      latest = files[i];
-      latestMtime = mtime;
+function findLatestTranscript(): string | null {
+  try {
+    if (!fs.existsSync(LCM_TRANSCRIPT_DIR)) {
+      log(`LCM: Transcript dir does not exist: ${LCM_TRANSCRIPT_DIR}`);
+      return null;
     }
+    const entries = fs.readdirSync(LCM_TRANSCRIPT_DIR).filter(f => f.endsWith('.jsonl'));
+    if (entries.length === 0) return null;
+
+    let latest = path.join(LCM_TRANSCRIPT_DIR, entries[0]);
+    let latestMtime = fs.statSync(latest).mtimeMs;
+    for (let i = 1; i < entries.length; i++) {
+      const fullPath = path.join(LCM_TRANSCRIPT_DIR, entries[i]);
+      const mtime = fs.statSync(fullPath).mtimeMs;
+      if (mtime > latestMtime) {
+        latest = fullPath;
+        latestMtime = mtime;
+      }
+    }
+    return latest;
+  } catch (err) {
+    log(`LCM: findLatestTranscript error: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
   }
-  return latest;
 }
 
 /**
@@ -316,20 +322,24 @@ async function findLatestTranscript(): Promise<string | null> {
  * All errors are non-fatal.
  */
 async function persistToLcm(conversationId: string, assistantName?: string): Promise<void> {
+  log(`LCM: persistToLcm called (conversationId=${conversationId}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
   if (process.env.LCM_ENABLED === 'false') return;
 
   try {
     const db = initLcmDatabase(LCM_DB_PATH);
-    if (!db) return;
+    if (!db) { log('LCM: initLcmDatabase returned null'); return; }
 
-    const transcriptPath = await findLatestTranscript();
+    log(`LCM: Finding transcript in ${LCM_TRANSCRIPT_DIR}`);
+    const transcriptPath = findLatestTranscript();
     if (!transcriptPath) {
       log('LCM: No transcript found');
       return;
     }
+    log(`LCM: Found transcript: ${transcriptPath}`);
 
     const content = fs.readFileSync(transcriptPath, 'utf-8');
     const messages = parseTranscript(content);
+    log(`LCM: Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
     if (messages.length === 0) return;
 
     const currentMaxSeq = getMaxSequence(conversationId);
