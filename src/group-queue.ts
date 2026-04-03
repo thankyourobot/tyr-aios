@@ -260,7 +260,14 @@ export class GroupQueue {
   ): void {
     const state = this.getGroup(chatJid, threadTs, groupFolder);
     state.idleWaiting = true;
-    if (state.pendingTasks.length > 0) {
+    // Preempt for pending tasks (any slot) or pending root messages.
+    // Root messages are independent conversations — no reason to idle-wait.
+    // Thread slots keep idle-waiting so follow-ups can pipe to the container.
+    const isRootSlot = !threadTs || threadTs === '__root__';
+    if (
+      state.pendingTasks.length > 0 ||
+      (isRootSlot && state.pendingMessages)
+    ) {
       this.closeStdin(chatJid, threadTs, groupFolder);
     }
   }
