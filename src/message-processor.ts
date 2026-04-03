@@ -319,56 +319,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           return;
         }
 
-        // Plan ready: agent called submit_plan — post plan + Approve button in thread
-        if (result.type === 'plan_ready' && result.result) {
-          await channel.sendMessage(chatJid, result.result, {
-            displayName: group.displayName,
-            displayEmoji: group.displayEmoji,
-            displayIconUrl: group.displayIconUrl,
-            botToken: group.botToken,
-            threadTs: lastThreadTs,
-          });
-          if (channel.sendBlocks) {
-            await channel.sendBlocks(
-              chatJid,
-              [
-                {
-                  type: 'section',
-                  text: {
-                    type: 'mrkdwn',
-                    text: '_Reply to revise the plan_',
-                  },
-                },
-                {
-                  type: 'actions',
-                  block_id: `plan_${Date.now()}`,
-                  elements: [
-                    {
-                      type: 'button',
-                      text: { type: 'plain_text', text: 'Approve' },
-                      style: 'primary',
-                      action_id: 'plan_approve',
-                      value: JSON.stringify({
-                        chatJid: channelJid,
-                        threadTs: lastThreadTs,
-                        groupFolder: group.folder,
-                      }),
-                    },
-                  ],
-                },
-              ],
-              'Plan ready — Approve or reply to revise',
-              {
-                displayName: group.displayName,
-                displayEmoji: group.displayEmoji,
-                displayIconUrl: group.displayIconUrl,
-                botToken: group.botToken,
-                threadTs: lastThreadTs,
-              },
-            );
-          }
-          return;
-        }
+        // plan_ready is now handled via IPC (plan-mode-hook.ts → ipc.ts → index.ts)
 
         if (result.result) {
           const raw =

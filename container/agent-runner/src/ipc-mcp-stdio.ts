@@ -421,25 +421,6 @@ server.tool(
   },
 );
 
-server.tool(
-  'submit_plan',
-  'Submit your plan for user approval. Call this when your plan is complete and ready for review. The user will see an Approve button — do NOT execute the plan until they approve it. Include the full plan text.',
-  {
-    plan: z.string().describe('The complete plan text to present for approval'),
-  },
-  async () => {
-    // The agent-runner detects this tool call in the CLI stream and emits
-    // the plan via the streaming output path (which has thread context).
-    // No IPC file needed — the tool just needs to exist for the agent to call.
-    return {
-      content: [{
-        type: 'text' as const,
-        text: 'Plan submitted for approval. Wait for the user to approve before executing.',
-      }],
-    };
-  },
-);
-
 // --- Assignment Tools (direct sqlite3 access — no IPC needed) ---
 
 const ASSIGNMENTS_DB = '/workspace/extra/shared/assignments.db';

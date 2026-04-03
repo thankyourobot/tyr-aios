@@ -115,9 +115,17 @@ export async function* query(input: {
 
   const mcpConfigPath = writeMcpConfig(options.mcpServers);
 
-  if (options.hooks?.PreCompact) {
-    const precompactScriptPath = path.join(__dirname, 'precompact-hook.js');
-    writeHooksSettings(precompactScriptPath);
+  {
+    const hooksConfig: import('./cli-utils.js').HooksConfig = {};
+    if (options.hooks?.PreCompact) {
+      hooksConfig.precompactScriptPath = path.join(__dirname, 'precompact-hook.js');
+    }
+    if (options.planMode) {
+      hooksConfig.planModeHookScriptPath = path.join(__dirname, 'plan-mode-hook.js');
+    }
+    if (hooksConfig.precompactScriptPath || hooksConfig.planModeHookScriptPath) {
+      writeHooksSettings(hooksConfig);
+    }
   }
 
   let sessionId = options.resume;

@@ -61,6 +61,12 @@ export interface SlackChannelOpts {
     threadTs: string;
     groupFolder: string;
   }) => Promise<void>;
+  onAskUserAnswer?: (params: {
+    chatJid: string;
+    threadTs: string;
+    groupFolder: string;
+    answer: string;
+  }) => Promise<void>;
   /** Handle slash commands. Returns the response text (shown ephemerally). */
   onSlashCommand?: (params: {
     command: string;
@@ -341,6 +347,20 @@ export class SlackChannel implements Channel {
         }
       } catch (err) {
         logger.warn({ err }, 'Failed to process plan approval');
+      }
+    });
+
+    // Plan mode ask_user answer button handler
+    this.app.action(/^ask_user_answer_/, async ({ ack, body }) => {
+      await ack();
+      try {
+        const action = (body as any).actions[0];
+        const { chatJid, threadTs, groupFolder, answer } = JSON.parse(action.value);
+        if (this.opts.onAskUserAnswer) {
+          await this.opts.onAskUserAnswer({ chatJid, threadTs, groupFolder, answer });
+        }
+      } catch (err) {
+        logger.warn({ err }, 'Failed to process ask_user answer');
       }
     });
 

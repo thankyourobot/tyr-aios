@@ -174,11 +174,16 @@ export function writeMcpConfig(
 
 // ── CLI hooks settings ───────────────────────────────────────────────────────
 
+export interface HooksConfig {
+  precompactScriptPath?: string;
+  planModeHookScriptPath?: string;
+}
+
 /**
  * Write CLI hooks settings to ~/.claude/settings.json.
  * Merges with existing settings (preserving env vars etc.).
  */
-export function writeHooksSettings(precompactScriptPath: string): void {
+export function writeHooksSettings(config: HooksConfig): void {
   const settingsDir = '/home/node/.claude';
   fs.mkdirSync(settingsDir, { recursive: true });
   const settingsPath = path.join(settingsDir, 'settings.json');
@@ -190,14 +195,28 @@ export function writeHooksSettings(precompactScriptPath: string): void {
     }
   } catch { /* start fresh */ }
 
-  settings.hooks = {
-    PreCompact: [{
+  const hooks: Record<string, unknown[]> = {};
+
+  if (config.precompactScriptPath) {
+    hooks.PreCompact = [{
       hooks: [{
         type: 'command',
-        command: `node ${precompactScriptPath}`,
+        command: `node ${config.precompactScriptPath}`,
       }],
-    }],
-  };
+    }];
+  }
+
+  if (config.planModeHookScriptPath) {
+    hooks.PreToolUse = [{
+      matcher: 'ExitPlanMode|AskUserQuestion',
+      hooks: [{
+        type: 'command',
+        command: `node ${config.planModeHookScriptPath}`,
+      }],
+    }];
+  }
+
+  settings.hooks = hooks;
 
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 }

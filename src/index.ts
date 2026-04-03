@@ -914,6 +914,30 @@ async function main(): Promise<void> {
         params.groupFolder,
       );
     },
+    onAskUserAnswer: async (params: {
+      chatJid: string;
+      threadTs: string;
+      groupFolder: string;
+      answer: string;
+    }) => {
+      // Store the user's answer as a message and enqueue for processing
+      const answerJid = params.chatJid as AnyJid;
+      const answerBaseJid = getParentJid(answerJid) ?? (answerJid as ChannelJid);
+      storeMessage({
+        id: Date.now().toString(),
+        chat_jid: buildThreadJid(answerBaseJid, params.threadTs),
+        sender: 'user',
+        sender_name: 'User',
+        content: params.answer,
+        timestamp: new Date().toISOString(),
+        threadTs: params.threadTs,
+      });
+      state.queue.enqueueMessageCheck(
+        answerBaseJid,
+        params.threadTs,
+        params.groupFolder,
+      );
+    },
     onSlashCommand: async (params: {
       command: string;
       text: string;
@@ -1123,6 +1147,137 @@ async function main(): Promise<void> {
       if (channel?.addReaction) {
         await channel.addReaction(jid as AnyJid, messageTs, emoji);
       }
+    },
+    onPlanReady: async (chatJid: string, groupFolder: string, plan: string, threadTs?: string) => {
+      const channel = findChannel(state.channels, chatJid as AnyJid);
+      if (!channel) {
+        logger.warn({ chatJid }, 'No channel for plan_ready IPC');
+        return;
+      }
+      // Find the group by folder
+      const group = Object.values(state.registeredGroups).find(
+        (g) => g.folder === groupFolder,
+      );
+      if (!group) {
+        logger.warn({ groupFolder }, 'No group for plan_ready IPC');
+        return;
+      }
+      const baseJid = getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
+
+      // Send plan text
+      await channel.sendMessage(chatJid as AnyJid, plan, {
+        displayName: group.displayName,
+        displayEmoji: group.displayEmoji,
+        displayIconUrl: group.displayIconUrl,
+        botToken: group.botToken,
+        threadTs,
+      });
+
+      // Send Approve button
+      if (channel.sendBlocks) {
+        await channel.sendBlocks(
+          chatJid as AnyJid,
+          [
+            {
+              type: 'section',
+              text: {
+                type: 'mrkdwn',
+                text: '_Reply to revise the plan_',
+              },
+            },
+            {
+              type: 'actions',
+              block_id: `plan_${Date.now()}`,
+              elements: [
+                {
+                  type: 'button',
+                  text: { type: 'plain_text', text: 'Approve' },
+                  style: 'primary',
+                  action_id: 'plan_approve',
+                  value: JSON.stringify({
+                    chatJid: baseJid,
+                    threadTs: threadTs || '',
+                    groupFolder,
+                  }),
+                },
+              ],
+            },
+          ],
+          'Plan ready — Approve or reply to revise',
+          {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            displayIconUrl: group.displayIconUrl,
+            botToken: group.botToken,
+            threadTs,
+          },
+        );
+      }
+      logger.info({ chatJid, groupFolder, threadTs }, 'Plan posted from IPC');
+    },
+    onAskUser: async (chatJid: string, groupFolder: string, questions: unknown[], threadTs?: string) => {
+      const channel = findChannel(state.channels, chatJid as AnyJid);
+      if (!channel) {
+        logger.warn({ chatJid }, 'No channel for ask_user IPC');
+        return;
+      }
+      const group = Object.values(state.registeredGroups).find(
+        (g) => g.folder === groupFolder,
+      );
+      if (!group) {
+        logger.warn({ groupFolder }, 'No group for ask_user IPC');
+        return;
+      }
+
+      // Format questions as Slack blocks
+      const blocks: Record<string, unknown>[] = [];
+      for (const q of questions as Array<{
+        question: string;
+        header?: string;
+        options?: Array<{ label: string; description?: string }>;
+        multiSelect?: boolean;
+      }>) {
+        blocks.push({
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: q.header ? `*${q.header}:* ${q.question}` : q.question,
+          },
+        });
+        if (q.options && q.options.length > 0) {
+          blocks.push({
+            type: 'actions',
+            block_id: `ask_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            elements: q.options.map((opt, i) => ({
+              type: 'button',
+              text: { type: 'plain_text', text: opt.label },
+              action_id: `ask_user_answer_${i}`,
+              value: JSON.stringify({
+                chatJid: getParentJid(chatJid as AnyJid) ?? chatJid,
+                threadTs: threadTs || '',
+                groupFolder,
+                answer: opt.label,
+              }),
+            })),
+          });
+        }
+      }
+
+      if (channel.sendBlocks && blocks.length > 0) {
+        await channel.sendBlocks(
+          chatJid as AnyJid,
+          blocks,
+          'Agent has a question',
+          {
+            displayName: group.displayName,
+            displayEmoji: group.displayEmoji,
+            displayIconUrl: group.displayIconUrl,
+            botToken: group.botToken,
+            threadTs,
+          },
+        );
+      }
+      logger.info({ chatJid, groupFolder, threadTs }, 'Questions posted from IPC');
     },
   });
   state.queue.setProcessMessagesFn(processGroupMessages);

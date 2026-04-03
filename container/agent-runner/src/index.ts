@@ -40,7 +40,7 @@ interface ContainerInput {
 interface ContainerOutput {
   status: 'success' | 'error';
   result: string | null;
-  type?: 'result' | 'verbose' | 'thinking' | 'plan_ready';
+  type?: 'result' | 'verbose' | 'thinking';
   newSessionId?: string;
   lastAssistantUuid?: string;
   contextUsage?: {
@@ -322,8 +322,9 @@ async function runQuery(
     const planInstructions = [
       '',
       'IMPORTANT: You are in plan mode. Call the EnterPlanMode tool immediately before doing anything else.',
-      'Explore the codebase, design your approach, then call ExitPlanMode when your plan is ready.',
-      'Do NOT execute the plan — wait for user approval after presenting it.',
+      'Explore the codebase, design your approach. Use AskUserQuestion if you need to clarify requirements.',
+      'When your plan is complete, call ExitPlanMode to present it for user approval.',
+      'Do NOT execute the plan — wait for user approval.',
     ].join('\n');
     globalClaudeMd = (globalClaudeMd || '') + planInstructions;
   }
@@ -359,7 +360,7 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'EnterPlanMode', 'ExitPlanMode',
+        'EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion',
         'memory_20250818',
         'mcp__nanoclaw__*'
       ],
@@ -400,26 +401,6 @@ async function runQuery(
           cacheReadTokens: u.cache_read_input_tokens || 0,
           contextWindow: 0,
         };
-      }
-    }
-
-    // Detect submit_plan MCP tool call → emit plan_ready output
-    // (streaming path has thread context; IPC path does not)
-    if (message.type === 'assistant') {
-      const content = (message as { message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> } }).message?.content;
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block.type === 'tool_use' && block.name?.includes('submit_plan')) {
-            log(`[tool_use] name=${block.name} hasInput=${!!block.input} inputKeys=${Object.keys(block.input || {}).join(',')}`);
-          }
-          if (block.type === 'tool_use' && block.name === 'mcp__nanoclaw__submit_plan') {
-            const planText = (block.input as { plan?: string })?.plan || '';
-            log(`[submit_plan detected] planText length=${planText.length}, input keys=${Object.keys(block.input || {}).join(',')}`);
-            if (planText) {
-              writeOutput({ status: 'success', result: planText, type: 'plan_ready' });
-            }
-          }
-        }
       }
     }
 
@@ -551,6 +532,13 @@ async function main(): Promise<void> {
     sdkEnv.NANOCLAW_ASSISTANT_NAME = containerInput.assistantName;
   }
 
+  // Pass context to hooks (plan-mode-hook.ts reads these)
+  sdkEnv.NANOCLAW_CHAT_JID = containerInput.chatJid;
+  sdkEnv.NANOCLAW_GROUP_FOLDER = containerInput.groupFolder;
+  if (containerInput.threadTs) {
+    sdkEnv.NANOCLAW_THREAD_TS = containerInput.threadTs;
+  }
+
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
@@ -563,7 +551,7 @@ async function main(): Promise<void> {
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.planMode) {
-    prompt += `\n\n[PLAN MODE — You MUST call the EnterPlanMode tool as your very first action. Do NOT respond to the user yet. Call EnterPlanMode first, then explore the codebase and design your approach. When your plan is complete, call the submit_plan MCP tool with the full plan text. Do NOT execute — wait for user approval.]`;
+    prompt += `\n\n[PLAN MODE — You MUST call the EnterPlanMode tool as your very first action. Do NOT respond to the user yet. Call EnterPlanMode first, then explore the codebase and design your approach. Use AskUserQuestion if you need to clarify requirements. When your plan is complete, call ExitPlanMode to present it for approval. Do NOT execute — wait for user approval.]`;
   }
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;

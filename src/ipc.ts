@@ -31,6 +31,20 @@ export interface IpcDeps {
     messageTs: string,
     emoji: string,
   ) => Promise<void>;
+  /** Handle plan_ready IPC from plan mode hook. */
+  onPlanReady?: (
+    chatJid: string,
+    groupFolder: string,
+    plan: string,
+    threadTs?: string,
+  ) => Promise<void>;
+  /** Handle ask_user IPC from plan mode hook. */
+  onAskUser?: (
+    chatJid: string,
+    groupFolder: string,
+    questions: unknown[],
+    threadTs?: string,
+  ) => Promise<void>;
 }
 
 let ipcWatcherRunning = false;
@@ -101,6 +115,26 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              }
+              // Handle plan_ready from plan mode hook
+              if (data.type === 'plan_ready' && data.chatJid && data.plan) {
+                if (deps.onPlanReady) {
+                  await deps.onPlanReady(data.chatJid, sourceGroup, data.plan, data.threadTs);
+                  logger.info(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'IPC plan_ready handled',
+                  );
+                }
+              }
+              // Handle ask_user from plan mode hook
+              if (data.type === 'ask_user' && data.chatJid && data.questions) {
+                if (deps.onAskUser) {
+                  await deps.onAskUser(data.chatJid, sourceGroup, data.questions as unknown[], data.threadTs);
+                  logger.info(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'IPC ask_user handled',
                   );
                 }
               }
