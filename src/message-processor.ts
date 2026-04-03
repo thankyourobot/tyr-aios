@@ -80,8 +80,9 @@ export class MessageProcessor {
     if (!group) return true;
 
     // Check for pending fork (lazy rewind — fork happens on first real user message)
-    const pendingFork =
-      threadTs ? getPendingFork(group.folder, threadTs) : null;
+    const pendingFork = threadTs
+      ? getPendingFork(group.folder, threadTs)
+      : null;
 
     // Remove any "busy" reactions now that we're processing this group's messages
     const busyKey = `${chatJid}::${threadTs || '__root__'}`;
@@ -116,10 +117,16 @@ export class MessageProcessor {
     // cursors so the polling loop in startMessageLoop can read them correctly.
     const isMultiGroup = this.groupManager.isMultiGroupChannel(channelJid);
     const cursorGroupFolder = isMultiGroup ? groupFolder : undefined;
-    const cursorKey = this.state.getCursorKey(channelJid, threadTs, cursorGroupFolder);
+    const cursorKey = this.state.getCursorKey(
+      channelJid,
+      threadTs,
+      cursorGroupFolder,
+    );
     const sinceTimestamp =
       this.state.lastAgentTimestamp[cursorKey] ||
-      this.state.lastAgentTimestamp[this.state.getCursorKey(channelJid, threadTs)] ||
+      this.state.lastAgentTimestamp[
+        this.state.getCursorKey(channelJid, threadTs)
+      ] ||
       this.state.lastAgentTimestamp[channelJid] ||
       '';
     // Multi-group dispatch: include bot messages so agent sees full cross-agent conversation.
@@ -181,9 +188,12 @@ ${formatMessages([parentMsg], TIMEZONE)}
 
     // Advance cursor so the piping path in startMessageLoop won't re-fetch
     // these messages. Save the old cursor so we can roll back on error.
-    const previousCursor = this.state.lastAgentTimestamp[cursorKey]
-      || this.state.lastAgentTimestamp[this.state.getCursorKey(channelJid, threadTs)]
-      || '';
+    const previousCursor =
+      this.state.lastAgentTimestamp[cursorKey] ||
+      this.state.lastAgentTimestamp[
+        this.state.getCursorKey(channelJid, threadTs)
+      ] ||
+      '';
     this.state.lastAgentTimestamp[cursorKey] =
       missedMessages[missedMessages.length - 1].timestamp;
     this.saveFn();
@@ -212,7 +222,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
           { group: group.name },
           'Idle timeout, closing container stdin',
         );
-        this.state.queue.closeStdin(chatJid, lastThreadTs, group.folder);
+        this.state.queue.closeStdin(chatJid, threadTs, group.folder);
       }, IDLE_TIMEOUT);
     };
 
@@ -449,7 +459,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
         }
 
         if (result.status === 'success') {
-          this.state.queue.notifyIdle(chatJid, lastThreadTs, group.folder);
+          this.state.queue.notifyIdle(chatJid, threadTs, group.folder);
         }
 
         if (result.status === 'error') {
@@ -504,7 +514,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
    * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
   async dispatchMessage(chatJid: AnyJid, msg: NewMessage): Promise<void> {
-    const channelJid: ChannelJid = getParentJid(chatJid) ?? (chatJid as ChannelJid);
+    const channelJid: ChannelJid =
+      getParentJid(chatJid) ?? (chatJid as ChannelJid);
     const { threadTs } = parseSlackJid(chatJid);
 
     if (!this.groupManager.isMultiGroupChannel(channelJid)) {
@@ -601,9 +612,7 @@ ${formatMessages([parentMsg], TIMEZONE)}
         // via their own processGroupMessages.
         const typingJid = buildThreadJid(channelJid, effectiveTs);
         const channel = findChannel(this.state.channels, channelJid);
-        channel
-          ?.setTyping?.(typingJid, true, group.botToken)
-          ?.catch(() => {});
+        channel?.setTyping?.(typingJid, true, group.botToken)?.catch(() => {});
       }
     }
   }
@@ -613,7 +622,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
    * chatJid is a plain channel or synthetic thread JID (never group-qualified).
    */
   dispatchBotMessage(chatJid: AnyJid, msg: NewMessage): void {
-    const channelJid: ChannelJid = getParentJid(chatJid) ?? (chatJid as ChannelJid);
+    const channelJid: ChannelJid =
+      getParentJid(chatJid) ?? (chatJid as ChannelJid);
     const { threadTs } = parseSlackJid(chatJid);
 
     if (!this.groupManager.isMultiGroupChannel(channelJid)) return;
