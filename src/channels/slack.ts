@@ -446,8 +446,6 @@ export class SlackChannel implements Channel {
               chatJid,
               threadTs,
               groupFolder,
-              messageTs: (body as any).message?.ts,
-              channelId: (body as any).channel?.id,
             }),
             blocks: modalBlocks,
           } as any,
@@ -461,7 +459,7 @@ export class SlackChannel implements Channel {
     this.app.view('ask_user_modal', async ({ ack, view }) => {
       await ack();
       try {
-        const { questionId, chatJid, threadTs, groupFolder, messageTs, channelId } = JSON.parse(
+        const { questionId, chatJid, threadTs, groupFolder } = JSON.parse(
           view.private_metadata,
         );
 
@@ -499,34 +497,10 @@ export class SlackChannel implements Channel {
           await this.opts.onAskUserAnswer({ chatJid, threadTs, groupFolder, answer });
         }
 
-        // Remove the "Answer" button from the original message (keep question text)
-        if (messageTs && channelId) {
-          try {
-            // Look up bot token to update the message (must use same token that posted it)
-            const registeredGroups = this.opts.registeredGroups();
-            const group = Object.values(registeredGroups).find(
-              (g) => g.folder === groupFolder,
-            );
-            const updateClient = this.getClient(group?.botToken);
-            // Build question text block (same format as onAskUser in index.ts)
-            const questionText = questions
-              ?.map((q, i) => q.header ? `*${q.header}:* ${q.question}` : `*${i + 1}.* ${q.question}`)
-              .join('\n\n') || 'Questions answered';
-            await updateClient.chat.update({
-              channel: channelId,
-              ts: messageTs,
-              text: 'Questions answered',
-              blocks: [
-                {
-                  type: 'section',
-                  text: { type: 'mrkdwn', text: `~${questionText}~\n\n_Answered_` },
-                },
-              ],
-            });
-          } catch (err) {
-            logger.warn({ err }, 'Failed to update ask_user message after modal submit');
-          }
-        }
+        // Note: button stays visible after submit. "User answered:" message below
+        // it makes the flow clear. Removing the button via chat.update requires
+        // matching the exact bot token that posted it, which is complex for
+        // per-agent bots. Accepted tradeoff.
       } catch (err) {
         logger.warn({ err }, 'Failed to process ask_user modal submission');
       }
