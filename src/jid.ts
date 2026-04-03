@@ -77,3 +77,4 @@ export function getParentJid(jid: AnyJid): ChannelJid | null {
 export function isSyntheticThreadJid(jid: string): jid is ThreadJid {
   return THREAD_JID_REGEX.test(jid);
 }
+// test

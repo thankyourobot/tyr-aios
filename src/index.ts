@@ -526,9 +526,12 @@ async function startMessageLoop(): Promise<void> {
           const msgThread =
             messagesToSend[messagesToSend.length - 1].threadTs || null;
 
-          // Try to pipe to an existing container for this specific thread (or root)
+          // Try to pipe to an existing container for this specific thread.
+          // Root messages (msgThread=null) are never piped — each root message
+          // is an independent conversation that gets its own container + thread.
           if (
             !isDm &&
+            msgThread !== null &&
             state.queue.sendMessage(baseJid, msgThread, formatted, group.folder)
           ) {
             logger.debug(
