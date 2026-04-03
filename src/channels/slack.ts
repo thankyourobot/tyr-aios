@@ -67,6 +67,8 @@ export interface SlackChannelOpts {
     groupFolder: string;
     answer: string;
   }) => Promise<void>;
+  /** Look up pending questions by ID for the ask_user modal. */
+  getPendingQuestions?: (questionId: string) => unknown[] | undefined;
   /** Handle slash commands. Returns the response text (shown ephemerally). */
   onSlashCommand?: (params: {
     command: string;
@@ -355,13 +357,26 @@ export class SlackChannel implements Channel {
       await ack();
       try {
         const action = (body as any).actions[0];
-        const { chatJid, threadTs, groupFolder, questions } = JSON.parse(action.value);
+        const { questionId, chatJid, threadTs, groupFolder } = JSON.parse(action.value);
         const triggerId = (body as any).trigger_id;
 
+        // Look up questions from in-memory map
+        const questions = this.opts.getPendingQuestions?.(questionId);
+        if (!questions?.length) {
+          logger.warn({ questionId }, 'Pending questions not found or expired');
+          return;
+        }
+
         // Build modal blocks from questions
+        const typedQs = questions as Array<{
+          question: string;
+          header?: string;
+          options?: Array<{ label: string; description?: string }>;
+          multiSelect?: boolean;
+        }>;
         const modalBlocks: Record<string, unknown>[] = [];
-        for (let qi = 0; qi < questions.length; qi++) {
-          const q = questions[qi];
+        for (let qi = 0; qi < typedQs.length; qi++) {
+          const q = typedQs[qi];
           if (q.options?.length && !q.multiSelect) {
             // Single-select: radio buttons
             modalBlocks.push({
@@ -427,10 +442,10 @@ export class SlackChannel implements Channel {
             submit: { type: 'plain_text', text: 'Submit' },
             close: { type: 'plain_text', text: 'Cancel' },
             private_metadata: JSON.stringify({
+              questionId,
               chatJid,
               threadTs,
               groupFolder,
-              questions,
             }),
             blocks: modalBlocks,
           } as any,
@@ -444,21 +459,27 @@ export class SlackChannel implements Channel {
     this.app.view('ask_user_modal', async ({ ack, view }) => {
       await ack();
       try {
-        const { chatJid, threadTs, groupFolder, questions } = JSON.parse(
+        const { questionId, chatJid, threadTs, groupFolder } = JSON.parse(
           view.private_metadata,
         );
 
+        // Look up questions from in-memory map
+        const questions = this.opts.getPendingQuestions?.(questionId) as Array<{
+          header?: string;
+        }> | undefined;
+
         // Extract answers from modal state
         const answers: string[] = [];
-        for (let qi = 0; qi < questions.length; qi++) {
+        const questionCount = questions?.length || 0;
+        for (let qi = 0; qi < questionCount; qi++) {
           const block = view.state.values[`q_${qi}`];
           if (block) {
             const field = block[`answer_${qi}`];
             if (field?.selected_option?.value) {
-              answers.push(`${questions[qi].header || `Q${qi + 1}`}: ${field.selected_option.value}`);
+              answers.push(`${questions![qi].header || `Q${qi + 1}`}: ${field.selected_option.value}`);
             } else if (field?.selected_options?.length) {
               const vals = field.selected_options.map((o: { value: string }) => o.value).join(', ');
-              answers.push(`${questions[qi].header || `Q${qi + 1}`}: ${vals}`);
+              answers.push(`${questions![qi].header || `Q${qi + 1}`}: ${vals}`);
             }
           }
         }

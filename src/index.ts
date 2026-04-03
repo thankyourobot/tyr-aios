@@ -914,6 +914,8 @@ async function main(): Promise<void> {
         params.groupFolder,
       );
     },
+    getPendingQuestions: (questionId: string) =>
+      state.pendingQuestions.get(questionId),
     onAskUserAnswer: async (params: {
       chatJid: string;
       threadTs: string;
@@ -1237,6 +1239,12 @@ async function main(): Promise<void> {
         multiSelect?: boolean;
       }>;
 
+      // Store questions in memory map (Slack button value has 2000 char limit)
+      const questionId = `aq_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+      state.pendingQuestions.set(questionId, typedQuestions);
+      // Auto-cleanup after 30 min
+      setTimeout(() => state.pendingQuestions.delete(questionId), 30 * 60 * 1000);
+
       // Show questions as text + single "Answer" button that opens a modal
       const questionText = typedQuestions.map((q, i) => {
         let text = q.header ? `*${q.header}:* ${q.question}` : `*${i + 1}.* ${q.question}`;
@@ -1261,10 +1269,10 @@ async function main(): Promise<void> {
               style: 'primary',
               action_id: 'ask_user_open_modal',
               value: JSON.stringify({
+                questionId,
                 chatJid: baseJid,
                 threadTs: threadTs || '',
                 groupFolder,
-                questions: typedQuestions,
               }),
             },
           ],

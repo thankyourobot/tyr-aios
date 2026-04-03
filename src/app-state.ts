@@ -34,6 +34,9 @@ export class AppState {
     Array<{ jid: string; messageTs: string }>
   >();
 
+  // Pending AskUserQuestion data — keyed by short ID, consumed when modal opens
+  pendingQuestions = new Map<string, unknown[]>();
+
   // Per-thread toggle overrides (ephemeral — resets on restart)
   threadToggles = new Map<
     string,
