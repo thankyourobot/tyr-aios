@@ -922,9 +922,23 @@ async function main(): Promise<void> {
       groupFolder: string;
       answer: string;
     }) => {
-      // Store the user's answer as a message and enqueue for processing
       const answerJid = params.chatJid as AnyJid;
       const answerBaseJid = getParentJid(answerJid) ?? (answerJid as ChannelJid);
+
+      // Post the answer visibly in Slack thread (neutral attribution)
+      const channel = findChannel(state.channels, answerBaseJid);
+      const group = Object.values(state.registeredGroups).find(
+        (g) => g.folder === params.groupFolder,
+      );
+      if (channel && group) {
+        const quoted = params.answer.replace(/\n/g, '\n> ');
+        await channel.sendMessage(answerBaseJid, `_User answered:_\n> ${quoted}`, {
+          botToken: group.botToken,
+          threadTs: params.threadTs,
+        });
+      }
+
+      // Always store for thread history
       storeMessage({
         id: Date.now().toString(),
         chat_jid: buildThreadJid(answerBaseJid, params.threadTs),
@@ -934,11 +948,21 @@ async function main(): Promise<void> {
         timestamp: new Date().toISOString(),
         threadTs: params.threadTs,
       });
-      state.queue.enqueueMessageCheck(
+
+      // Pipe answer to active container via IPC, or enqueue if container exited
+      const piped = state.queue.sendMessage(
         answerBaseJid,
-        params.threadTs,
+        params.threadTs || null,
+        params.answer,
         params.groupFolder,
       );
+      if (!piped) {
+        state.queue.enqueueMessageCheck(
+          answerBaseJid,
+          params.threadTs,
+          params.groupFolder,
+        );
+      }
     },
     onSlashCommand: async (params: {
       command: string;

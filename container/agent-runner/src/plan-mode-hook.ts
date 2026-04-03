@@ -15,7 +15,6 @@ import path from 'path';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
-const CLOSE_SENTINEL = '/workspace/ipc/input/_close';
 
 const chatJid = process.env.NANOCLAW_CHAT_JID || '';
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER || '';
@@ -60,9 +59,9 @@ function readPlanFile(): string {
 }
 
 function denyAndStop(reason: string): void {
-  // Write _close sentinel — agent-runner polls every 500ms, will SIGTERM the CLI
-  fs.mkdirSync(path.dirname(CLOSE_SENTINEL), { recursive: true });
-  fs.writeFileSync(CLOSE_SENTINEL, '');
+  // No _close sentinel — let the container idle so plan mode state is preserved.
+  // The agent-runner will poll for IPC input when the user responds.
+  // Container timeout (15 min) is the safety net if the user never answers.
 
   const output = {
     hookSpecificOutput: {
