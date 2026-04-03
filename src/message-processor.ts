@@ -111,7 +111,12 @@ export class MessageProcessor {
     const fetchJid = threadTs
       ? buildThreadJid(channelJid, threadTs)
       : channelJid;
-    const cursorKey = this.state.getCursorKey(channelJid, threadTs, groupFolder);
+    // Per-agent cursors for multi-group channels prevent starvation when multiple
+    // agents are dispatched to the same thread. Single-group channels use shared
+    // cursors so the polling loop in startMessageLoop can read them correctly.
+    const isMultiGroup = this.groupManager.isMultiGroupChannel(channelJid);
+    const cursorGroupFolder = isMultiGroup ? groupFolder : undefined;
+    const cursorKey = this.state.getCursorKey(channelJid, threadTs, cursorGroupFolder);
     const sinceTimestamp =
       this.state.lastAgentTimestamp[cursorKey] ||
       this.state.lastAgentTimestamp[this.state.getCursorKey(channelJid, threadTs)] ||
