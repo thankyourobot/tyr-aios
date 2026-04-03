@@ -158,6 +158,13 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
+      // If an idle root container is holding the slot, close it so the
+      // pending message drains to its own container. Root messages are
+      // independent conversations — no reason to idle-wait.
+      const isRootSlot = !threadTs || threadTs === '__root__';
+      if (isRootSlot && state.idleWaiting) {
+        this.closeStdin(chatJid, threadTs, groupFolder);
+      }
       logger.debug(
         { chatJid, threadTs: threadTs || '__root__', groupFolder },
         'Container active for thread, message queued',
