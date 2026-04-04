@@ -414,6 +414,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  conversationId: string,
   resumeAt?: string,
 ): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; lastInputTokens?: number }> {
   const stream = new MessageStream();
@@ -671,6 +672,9 @@ async function runQuery(
       });
       // Reset compaction after emitting (one-shot)
       lastCompaction = undefined;
+
+      // LCM: Persist messages immediately after each result
+      await persistToLcm(conversationId, newSessionId, containerInput.assistantName);
     }
   }
 
@@ -745,7 +749,7 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, conversationId, resumeAt);
       lcmLog(`runQuery returned (newSession=${queryResult.newSessionId || 'none'}, closed=${queryResult.closedDuringQuery}, lastInput=${queryResult.lastInputTokens || 'none'})`);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
@@ -753,9 +757,6 @@ async function main(): Promise<void> {
       if (queryResult.lastAssistantUuid) {
         resumeAt = queryResult.lastAssistantUuid;
       }
-
-      // LCM: Always persist messages after every query
-      await persistToLcm(conversationId, sessionId, containerInput.assistantName);
 
       // LCM: Check for on-demand compact signal from lcm_compact MCP tool
       const lcmCompactSignal = path.join(IPC_INPUT_DIR, '_lcm_compact');
