@@ -5,6 +5,7 @@
  */
 
 import crypto from 'crypto';
+import { extractText } from './lcm-helpers.js';
 
 // --- Configuration ---
 
@@ -44,7 +45,8 @@ export interface CondensedResult {
 function deterministicSummary(messages: ParsedMessage[]): string {
   const lines: string[] = ['[Deterministic summary — API unavailable]'];
   for (const msg of messages) {
-    const msgLines = msg.content.split('\n').filter(l => l.trim());
+    const text = extractText(msg);
+    const msgLines = text.split('\n').filter(l => l.trim());
     const first3 = msgLines.slice(0, 3).join('\n');
     const last3 = msgLines.length > 6 ? msgLines.slice(-3).join('\n') : '';
     lines.push(`[${msg.role}]: ${first3}${last3 ? '\n...\n' + last3 : ''}`);
@@ -160,7 +162,7 @@ export async function createLeafSummary(
 Keep the summary under 500 words. Be factual and precise.`;
 
   const transcript = messages
-    .map(m => `[${m.role}]: ${m.content}`)
+    .map(m => `[${m.role}]: ${extractText(m)}`)
     .join('\n\n');
 
   const apiResult = await callAnthropicAPI(systemPrompt, transcript);

@@ -82,20 +82,22 @@ describe('parseTranscript', () => {
     expect(parseTranscript(line)).toEqual([{ role: 'user', content: 'hello' }]);
   });
 
-  it('parses user messages with content blocks (array)', () => {
+  it('parses user messages with content blocks losslessly', () => {
+    const blocks = [{ type: 'tool_result', content: 'file contents', tool_use_id: 'x' }];
     const line = JSON.stringify({
       type: 'user',
-      message: { content: [{ text: 'a' }, { text: 'b' }] },
+      message: { content: blocks },
     });
-    expect(parseTranscript(line)).toEqual([{ role: 'user', content: 'ab' }]);
+    expect(parseTranscript(line)).toEqual([{ role: 'user', content: JSON.stringify(blocks) }]);
   });
 
-  it('parses assistant messages with content blocks (filters type=text)', () => {
+  it('parses assistant messages with all content blocks losslessly', () => {
+    const blocks = [{ type: 'text', text: 'hi' }, { type: 'tool_use', id: 'x', name: 'Read', input: {} }];
     const line = JSON.stringify({
       type: 'assistant',
-      message: { content: [{ type: 'text', text: 'hi' }, { type: 'tool_use', id: 'x' }] },
+      message: { content: blocks },
     });
-    expect(parseTranscript(line)).toEqual([{ role: 'assistant', content: 'hi' }]);
+    expect(parseTranscript(line)).toEqual([{ role: 'assistant', content: JSON.stringify(blocks) }]);
   });
 
   it('skips malformed JSON lines', () => {

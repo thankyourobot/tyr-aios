@@ -87,6 +87,45 @@ export function shouldSummarize(conversationId: string): boolean {
   return unsummarized >= LCM_LEAF_CHUNK_TOKENS;
 }
 
+/**
+ * Extract human-readable text from a ParsedMessage's content.
+ * Handles both plain text and JSON-serialized content blocks.
+ * Used by the summarizer to get text for LLM summarization.
+ */
+export function extractText(message: ParsedMessage): string {
+  // Try to parse as JSON (structured blocks)
+  try {
+    const blocks = JSON.parse(message.content);
+    if (!Array.isArray(blocks)) return message.content;
+
+    const parts: string[] = [];
+    for (const block of blocks) {
+      if (block.type === 'text' && block.text) {
+        parts.push(block.text);
+      } else if (block.type === 'tool_use') {
+        parts.push(`[Tool: ${block.name}(${JSON.stringify(block.input).slice(0, 200)})]`);
+      } else if (block.type === 'tool_result') {
+        const resultText = typeof block.content === 'string'
+          ? block.content.slice(0, 500)
+          : JSON.stringify(block.content).slice(0, 500);
+        parts.push(`[Tool result: ${resultText}]`);
+      } else if (block.type === 'thinking' && block.thinking) {
+        parts.push(`[Thinking: ${block.thinking.slice(0, 300)}]`);
+      }
+    }
+    return parts.join('\n');
+  } catch {
+    // Plain text content
+    return message.content;
+  }
+}
+
+/**
+ * Parse transcript JSONL into messages.
+ * Stores ALL content verbatim (lossless) — user prompts, assistant text,
+ * tool_use, tool_result, thinking blocks. Content is serialized as JSON
+ * for structured blocks or plain text for simple string content.
+ */
 export function parseTranscript(content: string): ParsedMessage[] {
   const messages: ParsedMessage[] = [];
 
@@ -95,16 +134,23 @@ export function parseTranscript(content: string): ParsedMessage[] {
     try {
       const entry = JSON.parse(line);
       if (entry.type === 'user' && entry.message?.content) {
-        const text = typeof entry.message.content === 'string'
-          ? entry.message.content
-          : entry.message.content.map((c: { text?: string }) => c.text || '').join('');
-        if (text) messages.push({ role: 'user', content: text });
+        // User content is either a plain string (prompt) or array of blocks (tool_results)
+        const msgContent = entry.message.content;
+        if (typeof msgContent === 'string') {
+          if (msgContent) messages.push({ role: 'user', content: msgContent });
+        } else if (Array.isArray(msgContent)) {
+          // Serialize tool_result blocks as JSON — lossless
+          const serialized = JSON.stringify(msgContent);
+          messages.push({ role: 'user', content: serialized });
+        }
       } else if (entry.type === 'assistant' && entry.message?.content) {
-        const textParts = entry.message.content
-          .filter((c: { type: string }) => c.type === 'text')
-          .map((c: { text: string }) => c.text);
-        const text = textParts.join('');
-        if (text) messages.push({ role: 'assistant', content: text });
+        // Assistant content is always an array of blocks (text, tool_use, thinking)
+        const blocks = entry.message.content;
+        if (Array.isArray(blocks) && blocks.length > 0) {
+          // Serialize all blocks as JSON — lossless
+          const serialized = JSON.stringify(blocks);
+          messages.push({ role: 'assistant', content: serialized });
+        }
       }
     } catch {
     }
