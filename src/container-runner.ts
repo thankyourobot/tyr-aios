@@ -474,6 +474,7 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId: parseState.newSessionId,
+              sessionReset: parseState.sessionReset,
             });
           });
           return;
@@ -586,6 +587,7 @@ export async function runContainerAgent(
             status: 'success',
             result: null,
             newSessionId: parseState.newSessionId,
+            sessionReset: parseState.sessionReset,
           });
         });
         return;

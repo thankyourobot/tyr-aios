@@ -13,6 +13,8 @@ import {
   getThreadSession,
   setSession,
   setThreadSession,
+  deleteSession,
+  deleteThreadSession,
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import type { GroupManager } from './group-manager.js';
@@ -178,7 +180,16 @@ export class AgentExecutor {
     // Wrap onOutput to track session ID from streamed results
     const wrappedOnOutput = onOutput
       ? async (output: ContainerOutput) => {
-          if (output.newSessionId) {
+          if (output.sessionReset) {
+            // LCM compaction: clear session so next container starts fresh
+            if (threadTs) {
+              deleteThreadSession(group.folder, threadTs);
+            } else {
+              delete this.state.sessions[group.folder];
+              deleteSession(group.folder);
+            }
+            logger.info({ group: group.folder, threadTs }, 'Session reset (LCM compaction)');
+          } else if (output.newSessionId) {
             if (threadTs && (isNewThread || rewindOpts)) {
               // New thread fork or rewind — store thread session
               setThreadSession(
@@ -237,7 +248,14 @@ export class AgentExecutor {
         wrappedOnOutput,
       );
 
-      if (output.newSessionId) {
+      if (output.sessionReset) {
+        if (threadTs) {
+          deleteThreadSession(group.folder, threadTs);
+        } else {
+          delete this.state.sessions[group.folder];
+          deleteSession(group.folder);
+        }
+      } else if (output.newSessionId) {
         if (threadTs && (isNewThread || rewindOpts)) {
           setThreadSession(
             group.folder,

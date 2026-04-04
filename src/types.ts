@@ -204,6 +204,7 @@ export interface ContainerOutput {
     preTokens: number;
     trigger: 'manual' | 'auto';
   };
+  sessionReset?: boolean;
   error?: string;
   schemaVersion?: number;
 }

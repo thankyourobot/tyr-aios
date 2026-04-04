@@ -28,6 +28,12 @@ export function setSession(groupFolder: string, sessionId: string): void {
     .run(groupFolder, sessionId);
 }
 
+export function deleteSession(groupFolder: string): void {
+  getDb()
+    .prepare('DELETE FROM sessions WHERE group_folder = ?')
+    .run(groupFolder);
+}
+
 export function getAllSessions(): Record<string, string> {
   const rows = getDb()
     .prepare('SELECT group_folder, session_id FROM sessions')
@@ -68,6 +74,12 @@ export function setThreadSession(
       parentSessionId ?? null,
       new Date().toISOString(),
     );
+}
+
+export function deleteThreadSession(groupFolder: string, threadTs: string): void {
+  getDb()
+    .prepare('DELETE FROM thread_sessions WHERE group_folder = ? AND thread_ts = ?')
+    .run(groupFolder, threadTs);
 }
 
 export function getAllThreadSessions(

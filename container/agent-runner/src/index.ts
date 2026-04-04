@@ -77,6 +77,7 @@ interface ContainerOutput {
     preTokens: number;
     trigger: 'manual' | 'auto';
   };
+  sessionReset?: boolean;
   error?: string;
   schemaVersion?: number;
 }
@@ -302,37 +303,31 @@ function getTranscriptPath(sessionId: string): string | null {
  * Called after every query (always-persist) and from PreCompact hook (belt & suspenders).
  * All errors are non-fatal.
  */
-function lcmLog(message: string): void {
-  log(message);
-  // Also write to a file for debugging (container stderr may not be visible)
-  try { fs.appendFileSync('/home/node/.claude/lcm-debug.log', `${new Date().toISOString()} ${message}\n`); } catch { /* ignore */ }
-}
-
 async function persistToLcm(conversationId: string, sessionId: string | undefined, assistantName?: string): Promise<void> {
-  lcmLog(`persistToLcm called (conversationId=${conversationId}, sessionId=${sessionId || 'none'}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
+  log(`persistToLcm called (conversationId=${conversationId}, sessionId=${sessionId || 'none'}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
   if (process.env.LCM_ENABLED === 'false') return;
-  if (!sessionId) { lcmLog('No session ID, skipping'); return; }
+  if (!sessionId) { log('No session ID, skipping'); return; }
 
   try {
     const db = initLcmDatabase(LCM_DB_PATH);
-    if (!db) { lcmLog('initLcmDatabase returned null'); return; }
+    if (!db) { log('initLcmDatabase returned null'); return; }
 
     const transcriptPath = getTranscriptPath(sessionId);
     if (!transcriptPath) {
-      lcmLog(`No transcript found for session ${sessionId}`);
+      log(`No transcript found for session ${sessionId}`);
       return;
     }
-    lcmLog(`Found transcript: ${transcriptPath}`);
+    log(`Found transcript: ${transcriptPath}`);
 
     const content = fs.readFileSync(transcriptPath, 'utf-8');
     const messages = parseTranscript(content);
-    lcmLog(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
+    log(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
     if (messages.length === 0) return;
 
     const currentMaxSeq = getMaxSequence(conversationId);
     const startSequence = currentMaxSeq + 1;
     const newlyInserted = storeMessages(conversationId, messages, startSequence);
-    lcmLog(`Stored ${newlyInserted}/${messages.length} messages (dedup)`);
+    log(`Stored ${newlyInserted}/${messages.length} messages (dedup)`);
 
     if (newlyInserted === 0) return;
 
@@ -404,7 +399,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
       });
     }
   } catch (err) {
-    lcmLog(`persist error (non-fatal): ${err instanceof Error ? err.stack || err.message : String(err)}`);
+    log(`persist error (non-fatal): ${err instanceof Error ? err.stack || err.message : String(err)}`);
   }
 }
 
@@ -481,9 +476,10 @@ async function runQuery(
     globalClaudeMd = (globalClaudeMd || '') + planInstructions;
   }
 
-  // LCM: Assemble summary context for injection (skip in plan mode to avoid prompt bloat)
+  // LCM: Inject summary context only when starting a fresh session (post-compaction).
+  // Resuming an existing session already has its context; injecting again would duplicate.
   let lcmContext: string | null = null;
-  if (sessionId && !containerInput.planMode && process.env.LCM_ENABLED !== 'false') {
+  if (!sessionId && !containerInput.planMode && process.env.LCM_ENABLED !== 'false') {
     try {
       const convId = getConversationId(containerInput);
       lcmContext = assembleLcmContext(convId, LCM_DB_PATH);
@@ -684,7 +680,6 @@ async function runQuery(
 }
 
 async function main(): Promise<void> {
-  lcmLog('=== agent-runner main() started (LCM debug build) ===');
   let containerInput: ContainerInput;
 
   try {
@@ -750,7 +745,6 @@ async function main(): Promise<void> {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
       const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, conversationId, resumeAt);
-      lcmLog(`runQuery returned (newSession=${queryResult.newSessionId || 'none'}, closed=${queryResult.closedDuringQuery}, lastInput=${queryResult.lastInputTokens || 'none'})`);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -768,6 +762,7 @@ async function main(): Promise<void> {
       // LCM: Proactive compaction or on-demand compact — reset session
       if (onDemandCompact || shouldProactivelyCompact(queryResult.lastInputTokens)) {
         log(`LCM: ${onDemandCompact ? 'On-demand' : 'Proactive'} compaction triggered — resetting session`);
+        writeOutput({ status: 'success', result: null, sessionReset: true });
         sessionId = undefined;
         resumeAt = undefined;
       }
