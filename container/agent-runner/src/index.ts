@@ -288,32 +288,13 @@ const LCM_FRESHNESS_WINDOW = parseInt(process.env.LCM_FRESHNESS_WINDOW || '32', 
 const LCM_TRANSCRIPT_DIR = '/home/node/.claude/projects/-workspace-group';
 
 /**
- * Find the most recently modified transcript JSONL file.
+ * Get the transcript JSONL path for a specific session ID.
+ * The Claude CLI names transcripts as {sessionId}.jsonl.
  */
-function findLatestTranscript(): string | null {
-  try {
-    if (!fs.existsSync(LCM_TRANSCRIPT_DIR)) {
-      log(`LCM: Transcript dir does not exist: ${LCM_TRANSCRIPT_DIR}`);
-      return null;
-    }
-    const entries = fs.readdirSync(LCM_TRANSCRIPT_DIR).filter(f => f.endsWith('.jsonl'));
-    if (entries.length === 0) return null;
-
-    let latest = path.join(LCM_TRANSCRIPT_DIR, entries[0]);
-    let latestMtime = fs.statSync(latest).mtimeMs;
-    for (let i = 1; i < entries.length; i++) {
-      const fullPath = path.join(LCM_TRANSCRIPT_DIR, entries[i]);
-      const mtime = fs.statSync(fullPath).mtimeMs;
-      if (mtime > latestMtime) {
-        latest = fullPath;
-        latestMtime = mtime;
-      }
-    }
-    return latest;
-  } catch (err) {
-    log(`LCM: findLatestTranscript error: ${err instanceof Error ? err.message : String(err)}`);
-    return null;
-  }
+function getTranscriptPath(sessionId: string): string | null {
+  const filePath = path.join(LCM_TRANSCRIPT_DIR, `${sessionId}.jsonl`);
+  if (fs.existsSync(filePath)) return filePath;
+  return null;
 }
 
 /**
@@ -327,18 +308,18 @@ function lcmLog(message: string): void {
   try { fs.appendFileSync('/home/node/.claude/lcm-debug.log', `${new Date().toISOString()} ${message}\n`); } catch { /* ignore */ }
 }
 
-async function persistToLcm(conversationId: string, assistantName?: string): Promise<void> {
-  lcmLog(`persistToLcm called (conversationId=${conversationId}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
+async function persistToLcm(conversationId: string, sessionId: string | undefined, assistantName?: string): Promise<void> {
+  lcmLog(`persistToLcm called (conversationId=${conversationId}, sessionId=${sessionId || 'none'}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
   if (process.env.LCM_ENABLED === 'false') return;
+  if (!sessionId) { lcmLog('No session ID, skipping'); return; }
 
   try {
     const db = initLcmDatabase(LCM_DB_PATH);
     if (!db) { lcmLog('initLcmDatabase returned null'); return; }
 
-    lcmLog(`Finding transcript in ${LCM_TRANSCRIPT_DIR}`);
-    const transcriptPath = findLatestTranscript();
+    const transcriptPath = getTranscriptPath(sessionId);
     if (!transcriptPath) {
-      lcmLog('No transcript found');
+      lcmLog(`No transcript found for session ${sessionId}`);
       return;
     }
     lcmLog(`Found transcript: ${transcriptPath}`);
@@ -774,7 +755,7 @@ async function main(): Promise<void> {
       }
 
       // LCM: Always persist messages after every query
-      await persistToLcm(conversationId, containerInput.assistantName);
+      await persistToLcm(conversationId, sessionId, containerInput.assistantName);
 
       // LCM: Check for on-demand compact signal from lcm_compact MCP tool
       const lcmCompactSignal = path.join(IPC_INPUT_DIR, '_lcm_compact');
