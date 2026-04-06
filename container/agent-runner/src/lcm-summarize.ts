@@ -1,11 +1,12 @@
 /**
  * LCM Summarization Logic
- * Leaf summaries from raw messages, condensation of leaf summaries,
- * and deterministic fallback when API is unavailable.
+ * Aligned with original Lossless-Claw (Martian-Engineering/lossless-claw) design.
+ * Leaf summaries from raw messages, condensation of leaf summaries.
+ * Returns null when API is unavailable — no deterministic fallbacks.
  */
 
 import crypto from 'crypto';
-import { extractText } from './lcm-helpers.js';
+import { extractTextForSummary } from './lcm-helpers.js';
 
 // --- Configuration ---
 
@@ -13,6 +14,8 @@ const LCM_SUMMARY_MODEL = process.env.LCM_SUMMARY_MODEL || 'claude-haiku-4-5-202
 const LCM_SUMMARIZE_TIMEOUT_MS = parseInt(process.env.LCM_SUMMARIZE_TIMEOUT_MS || '15000', 10);
 const LCM_CONDENSE_THRESHOLD = parseInt(process.env.LCM_CONDENSE_THRESHOLD || '8', 10);
 const MAX_CONDENSE_DEPTH = 3;
+const DEFAULT_LEAF_TARGET_TOKENS = 2400;
+const DEFAULT_CONDENSED_TARGET_TOKENS = 2000;
 
 export { LCM_CONDENSE_THRESHOLD };
 
@@ -40,28 +43,33 @@ export interface CondensedResult {
   depth: number;
 }
 
-// --- Deterministic fallback ---
+// --- System prompt (matches original Lossless-Claw) ---
 
-// --- API-based summarization ---
+const LCM_SYSTEM_PROMPT =
+  'You are a context-compaction summarization engine. Follow user instructions exactly and return plain text summary content only.';
+
+// --- Token targeting (matches original) ---
+
+function resolveTargetTokens(inputTokens: number, isCondensed: boolean): number {
+  if (isCondensed) {
+    return Math.max(512, DEFAULT_CONDENSED_TARGET_TOKENS);
+  }
+  return Math.max(192, Math.min(DEFAULT_LEAF_TARGET_TOKENS, Math.floor(inputTokens * 0.35)));
+}
+
+// --- API ---
 
 function hasApiCredentials(): boolean {
-  // In OAuth mode, containers have CLAUDE_CODE_OAUTH_TOKEN=placeholder
-  // which the credential proxy replaces with the real token.
-  // In API key mode, containers have ANTHROPIC_API_KEY=placeholder.
   return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN);
 }
 
-async function callAnthropicAPI(systemPrompt: string, userContent: string): Promise<string | null> {
+async function callAnthropicAPI(userContent: string, maxTokens: number = 2048): Promise<string | null> {
   if (!hasApiCredentials()) {
     console.error('[lcm-summarize] No API credentials available, skipping API call');
     return null;
   }
 
   const baseUrl = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
-
-  // Build auth headers based on available credentials.
-  // OAuth mode: use Authorization Bearer (proxy replaces placeholder with real token).
-  // API key mode: use x-api-key (proxy replaces placeholder with real key).
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'anthropic-version': '2023-06-01',
@@ -70,8 +78,6 @@ async function callAnthropicAPI(systemPrompt: string, userContent: string): Prom
   if (process.env.ANTHROPIC_API_KEY) {
     headers['x-api-key'] = process.env.ANTHROPIC_API_KEY;
   } else {
-    // OAuth mode — send Bearer placeholder through the credential proxy.
-    // The oauth-2025-04-20 beta header tells Anthropic to accept OAuth tokens.
     const token = process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || '';
     headers['Authorization'] = `Bearer ${token}`;
     headers['anthropic-beta'] = 'oauth-2025-04-20';
@@ -86,8 +92,8 @@ async function callAnthropicAPI(systemPrompt: string, userContent: string): Prom
       headers,
       body: JSON.stringify({
         model: LCM_SUMMARY_MODEL,
-        max_tokens: 2048,
-        system: systemPrompt,
+        max_tokens: maxTokens,
+        system: LCM_SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userContent }],
       }),
       signal: controller.signal,
@@ -117,66 +123,133 @@ function generateSummaryId(): string {
   return `sum_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 
-// --- Depth-aware prompt builders ---
+// --- Prompt builders (aligned with original Lossless-Claw) ---
 
-const EXPAND_FOOTER_INSTRUCTION = `
-End your summary with a line: "Expand for details about:" followed by 3-5 key topics that were compressed. This helps readers decide when to drill deeper.`;
+function buildLeafPrompt(text: string, targetTokens: number, previousSummary?: string): string {
+  const previousContext = previousSummary?.trim() || '(none)';
 
-function buildLeafPrompt(previousContext?: string): string {
-  const prev = previousContext
-    ? `\n\n<previous_context>\n${previousContext}\n</previous_context>\n\nDo not repeat information already captured in the previous context above.`
-    : '';
-
-  return `You are a conversation summarizer creating a leaf-level summary of a conversation segment. Preserve:
-- Key decisions and conclusions
-- Important facts, names, numbers, file paths
-- Action items and commitments
-- Technical details that may be referenced later
-- Timeline with timestamps where available
-
-Be factual and precise. Keep under 500 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
+  return [
+    'You summarize a SEGMENT of an agent conversation for future model turns.',
+    'Treat this as incremental memory compaction input, not a full-conversation summary.',
+    '',
+    'Normal summary policy:',
+    '- Preserve key decisions, rationale, constraints, and active tasks.',
+    '- Keep essential technical details needed to continue work safely.',
+    '- Remove obvious repetition and conversational filler.',
+    '',
+    'Output requirements:',
+    '- Plain text only.',
+    '- No preamble, headings, or markdown formatting.',
+    '- Keep it concise while preserving required details.',
+    '- Track file operations (created, modified, deleted, renamed) with file paths and current status.',
+    '- If no file operations appear, include exactly: "Files: none".',
+    '- End with exactly: "Expand for details about: <comma-separated list of what was dropped or compressed>".',
+    `- Target length: about ${targetTokens} tokens or less.`,
+    '',
+    `<previous_context>\n${previousContext}\n</previous_context>`,
+    '',
+    `<conversation_segment>\n${text}\n</conversation_segment>`,
+  ].join('\n');
 }
 
-function buildCondensedPrompt(depth: number, previousContext?: string): string {
-  const prev = previousContext
-    ? `\n\n<previous_context>\n${previousContext}\n</previous_context>\n\nDo not repeat information already captured in the previous context above.`
-    : '';
+function buildD1Prompt(text: string, targetTokens: number, previousSummary?: string): string {
+  const previousContext = previousSummary?.trim();
+  const previousContextBlock = previousContext
+    ? [
+        'It already has this preceding summary as context. Do not repeat information',
+        'that appears there unchanged. Focus on what is new, changed, or resolved:',
+        '',
+        `<previous_context>\n${previousContext}\n</previous_context>`,
+      ].join('\n')
+    : 'Focus on what matters for continuation:';
 
-  if (depth >= 3) {
-    return `You are creating a high-level memory node from phase-level summaries. Keep ONLY durable context:
-- Major project milestones and outcomes
-- Architectural decisions that constrain future work
-- Key relationships and commitments
-- Drop ALL operational detail, per-session minutiae, and transient status
+  return [
+    'You are compacting leaf-level conversation summaries into a single condensed memory node.',
+    'You are preparing context for a fresh model instance that will continue this conversation.',
+    '',
+    previousContextBlock,
+    '',
+    'Preserve:',
+    '- Decisions made and their rationale when rationale matters going forward.',
+    '- Earlier decisions that were superseded, and what replaced them.',
+    '- Completed tasks/topics with outcomes.',
+    '- In-progress items with current state and what remains.',
+    '- Blockers, open questions, and unresolved tensions.',
+    '- Specific references (names, paths, URLs, identifiers) needed for continuation.',
+    '',
+    'Drop low-value detail:',
+    '- Context that has not changed from previous_context.',
+    '- Intermediate dead ends where the conclusion is already known.',
+    '- Transient states that are already resolved.',
+    '- Tool-internal mechanics and process scaffolding.',
+    '',
+    'Use plain text. No mandatory structure.',
+    'Include a timeline with timestamps (hour or half-hour) for significant events.',
+    'Present information chronologically and mark superseded decisions.',
+    'End with exactly: "Expand for details about: <comma-separated list of what was dropped or compressed>".',
+    `Target length: about ${targetTokens} tokens.`,
+    '',
+    `<conversation_to_condense>\n${text}\n</conversation_to_condense>`,
+  ].join('\n');
+}
 
-Timeline with dates or date ranges only. Under 300 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
-  }
+function buildD2Prompt(text: string, targetTokens: number): string {
+  return [
+    'You are condensing multiple session-level summaries into a higher-level memory node.',
+    'A future model should understand trajectory, not per-session minutiae.',
+    '',
+    'Preserve:',
+    '- Decisions still in effect and their rationale.',
+    '- Decisions that evolved: what changed and why.',
+    '- Completed work with outcomes.',
+    '- Active constraints, limitations, and known issues.',
+    '- Current state of in-progress work.',
+    '',
+    'Drop:',
+    '- Session-local operational detail and process mechanics.',
+    '- Identifiers that are no longer relevant.',
+    '- Intermediate states superseded by later outcomes.',
+    '',
+    'Use plain text. Brief headers are fine if useful.',
+    'Include a timeline with dates and approximate time of day for key milestones.',
+    'End with exactly: "Expand for details about: <comma-separated list of what was dropped or compressed>".',
+    `Target length: about ${targetTokens} tokens.`,
+    '',
+    `<conversation_to_condense>\n${text}\n</conversation_to_condense>`,
+  ].join('\n');
+}
 
-  if (depth === 2) {
-    return `You are condensing session-level summaries into a higher-level memory node. Focus on:
-- Overall trajectory and progression across sessions
-- Decisions and their rationale
-- What changed vs what stayed the same
-- Drop per-session operational detail — keep only what matters across sessions
-
-Timeline with dates and approximate times. Under 350 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
-  }
-
-  // depth === 1
-  return `You are condensing leaf-level summaries into a single memory node. Focus on:
-- Key decisions made and any decisions that were later superseded
-- In-progress items and their current state
-- Important facts and commitments
-- Technical details that may be referenced later
-
-Timeline with timestamps to the hour. Under 400 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
+function buildD3PlusPrompt(text: string, targetTokens: number): string {
+  return [
+    'You are creating a high-level memory node from multiple phase-level summaries.',
+    'This may persist for the rest of the conversation. Keep only durable context.',
+    '',
+    'Preserve:',
+    '- Key decisions and rationale.',
+    '- What was accomplished and current state.',
+    '- Active constraints and hard limitations.',
+    '- Important relationships between people, systems, or concepts.',
+    '- Durable lessons learned.',
+    '',
+    'Drop:',
+    '- Operational and process detail.',
+    '- Method details unless the method itself was the decision.',
+    '- Specific references unless essential for continuation.',
+    '',
+    'Use plain text. Be concise.',
+    'Include a brief timeline with dates (or date ranges) for major milestones.',
+    'End with exactly: "Expand for details about: <comma-separated list of what was dropped or compressed>".',
+    `Target length: about ${targetTokens} tokens.`,
+    '',
+    `<conversation_to_condense>\n${text}\n</conversation_to_condense>`,
+  ].join('\n');
 }
 
 // --- Public API ---
 
 /**
  * Create a leaf summary (depth 0) from raw messages.
- * Pass previousSummary to avoid redundancy with the most recent prior summary.
+ * Extracts only plain text from messages (strips tool_use/tool_result).
  */
 export async function createLeafSummary(
   messages: ParsedMessage[],
@@ -187,11 +260,22 @@ export async function createLeafSummary(
 ): Promise<SummaryResult | null> {
   const id = generateSummaryId();
 
+  // Extract only text content — tool_use/tool_result blocks are stripped
   const transcript = messages
-    .map(m => `[${m.role}]: ${extractText(m)}`)
+    .map(m => extractTextForSummary(m))
+    .filter(text => text.length > 0)
     .join('\n\n');
 
-  const apiResult = await callAnthropicAPI(buildLeafPrompt(previousSummary), transcript);
+  if (transcript.trim().length === 0) {
+    // All messages were tool-only — nothing to summarize
+    return null;
+  }
+
+  const inputTokens = Math.ceil(transcript.length / 4);
+  const targetTokens = resolveTargetTokens(inputTokens, false);
+  const prompt = buildLeafPrompt(transcript, targetTokens, previousSummary);
+
+  const apiResult = await callAnthropicAPI(prompt);
   if (!apiResult) return null;
 
   return { id, content: apiResult, sourceMessageIds: messageIds, minSequence, maxSequence };
@@ -199,7 +283,7 @@ export async function createLeafSummary(
 
 /**
  * Create a condensed summary (depth 1+) from existing summaries.
- * Pass previousSummary to avoid redundancy.
+ * D1 uses previousSummary for continuity. D2+ do not (self-contained).
  */
 export async function createCondensedSummary(
   summaries: Array<{ id: string; content: string; min_sequence: number | null; max_sequence: number | null; depth: number }>,
@@ -209,11 +293,24 @@ export async function createCondensedSummary(
   const maxChildDepth = Math.max(...summaries.map(s => s.depth));
   const newDepth = Math.min(maxChildDepth + 1, MAX_CONDENSE_DEPTH);
 
-  const userContent = summaries
+  const text = summaries
     .map((s, i) => `--- Summary ${i + 1} ---\n${s.content}`)
     .join('\n\n');
 
-  const apiResult = await callAnthropicAPI(buildCondensedPrompt(newDepth, previousSummary), userContent);
+  const inputTokens = Math.ceil(text.length / 4);
+  const targetTokens = resolveTargetTokens(inputTokens, true);
+
+  let prompt: string;
+  if (newDepth <= 1) {
+    prompt = buildD1Prompt(text, targetTokens, previousSummary);
+  } else if (newDepth === 2) {
+    // D2+ do not use previousSummary (self-contained, per original design)
+    prompt = buildD2Prompt(text, targetTokens);
+  } else {
+    prompt = buildD3PlusPrompt(text, targetTokens);
+  }
+
+  const apiResult = await callAnthropicAPI(prompt);
   if (!apiResult) return null;
 
   return {

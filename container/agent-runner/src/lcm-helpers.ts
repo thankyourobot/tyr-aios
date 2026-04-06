@@ -147,9 +147,33 @@ function summarizeLargeContent(text: string): string {
 }
 
 /**
+ * Extract ONLY plain text from a message, stripping all tool_use/tool_result/thinking blocks.
+ * Matches the original Lossless-Claw behavior: tool content is filtered out before summarization.
+ * Used by the summarizer to get clean conversational text.
+ */
+export function extractTextForSummary(message: ParsedMessage): string {
+  // Try to parse as JSON (structured blocks)
+  try {
+    const blocks = JSON.parse(message.content);
+    if (!Array.isArray(blocks)) return stripBinaryPayloads(message.content);
+
+    // Only extract text blocks — skip tool_use, tool_result, thinking entirely
+    const textParts: string[] = [];
+    for (const block of blocks) {
+      if (block.type === 'text' && block.text) {
+        textParts.push(stripBinaryPayloads(block.text));
+      }
+    }
+    return textParts.join('\n');
+  } catch {
+    return stripBinaryPayloads(message.content);
+  }
+}
+
+/**
  * Extract human-readable text from a ParsedMessage's content.
- * Handles both plain text and JSON-serialized content blocks.
- * Used by the summarizer to get text for LLM summarization.
+ * Includes tool_use/tool_result annotations for display contexts (lcm_expand, lcm_grep).
+ * NOT used for summarization — use extractTextForSummary instead.
  * Large tool results are replaced with structural summaries.
  * Binary payloads (base64 data URLs) are stripped.
  */
