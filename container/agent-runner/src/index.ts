@@ -671,6 +671,20 @@ async function runQuery(
 
       // LCM: Persist messages immediately after each result
       await persistToLcm(conversationId, newSessionId, containerInput.assistantName);
+
+      // LCM: Check for compact signal or proactive compaction threshold
+      const lcmCompactSignal = path.join(IPC_INPUT_DIR, '_lcm_compact');
+      const onDemandCompact = fs.existsSync(lcmCompactSignal);
+      if (onDemandCompact) {
+        try { fs.unlinkSync(lcmCompactSignal); } catch { /* ignore */ }
+      }
+      if (onDemandCompact || shouldProactivelyCompact(lastContextUsage?.inputTokens)) {
+        log(`LCM: ${onDemandCompact ? 'On-demand' : 'Proactive'} compaction — resetting session, exiting container`);
+        writeOutput({ status: 'success', result: null, sessionReset: true });
+        closedDuringQuery = true;
+        stream.end();
+        ipcPolling = false;
+      }
     }
   }
 
@@ -752,22 +766,7 @@ async function main(): Promise<void> {
         resumeAt = queryResult.lastAssistantUuid;
       }
 
-      // LCM: Check for on-demand compact signal from lcm_compact MCP tool
-      const lcmCompactSignal = path.join(IPC_INPUT_DIR, '_lcm_compact');
-      const onDemandCompact = fs.existsSync(lcmCompactSignal);
-      if (onDemandCompact) {
-        try { fs.unlinkSync(lcmCompactSignal); } catch { /* ignore */ }
-      }
-
-      // LCM: Proactive compaction or on-demand compact — reset session
-      if (onDemandCompact || shouldProactivelyCompact(queryResult.lastInputTokens)) {
-        log(`LCM: ${onDemandCompact ? 'On-demand' : 'Proactive'} compaction triggered — resetting session`);
-        writeOutput({ status: 'success', result: null, sessionReset: true });
-        sessionId = undefined;
-        resumeAt = undefined;
-      }
-
-      // If _close was consumed during the query, exit immediately.
+      // If _close was consumed during the query (or LCM compaction triggered), exit.
       // Don't emit a session-update marker (it would reset the host's
       // idle timer and cause a 30-min delay before the next _close).
       if (queryResult.closedDuringQuery) {
