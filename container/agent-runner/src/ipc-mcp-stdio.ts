@@ -21,6 +21,7 @@ import {
   getChildSummaries,
   getMessagesBySequenceRange,
 } from './lcm-store.js';
+import { extractText } from './lcm-helpers.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -741,11 +742,10 @@ server.tool(
 
 server.tool(
   'lcm_expand',
-  'Drill into a summary to recover details. For leaf summaries (depth 0), returns the original messages. For condensed summaries (depth 1+), returns child summaries. Use this when a summary mentions something you need more detail on.',
+  'Drill into a summary to answer a specific question using the original messages. Sends the source messages to a sub-agent that synthesizes an answer. Use this when a summary mentions something you need more detail on.',
   {
-    id: z.string().describe('Summary ID to expand'),
-    levels: z.number().default(1).describe('DAG levels to traverse (1 = immediate children only)'),
-    include_messages: z.boolean().default(true).describe('For leaf summaries, include original raw messages'),
+    id: z.string().describe('Summary ID to expand (starts with "sum_")'),
+    query: z.string().describe('What specific detail are you looking for? E.g., "What were the 3 marketing ideas?" or "What files were modified?"'),
   },
   async (args) => {
     if (!ensureLcmDb()) {
@@ -757,65 +757,89 @@ server.tool(
       return { content: [{ type: 'text' as const, text: `Summary "${args.id}" not found.` }], isError: true };
     }
 
-    const TOKEN_CAP = 50000;
-    let totalChars = 0;
-    const output: string[] = [];
-
-    if (summary.depth === 0 && args.include_messages) {
-      // Leaf summary — return source messages
+    // Collect source content — messages for leaves, child summaries for condensed
+    let sourceText = '';
+    if (summary.depth === 0) {
       const msgs = getMessagesForSummary(summary.id);
-      if (msgs.length > 0) {
-        output.push(`## Original messages for ${summary.id} (${msgs.length} messages)`);
-        for (const m of msgs) {
-          if (totalChars > TOKEN_CAP * 4) {
-            output.push('[... truncated — token cap reached]');
-            break;
-          }
-          output.push(`[${m.role}] (seq ${m.sequence}):\n${m.content}`);
-          totalChars += m.content.length;
-        }
-      } else if (summary.min_sequence !== null && summary.max_sequence !== null) {
-        // Fallback: get by sequence range
+      if (msgs.length === 0 && summary.min_sequence !== null && summary.max_sequence !== null) {
         const rangeMsgs = getMessagesBySequenceRange(summary.conversation_id, summary.min_sequence, summary.max_sequence);
-        output.push(`## Messages by sequence range ${summary.min_sequence}-${summary.max_sequence} (${rangeMsgs.length} messages)`);
-        for (const m of rangeMsgs) {
-          if (totalChars > TOKEN_CAP * 4) {
-            output.push('[... truncated — token cap reached]');
-            break;
-          }
-          output.push(`[${m.role}] (seq ${m.sequence}):\n${m.content}`);
-          totalChars += m.content.length;
+        sourceText = rangeMsgs.map(m => `[${m.role}]: ${extractText({ role: m.role as 'user' | 'assistant', content: m.content })}`).join('\n\n');
+      } else {
+        sourceText = msgs.map(m => `[${m.role}]: ${extractText({ role: m.role as 'user' | 'assistant', content: m.content })}`).join('\n\n');
+      }
+    } else {
+      const children = getChildSummaries(summary.id);
+      sourceText = children.map(c => `--- Summary ${c.id} (seq ${c.min_sequence}-${c.max_sequence}) ---\n${c.content}`).join('\n\n');
+    }
+
+    if (!sourceText) {
+      return { content: [{ type: 'text' as const, text: 'No source content found for this summary.' }] };
+    }
+
+    // Try API-based expansion (Haiku sub-agent)
+    const baseUrl = process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com';
+    const model = process.env.LCM_SUMMARY_MODEL || 'claude-haiku-4-5-20251001';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    };
+    if (process.env.ANTHROPIC_API_KEY) {
+      headers['x-api-key'] = process.env.ANTHROPIC_API_KEY;
+    } else {
+      const token = process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || '';
+      headers['Authorization'] = `Bearer ${token}`;
+      headers['anthropic-beta'] = 'oauth-2025-04-20';
+    }
+
+    // Cap source text to ~100K chars (~25K tokens) for Haiku's context
+    const cappedSource = sourceText.length > 100000
+      ? sourceText.slice(0, 100000) + '\n\n[... truncated for context limit]'
+      : sourceText;
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+
+      const response = await fetch(`${baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          max_tokens: 4096,
+          system: 'You are answering a specific question about a conversation segment. Use only the provided conversation content to answer. Be precise and cite specific details.',
+          messages: [{ role: 'user', content: `Question: ${args.query}\n\nConversation content:\n${cappedSource}` }],
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (response.ok) {
+        const data = await response.json() as { content: Array<{ type: string; text: string }> };
+        const answer = data.content?.filter(c => c.type === 'text').map(c => c.text).join('') || '';
+        if (answer) {
+          return { content: [{ type: 'text' as const, text: `## Expanded from ${summary.id}\n\n${answer}` }] };
         }
       }
-    } else if (summary.depth > 0) {
-      // Condensed summary — return child summaries
-      const expandLevel = (parentId: string, depth: number) => {
-        if (depth > args.levels) return;
-        const children = getChildSummaries(parentId);
-        for (const child of children) {
-          if (totalChars > TOKEN_CAP * 4) {
-            output.push('[... truncated — token cap reached]');
-            return;
-          }
-          output.push(`## ${child.id} (depth ${child.depth}, seq ${child.min_sequence}-${child.max_sequence})`);
-          output.push(child.content);
-          totalChars += child.content.length;
-
-          if (depth < args.levels) {
-            expandLevel(child.id, depth + 1);
-          }
-        }
-      };
-
-      output.push(`## Expanding ${summary.id} (depth ${summary.depth})`);
-      expandLevel(summary.id, 1);
+    } catch {
+      // Fall through to deterministic fallback
     }
 
-    if (output.length === 0) {
-      return { content: [{ type: 'text' as const, text: 'No content to expand.' }] };
+    // Deterministic fallback: search source text for query terms
+    const queryTerms = args.query.toLowerCase().split(/\s+/).filter(t => t.length > 3);
+    const lines = sourceText.split('\n');
+    const matches = lines.filter(line => {
+      const lower = line.toLowerCase();
+      return queryTerms.some(term => lower.includes(term));
+    }).slice(0, 50);
+
+    if (matches.length > 0) {
+      return { content: [{ type: 'text' as const, text: `## Expanded from ${summary.id} (text search fallback)\n\n${matches.join('\n')}` }] };
     }
 
-    return { content: [{ type: 'text' as const, text: output.join('\n\n') }] };
+    // Last resort: return summary content + first few source lines
+    const preview = sourceText.split('\n').slice(0, 30).join('\n');
+    return { content: [{ type: 'text' as const, text: `## ${summary.id} — summary content\n\n${summary.content}\n\n## First messages:\n${preview}` }] };
   },
 );
 
