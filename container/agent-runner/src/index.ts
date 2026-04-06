@@ -736,6 +736,15 @@ async function main(): Promise<void> {
   // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
 
+  // LCM: Check for compact signal at startup (written by *compact before this container launched)
+  const lcmCompactAtStartup = path.join(IPC_INPUT_DIR, '_lcm_compact');
+  if (fs.existsSync(lcmCompactAtStartup)) {
+    try { fs.unlinkSync(lcmCompactAtStartup); } catch { /* ignore */ }
+    log('LCM: Compact signal found at startup — clearing session for fresh start');
+    writeOutput({ status: 'success', result: null, sessionReset: true });
+    sessionId = undefined;
+  }
+
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
   if (containerInput.planMode) {
