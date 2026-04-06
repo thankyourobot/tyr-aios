@@ -248,8 +248,8 @@ describe('searchMessages (FTS5)', () => {
 
 describe('searchSummaries (FTS5)', () => {
   beforeEach(() => {
-    storeSummary(makeSummary({ id: 's1', content: 'user discussed deployment pipeline' }));
-    storeSummary(makeSummary({ id: 's2', content: 'conversation about cooking recipes' }));
+    storeSummary(makeSummary({ id: 's1', content: 'discussed deployment pipeline topics' }));
+    storeSummary(makeSummary({ id: 's2', content: 'discussed cooking recipes topics' }));
   });
 
   it('finds summaries by keyword', () => {
@@ -259,7 +259,8 @@ describe('searchSummaries (FTS5)', () => {
   });
 
   it('respects limit', () => {
-    const results = searchSummaries('conversation OR user', 1);
+    // Both summaries contain "discussed" — limit should cap results to 1
+    const results = searchSummaries('discussed', 1);
     expect(results).toHaveLength(1);
   });
 

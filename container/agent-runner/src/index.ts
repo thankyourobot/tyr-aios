@@ -335,10 +335,14 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
     if (!shouldSummarize(conversationId)) return;
 
     // Find unsummarized messages to summarize
-    const summaries = getSummariesForConversation(conversationId);
-    const maxSummarizedSeq = summaries.length > 0
-      ? Math.max(...summaries.map(s => s.max_sequence ?? -1))
+    const allSummaries = getSummariesForConversation(conversationId);
+    const maxSummarizedSeq = allSummaries.length > 0
+      ? Math.max(...allSummaries.map(s => s.max_sequence ?? -1))
       : -1;
+
+    // Get the most recent summary content for previous-context continuity
+    const sortedSummaries = [...allSummaries].sort((a, b) => (b.max_sequence ?? 0) - (a.max_sequence ?? 0));
+    const previousSummary = sortedSummaries[0]?.content;
 
     // Get unsummarized messages, leaving freshness window intact
     const allUnsummarized = messages.filter((_, i) => {
@@ -349,28 +353,48 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
 
     if (toSummarize.length === 0) return;
 
-    const minSeq = maxSummarizedSeq + 1;
-    const maxSeq = minSeq + toSummarize.length - 1;
-    const messageIds = toSummarize.map(msg => contentHash(conversationId, msg.role, msg.content));
+    // Incremental chunked compaction: create one leaf per ~LCM_LEAF_CHUNK_TOKENS chunk
+    const estimateTokens = (msgs: typeof toSummarize) => msgs.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+    let chunkStart = 0;
+    let lastPrevSummary = previousSummary;
 
-    log(`LCM: Creating leaf summary for messages ${minSeq}-${maxSeq}`);
-    const leafResult = await createLeafSummary(toSummarize, messageIds, minSeq, maxSeq);
-    if (!leafResult) {
-      log('LCM: Summarization API unavailable — skipping summary, will retry next persist');
-      return;
+    while (chunkStart < toSummarize.length) {
+      // Build a chunk up to the token threshold
+      let chunkEnd = chunkStart;
+      let chunkTokens = 0;
+      while (chunkEnd < toSummarize.length && chunkTokens < LCM_LEAF_CHUNK_TOKENS) {
+        chunkTokens += Math.ceil(toSummarize[chunkEnd].content.length / 4);
+        chunkEnd++;
+      }
+
+      const chunk = toSummarize.slice(chunkStart, chunkEnd);
+      const minSeq = maxSummarizedSeq + 1 + chunkStart;
+      const maxSeq = minSeq + chunk.length - 1;
+      const messageIds = chunk.map(msg => contentHash(conversationId, msg.role, msg.content));
+
+      log(`LCM: Creating leaf summary for messages ${minSeq}-${maxSeq} (${chunk.length} msgs, ~${chunkTokens} tokens)`);
+      const leafResult = await createLeafSummary(chunk, messageIds, minSeq, maxSeq, lastPrevSummary);
+      if (!leafResult) {
+        log('LCM: Summarization API unavailable — skipping remaining chunks, will retry next persist');
+        break;
+      }
+      storeSummary({
+        id: leafResult.id,
+        conversation_id: conversationId,
+        depth: 0,
+        content: leafResult.content,
+        source_message_ids: JSON.stringify(leafResult.sourceMessageIds),
+        parent_summary_ids: null,
+        child_summary_ids: null,
+        min_sequence: leafResult.minSequence,
+        max_sequence: leafResult.maxSequence,
+        created_at: new Date().toISOString(),
+      });
+
+      // Use this summary as previous context for the next chunk
+      lastPrevSummary = leafResult.content;
+      chunkStart = chunkEnd;
     }
-    storeSummary({
-      id: leafResult.id,
-      conversation_id: conversationId,
-      depth: 0,
-      content: leafResult.content,
-      source_message_ids: JSON.stringify(leafResult.sourceMessageIds),
-      parent_summary_ids: null,
-      child_summary_ids: null,
-      min_sequence: leafResult.minSequence,
-      max_sequence: leafResult.maxSequence,
-      created_at: new Date().toISOString(),
-    });
 
     // Check condensation threshold
     const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
@@ -387,8 +411,9 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
 
     if (uncoveredLeaves.length >= LCM_CONDENSE_THRESHOLD) {
       const toCondense = uncoveredLeaves.slice(0, LCM_CONDENSE_THRESHOLD);
+      const latestCondensed = condensedSummaries.sort((a, b) => (b.max_sequence ?? 0) - (a.max_sequence ?? 0))[0];
       log(`LCM: Condensing ${toCondense.length} leaf summaries`);
-      const condensedResult = await createCondensedSummary(toCondense);
+      const condensedResult = await createCondensedSummary(toCondense, latestCondensed?.content);
       if (!condensedResult) {
         log('LCM: Condensation API unavailable — skipping, will retry next persist');
         return;

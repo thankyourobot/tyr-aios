@@ -261,6 +261,18 @@ export function getMaxSequence(conversationId: string): number {
   return row?.max_seq ?? -1;
 }
 
+/**
+ * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes to prevent
+ * operator injection (e.g., hyphens becoming NOT, OR/AND being treated as boolean).
+ */
+export function sanitizeFtsQuery(query: string): string {
+  return query
+    .split(/\s+/)
+    .filter(t => t.length > 0)
+    .map(t => `"${t.replace(/"/g, '""')}"`)
+    .join(' ');
+}
+
 export function searchMessages(queryStr: string, limit: number = 20): Array<LcmMessage & { rank: number }> {
   const database = getLcmDb();
   return database.prepare(`
@@ -270,7 +282,7 @@ export function searchMessages(queryStr: string, limit: number = 20): Array<LcmM
     WHERE lcm_messages_fts MATCH ?
     ORDER BY fts.rank
     LIMIT ?
-  `).all(queryStr, limit) as Array<LcmMessage & { rank: number }>;
+  `).all(sanitizeFtsQuery(queryStr), limit) as Array<LcmMessage & { rank: number }>;
 }
 
 export function searchSummaries(queryStr: string, limit: number = 20): Array<LcmSummary & { rank: number }> {
@@ -282,7 +294,7 @@ export function searchSummaries(queryStr: string, limit: number = 20): Array<Lcm
     WHERE lcm_summaries_fts MATCH ?
     ORDER BY fts.rank
     LIMIT ?
-  `).all(queryStr, limit) as Array<LcmSummary & { rank: number }>;
+  `).all(sanitizeFtsQuery(queryStr), limit) as Array<LcmSummary & { rank: number }>;
 }
 
 export function getChildSummaries(summaryId: string): LcmSummary[] {

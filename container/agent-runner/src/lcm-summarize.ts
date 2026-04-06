@@ -117,31 +117,81 @@ function generateSummaryId(): string {
   return `sum_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 }
 
+// --- Depth-aware prompt builders ---
+
+const EXPAND_FOOTER_INSTRUCTION = `
+End your summary with a line: "Expand for details about:" followed by 3-5 key topics that were compressed. This helps readers decide when to drill deeper.`;
+
+function buildLeafPrompt(previousContext?: string): string {
+  const prev = previousContext
+    ? `\n\n<previous_context>\n${previousContext}\n</previous_context>\n\nDo not repeat information already captured in the previous context above.`
+    : '';
+
+  return `You are a conversation summarizer creating a leaf-level summary of a conversation segment. Preserve:
+- Key decisions and conclusions
+- Important facts, names, numbers, file paths
+- Action items and commitments
+- Technical details that may be referenced later
+- Timeline with timestamps where available
+
+Be factual and precise. Keep under 500 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
+}
+
+function buildCondensedPrompt(depth: number, previousContext?: string): string {
+  const prev = previousContext
+    ? `\n\n<previous_context>\n${previousContext}\n</previous_context>\n\nDo not repeat information already captured in the previous context above.`
+    : '';
+
+  if (depth >= 3) {
+    return `You are creating a high-level memory node from phase-level summaries. Keep ONLY durable context:
+- Major project milestones and outcomes
+- Architectural decisions that constrain future work
+- Key relationships and commitments
+- Drop ALL operational detail, per-session minutiae, and transient status
+
+Timeline with dates or date ranges only. Under 300 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
+  }
+
+  if (depth === 2) {
+    return `You are condensing session-level summaries into a higher-level memory node. Focus on:
+- Overall trajectory and progression across sessions
+- Decisions and their rationale
+- What changed vs what stayed the same
+- Drop per-session operational detail — keep only what matters across sessions
+
+Timeline with dates and approximate times. Under 350 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
+  }
+
+  // depth === 1
+  return `You are condensing leaf-level summaries into a single memory node. Focus on:
+- Key decisions made and any decisions that were later superseded
+- In-progress items and their current state
+- Important facts and commitments
+- Technical details that may be referenced later
+
+Timeline with timestamps to the hour. Under 400 words.${prev}${EXPAND_FOOTER_INSTRUCTION}`;
+}
+
 // --- Public API ---
 
 /**
  * Create a leaf summary (depth 0) from raw messages.
+ * Pass previousSummary to avoid redundancy with the most recent prior summary.
  */
 export async function createLeafSummary(
   messages: ParsedMessage[],
   messageIds: string[],
   minSequence: number,
   maxSequence: number,
+  previousSummary?: string,
 ): Promise<SummaryResult | null> {
   const id = generateSummaryId();
-
-  const systemPrompt = `You are a conversation summarizer. Create a concise but comprehensive summary of the following conversation segment. Preserve:
-- Key decisions and conclusions
-- Important facts, names, and numbers
-- Action items and commitments
-- Technical details that may be referenced later
-Keep the summary under 500 words. Be factual and precise.`;
 
   const transcript = messages
     .map(m => `[${m.role}]: ${extractText(m)}`)
     .join('\n\n');
 
-  const apiResult = await callAnthropicAPI(systemPrompt, transcript);
+  const apiResult = await callAnthropicAPI(buildLeafPrompt(previousSummary), transcript);
   if (!apiResult) return null;
 
   return { id, content: apiResult, sourceMessageIds: messageIds, minSequence, maxSequence };
@@ -149,26 +199,21 @@ Keep the summary under 500 words. Be factual and precise.`;
 
 /**
  * Create a condensed summary (depth 1+) from existing summaries.
+ * Pass previousSummary to avoid redundancy.
  */
 export async function createCondensedSummary(
   summaries: Array<{ id: string; content: string; min_sequence: number | null; max_sequence: number | null; depth: number }>,
+  previousSummary?: string,
 ): Promise<CondensedResult | null> {
   const id = generateSummaryId();
   const maxChildDepth = Math.max(...summaries.map(s => s.depth));
   const newDepth = Math.min(maxChildDepth + 1, MAX_CONDENSE_DEPTH);
 
-  const systemPrompt = `You are a conversation summarizer performing hierarchical condensation. You are given multiple summaries of conversation segments. Create a higher-level summary that captures the essential information from all of them. Preserve:
-- Overall narrative arc and progression
-- Key decisions and their rationale
-- Important facts and commitments
-- Anything that might be referenced in future conversation
-Keep the condensed summary under 400 words. Be comprehensive but concise.`;
-
   const userContent = summaries
     .map((s, i) => `--- Summary ${i + 1} ---\n${s.content}`)
     .join('\n\n');
 
-  const apiResult = await callAnthropicAPI(systemPrompt, userContent);
+  const apiResult = await callAnthropicAPI(buildCondensedPrompt(newDepth, previousSummary), userContent);
   if (!apiResult) return null;
 
   return {
