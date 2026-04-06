@@ -13,8 +13,6 @@ import {
   getThreadSession,
   setSession,
   setThreadSession,
-  deleteSession,
-  deleteThreadSession,
 } from './db.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import type { GroupManager } from './group-manager.js';
@@ -96,15 +94,20 @@ export class AgentExecutor {
   ): Promise<'success' | 'error'> {
     const isMain = group.isMain === true;
     // Thread-aware session routing
-    const threadSessionId = threadTs
+    const rawThreadSessionId = threadTs
       ? getThreadSession(group.folder, threadTs)
       : undefined;
-    const isNewThread = !!threadTs && !threadSessionId;
-    const parentSessionId = this.state.sessions[group.folder];
+    // __compacted__ sentinel means LCM compaction cleared this session — start fresh
+    const isCompacted = rawThreadSessionId === '__compacted__';
+    const threadSessionId = isCompacted ? undefined : rawThreadSessionId;
+    const isNewThread = !!threadTs && !threadSessionId && !isCompacted;
+    const rawParentSessionId = this.state.sessions[group.folder];
+    const parentSessionId = rawParentSessionId === '__compacted__' ? undefined : rawParentSessionId;
     // For rewind: use the source session with fork, not the current thread session
+    // For compacted: no session, no fork — truly fresh with LCM context
     const sessionId = rewindOpts
       ? rewindOpts.sourceSessionId
-      : threadSessionId || parentSessionId;
+      : isCompacted ? undefined : (threadSessionId || parentSessionId);
     const shouldFork = rewindOpts ? true : isNewThread;
 
     // Update tasks snapshot for container to read (filtered by group)
@@ -181,12 +184,12 @@ export class AgentExecutor {
     const wrappedOnOutput = onOutput
       ? async (output: ContainerOutput) => {
           if (output.sessionReset) {
-            // LCM compaction: clear session so next container starts fresh
+            // LCM compaction: mark session as compacted so next container starts fresh
             if (threadTs) {
-              deleteThreadSession(group.folder, threadTs);
+              setThreadSession(group.folder, threadTs, '__compacted__');
             } else {
-              delete this.state.sessions[group.folder];
-              deleteSession(group.folder);
+              this.state.sessions[group.folder] = '__compacted__';
+              setSession(group.folder, '__compacted__');
             }
             logger.info({ group: group.folder, threadTs }, 'Session reset (LCM compaction)');
           } else if (output.newSessionId) {
@@ -250,10 +253,10 @@ export class AgentExecutor {
 
       if (output.sessionReset) {
         if (threadTs) {
-          deleteThreadSession(group.folder, threadTs);
+          setThreadSession(group.folder, threadTs, '__compacted__');
         } else {
-          delete this.state.sessions[group.folder];
-          deleteSession(group.folder);
+          this.state.sessions[group.folder] = '__compacted__';
+          setSession(group.folder, '__compacted__');
         }
       } else if (output.newSessionId) {
         if (threadTs && (isNewThread || rewindOpts)) {
