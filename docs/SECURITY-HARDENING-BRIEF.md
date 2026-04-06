@@ -38,6 +38,9 @@ A 9-dimension security model was developed and documented at `docs/SECURITY-MODE
 - `ignore-scripts=true` added to `~/.npmrc`
 - Claude OAuth token removed from `/etc/environment`
 
+### Completed after session (2026-04-06)
+- **1Password SSH agent** — all local SSH keys moved to 1Password vault. Keys never touch disk. SSH auth gated by Touch ID. This was item 1.4 (critical priority) from Sherlock's hardening analysis.
+
 ### Completed in this session
 - **`--cap-drop=ALL` and `--security-opt=no-new-privileges:true`** added to all agent containers (`container-runner.ts`). Deployed and live on VM. Zero performance impact.
 - **Pre-commit hook fixed** — was running `prettier --write src/**/*.ts` (all files) on every commit, leaving unstaged formatting changes. Replaced with `lint-staged` that only formats staged files. Root cause of recurring dirty working tree on main.
@@ -144,6 +147,37 @@ Recommended additions:
 - **7-day release gate** — delay adopting new dependency versions. The axios attack had a 3-hour window; a 7-day gate would have avoided it entirely.
 - **Periodic `npm audit`** — catches known CVEs in current dependency tree. Low effort.
 - **Dependency tree monitoring** — alert when transitive dependencies change. Would have caught axios adding `plain-crypto-js` as a new dependency.
+
+## Log Scrubbing & Sensitive Data in Logs (Audit: 2026-04-06)
+
+### What's clean
+- **Credential proxy** (`src/credential-proxy.ts`) — does not log headers or API keys
+- **Slack tokens** — never logged, kept in closures
+- **`.env` contents** — `readEnvFile()` does not log what it reads
+- **Console output** — only static error messages, no variable data
+
+### What leaks
+
+**Container error logs (HIGH)** — `src/container-runner.ts` lines 514-535. When a container exits non-zero, the full `ContainerInput` (including the complete user prompt) plus all stderr/stdout is written to `groups/{groupName}/logs/container-{timestamp}.log`. If a user shared a password or API key with an agent and the container errors, it's on disk indefinitely.
+
+**Agent output logged (MEDIUM)** — `src/message-processor.ts` line 335. First 200 chars of every agent response logged via pino (`logger.info`). Goes to journalctl.
+
+**Recent activity snapshot (MEDIUM)** — `src/agent-executor.ts` lines 134-160 / `src/snapshot-writer.ts`. First 200 chars of recent messages written to `recent_activity.json` in IPC dirs. By design (agents need context), but persists on disk.
+
+**Task result summaries (LOW)** — `src/task-scheduler.ts` line 245. First 200 chars stored in SQLite `scheduled_tasks` table.
+
+### What doesn't exist yet
+- No log rotation policy — journalctl and container log files grow unbounded
+- No redaction filters — no pino filter strips common secret patterns
+- No retention policy — container error logs are never cleaned up
+
+### Recommended fixes
+
+1. **Container error logs** — redact the `prompt` field from `ContainerInput` before writing to disk. Log metadata (group, threadTs, exit code, duration) but not message content. This is the highest-priority fix.
+2. **Journalctl retention** — set `MaxRetentionSec=30d` and `SystemMaxUse=500M` in `/etc/systemd/journald.conf` on the VM.
+3. **Container log file cleanup** — cron job or NanoClaw lifecycle hook to delete container logs older than 30 days from `groups/*/logs/`.
+4. **Pino redaction** — pino supports `redact` paths in its config. Add redaction for fields like `prompt`, `content` in structured log objects.
+5. **Agent output logging** — evaluate if logging first 200 chars of agent output is necessary. Consider removing or making it debug-level only.
 
 ## Reference Documents
 
