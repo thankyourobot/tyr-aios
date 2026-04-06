@@ -294,7 +294,7 @@ async function handleCommand(
     try {
       fs.mkdirSync(path.dirname(signalPath), { recursive: true });
       fs.writeFileSync(signalPath, JSON.stringify({ timestamp: new Date().toISOString() }));
-      await channel.sendMessage(chatJid, 'Compacting memory... session will reset with summaries preserved.', {
+      await channel.sendMessage(chatJid, 'Compacting memory... session has reset with summaries preserved. Please send a message to continue.', {
         displayName: group.displayName,
         displayEmoji: group.displayEmoji,
         displayIconUrl: group.displayIconUrl,
