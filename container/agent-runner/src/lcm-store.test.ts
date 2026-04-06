@@ -12,6 +12,7 @@ import {
   searchMessages,
   searchSummaries,
   getChildSummaries,
+  sanitizeFtsQuery,
   type LcmSummary,
 } from './lcm-store.js';
 
@@ -266,6 +267,28 @@ describe('searchSummaries (FTS5)', () => {
 
   it('returns empty for no match', () => {
     expect(searchSummaries('xylophone')).toHaveLength(0);
+  });
+});
+
+describe('sanitizeFtsQuery', () => {
+  it('wraps tokens in double quotes', () => {
+    expect(sanitizeFtsQuery('hello world')).toBe('"hello" "world"');
+  });
+
+  it('prevents hyphen operator injection', () => {
+    expect(sanitizeFtsQuery('sub-agent')).toBe('"sub-agent"');
+  });
+
+  it('prevents boolean operator injection', () => {
+    expect(sanitizeFtsQuery('conversation OR user')).toBe('"conversation" "OR" "user"');
+  });
+
+  it('escapes embedded double quotes', () => {
+    expect(sanitizeFtsQuery('say "hello"')).toBe('"say" '+ '"""hello"""');
+  });
+
+  it('filters empty tokens', () => {
+    expect(sanitizeFtsQuery('  spaced   out  ')).toBe('"spaced" "out"');
   });
 });
 

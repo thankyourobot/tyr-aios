@@ -354,17 +354,19 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
     if (toSummarize.length === 0) return;
 
     // Incremental chunked compaction: create one leaf per ~LCM_LEAF_CHUNK_TOKENS chunk
-    const estimateTokens = (msgs: typeof toSummarize) => msgs.reduce((sum, m) => sum + Math.ceil(m.content.length / 4), 0);
+    const MIN_CHUNK_MESSAGES = 10;
     let chunkStart = 0;
     let lastPrevSummary = previousSummary;
 
     while (chunkStart < toSummarize.length) {
-      // Build a chunk up to the token threshold
+      // Build a chunk: accumulate until token threshold AND minimum message count
       let chunkEnd = chunkStart;
       let chunkTokens = 0;
-      while (chunkEnd < toSummarize.length && chunkTokens < LCM_LEAF_CHUNK_TOKENS) {
+      while (chunkEnd < toSummarize.length) {
         chunkTokens += Math.ceil(toSummarize[chunkEnd].content.length / 4);
         chunkEnd++;
+        // Stop when we've hit the token threshold AND have enough messages
+        if (chunkTokens >= LCM_LEAF_CHUNK_TOKENS && (chunkEnd - chunkStart) >= MIN_CHUNK_MESSAGES) break;
       }
 
       const chunk = toSummarize.slice(chunkStart, chunkEnd);
