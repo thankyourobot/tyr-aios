@@ -821,25 +821,18 @@ server.tool(
           return { content: [{ type: 'text' as const, text: `## Expanded from ${summary.id}\n\n${answer}` }] };
         }
       }
-    } catch {
-      // Fall through to deterministic fallback
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text' as const, text: `lcm_expand failed: API call to summarization model failed (${msg}). Try lcm_grep to search for specific terms instead, or lcm_describe to read the summary content directly.` }],
+        isError: true,
+      };
     }
 
-    // Deterministic fallback: search source text for query terms
-    const queryTerms = args.query.toLowerCase().split(/\s+/).filter(t => t.length > 3);
-    const lines = sourceText.split('\n');
-    const matches = lines.filter(line => {
-      const lower = line.toLowerCase();
-      return queryTerms.some(term => lower.includes(term));
-    }).slice(0, 50);
-
-    if (matches.length > 0) {
-      return { content: [{ type: 'text' as const, text: `## Expanded from ${summary.id} (text search fallback)\n\n${matches.join('\n')}` }] };
-    }
-
-    // Last resort: return summary content + first few source lines
-    const preview = sourceText.split('\n').slice(0, 30).join('\n');
-    return { content: [{ type: 'text' as const, text: `## ${summary.id} — summary content\n\n${summary.content}\n\n## First messages:\n${preview}` }] };
+    return {
+      content: [{ type: 'text' as const, text: `lcm_expand failed: API returned empty response. Try lcm_grep to search for specific terms instead, or lcm_describe to read the summary content directly.` }],
+      isError: true,
+    };
   },
 );
 
