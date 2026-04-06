@@ -61,30 +61,41 @@ export function shouldProactivelyCompact(lastInputTokens?: number): boolean {
   return usagePct >= LCM_PROACTIVE_COMPACTION_THRESHOLD;
 }
 
+const LCM_FRESHNESS_WINDOW = parseInt(process.env.LCM_FRESHNESS_WINDOW || '32', 10);
+
 /**
- * Get the total token count for messages not yet covered by any summary.
- * A message is "unsummarized" if its sequence is above the max_sequence of all summaries.
+ * Get the token count for messages eligible for summarization —
+ * unsummarized messages MINUS the freshness window (most recent N messages).
  */
-export function getUnsummarizedTokenCount(conversationId: string): number {
+export function getSummarizableTokenCount(conversationId: string): number {
   const database = getLcmDb();
   const summaries = getSummariesForConversation(conversationId);
   const maxSummarizedSeq = summaries.length > 0
     ? Math.max(...summaries.map(s => s.max_sequence ?? -1))
     : -1;
 
+  // Count unsummarized messages
+  const countRow = database.prepare(
+    'SELECT COUNT(*) as cnt FROM lcm_messages WHERE conversation_id = ? AND sequence > ?',
+  ).get(conversationId, maxSummarizedSeq) as { cnt: number };
+
+  const eligibleCount = Math.max(0, countRow.cnt - LCM_FRESHNESS_WINDOW);
+  if (eligibleCount === 0) return 0;
+
+  // Sum tokens for only the eligible messages (oldest unsummarized, excluding freshness window)
   const row = database.prepare(
-    'SELECT COALESCE(SUM(token_estimate), 0) as total FROM lcm_messages WHERE conversation_id = ? AND sequence > ?',
-  ).get(conversationId, maxSummarizedSeq) as { total: number };
+    'SELECT COALESCE(SUM(token_estimate), 0) as total FROM (SELECT token_estimate FROM lcm_messages WHERE conversation_id = ? AND sequence > ? ORDER BY sequence LIMIT ?)',
+  ).get(conversationId, maxSummarizedSeq, eligibleCount) as { total: number };
 
   return row.total;
 }
 
 /**
- * Returns true when unsummarized tokens exceed the leaf chunk threshold.
+ * Returns true when summarizable tokens (outside freshness window) exceed the threshold.
  */
 export function shouldSummarize(conversationId: string): boolean {
-  const unsummarized = getUnsummarizedTokenCount(conversationId);
-  return unsummarized >= LCM_LEAF_CHUNK_TOKENS;
+  const summarizable = getSummarizableTokenCount(conversationId);
+  return summarizable >= LCM_LEAF_CHUNK_TOKENS;
 }
 
 const LARGE_CONTENT_THRESHOLD = 25000; // ~6K tokens — externalize for summarization
