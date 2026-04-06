@@ -1,6 +1,6 @@
 # TYR AI OS Security Model
 
-Nine dimensions of security for AI agent infrastructure. This is the mental model that governs all security decisions in the TYR AI OS.
+Ten dimensions of security and operational resilience for AI agent infrastructure. This is the mental model that governs all security and system health decisions in the TYR AI OS.
 
 ## 1. Identity
 
@@ -108,6 +108,25 @@ The orchestrator itself shouldn't be omnipotent — limit what the host process 
 
 **Docker socket problem:** Anyone with Docker socket access can run `docker run --privileged -v /:/host` and own the entire machine. Rootless Docker solves this — the daemon runs as an unprivileged user, so socket access cannot escalate to host root. This is the recommended mitigation.
 
+## 10. System Health
+
+Continuous verification that all subsystems are functioning correctly — not just "is it up" but "is it working as designed." Distinct from observability (which asks "what happened?") and backups (which ask "can I recover?").
+
+- **Process health:** NanoClaw running and connected to Slack, all systemd services active (nanoclaw, litestream, backup-daily.timer, nanoclaw-restart-watcher)
+- **Resource pressure:** Disk usage (dangling Docker images, growing log files, unbounded databases), memory (8GB VM, no swap), container count vs MAX_CONCURRENT_CONTAINERS
+- **Database integrity:** SQLite WAL mode healthy, no corruption, checkpointing working. Applies to both `store/messages.db` and per-agent `data/sessions/{group}/.claude/lcm.db`
+- **Backup currency:** Litestream replication not silently stalled, daily restic backup completing
+- **Container image:** Exists, is buildable, not corrupted
+- **DNS resolution:** Working (agents need it for web browsing, git, package installs)
+- **Silent failure detection:** Subsystems that degrade without visible errors. Known case: LCM summarization fails silently when the credential proxy or OAuth token has issues — messages accumulate unsummarized, container stderr logs are invisible at default log level. Detect via SQL query against `lcm_messages`/`lcm_summaries` tables.
+
+**Principle:** A system can appear healthy while a critical subsystem has quietly stopped working. Health checks must verify actual function, not just process liveness.
+
+**Known silent failure modes:**
+- LCM summarization: Haiku API failures (auth, timeout, rate limit) cause `createLeafSummary`/`createCondensedSummary` to return null. `persistToLcm` logs to container stderr (debug level only — invisible in journalctl). Messages keep accumulating unsummarized. `lcm_grep` still works but post-compaction context injection has nothing to inject.
+- Litestream: Can stall without the service going unhealthy. Verify replication lag, not just service status.
+- Container stderr: All `[agent-runner]` and `[lcm-summarize]` log lines go to container stderr, which the host captures at debug level only. Errors in these subsystems are invisible unless you explicitly check container logs.
+
 ---
 
 ## How These Dimensions Interact
@@ -118,4 +137,6 @@ The security model is defense-in-depth. Each dimension compensates for failures 
 - If **input** fails (prompt injection succeeds) → **containment** sandboxes the agent, **secrets** are hidden behind the credential proxy, **identity** credentials are not in the container
 - If **identity** fails (SSH key stolen) → **observability** alerts on the login, damage is limited to what that identity can reach
 
-No single dimension is sufficient. The system is secure when all nine work together.
+- If **system health** degrades silently (LCM summarization stalls) → agents lose long-term memory after compaction, decisions made without full context, no security alert because nothing "failed"
+
+No single dimension is sufficient. The system is secure when all ten work together.
