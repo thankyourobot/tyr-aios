@@ -42,30 +42,6 @@ export interface CondensedResult {
 
 // --- Deterministic fallback ---
 
-function deterministicSummary(messages: ParsedMessage[]): string {
-  const lines: string[] = ['[Deterministic summary — API unavailable]'];
-  for (const msg of messages) {
-    const text = extractText(msg);
-    const msgLines = text.split('\n').filter(l => l.trim());
-    const first3 = msgLines.slice(0, 3).join('\n');
-    const last3 = msgLines.length > 6 ? msgLines.slice(-3).join('\n') : '';
-    lines.push(`[${msg.role}]: ${first3}${last3 ? '\n...\n' + last3 : ''}`);
-  }
-  return lines.join('\n\n');
-}
-
-function deterministicCondensation(summaryContents: string[]): string {
-  const lines: string[] = ['[Deterministic condensation — API unavailable]'];
-  for (const content of summaryContents) {
-    // Take first 5 and last 3 lines of each summary
-    const cLines = content.split('\n').filter(l => l.trim());
-    const first5 = cLines.slice(0, 5).join('\n');
-    const last3 = cLines.length > 8 ? cLines.slice(-3).join('\n') : '';
-    lines.push(first5 + (last3 ? '\n...\n' + last3 : ''));
-  }
-  return lines.join('\n---\n');
-}
-
 // --- API-based summarization ---
 
 function hasApiCredentials(): boolean {
@@ -151,7 +127,7 @@ export async function createLeafSummary(
   messageIds: string[],
   minSequence: number,
   maxSequence: number,
-): Promise<SummaryResult> {
+): Promise<SummaryResult | null> {
   const id = generateSummaryId();
 
   const systemPrompt = `You are a conversation summarizer. Create a concise but comprehensive summary of the following conversation segment. Preserve:
@@ -166,9 +142,9 @@ Keep the summary under 500 words. Be factual and precise.`;
     .join('\n\n');
 
   const apiResult = await callAnthropicAPI(systemPrompt, transcript);
-  const content = apiResult || deterministicSummary(messages);
+  if (!apiResult) return null;
 
-  return { id, content, sourceMessageIds: messageIds, minSequence, maxSequence };
+  return { id, content: apiResult, sourceMessageIds: messageIds, minSequence, maxSequence };
 }
 
 /**
@@ -176,47 +152,10 @@ Keep the summary under 500 words. Be factual and precise.`;
  */
 export async function createCondensedSummary(
   summaries: Array<{ id: string; content: string; min_sequence: number | null; max_sequence: number | null; depth: number }>,
-): Promise<CondensedResult> {
+): Promise<CondensedResult | null> {
   const id = generateSummaryId();
   const maxChildDepth = Math.max(...summaries.map(s => s.depth));
-  const newDepth = maxChildDepth + 1;
-
-  // Cap at MAX_CONDENSE_DEPTH — still summarize (or truncate) rather than
-  // concatenating unbounded content.
-  if (newDepth > MAX_CONDENSE_DEPTH) {
-    const TOKEN_CAP = 10000; // ~40KB of text
-    const charCap = TOKEN_CAP * 4;
-
-    // Try API summarization first, fall back to truncated concatenation
-    const userContent = summaries
-      .map((s, i) => `--- Summary ${i + 1} ---\n${s.content}`)
-      .join('\n\n');
-
-    const apiResult = await callAnthropicAPI(
-      'You are condensing multiple conversation summaries into one. Be comprehensive but concise. Under 400 words.',
-      userContent,
-    );
-
-    let content: string;
-    if (apiResult) {
-      content = apiResult;
-    } else {
-      // Deterministic fallback with token cap
-      const joined = summaries.map(s => s.content).join('\n\n---\n\n');
-      content = joined.length > charCap
-        ? joined.slice(0, charCap) + '\n\n[Truncated — exceeded token cap]'
-        : joined;
-    }
-
-    return {
-      id,
-      content,
-      childSummaryIds: summaries.map(s => s.id),
-      minSequence: Math.min(...summaries.map(s => s.min_sequence ?? Infinity)),
-      maxSequence: Math.max(...summaries.map(s => s.max_sequence ?? -Infinity)),
-      depth: MAX_CONDENSE_DEPTH,
-    };
-  }
+  const newDepth = Math.min(maxChildDepth + 1, MAX_CONDENSE_DEPTH);
 
   const systemPrompt = `You are a conversation summarizer performing hierarchical condensation. You are given multiple summaries of conversation segments. Create a higher-level summary that captures the essential information from all of them. Preserve:
 - Overall narrative arc and progression
@@ -230,11 +169,11 @@ Keep the condensed summary under 400 words. Be comprehensive but concise.`;
     .join('\n\n');
 
   const apiResult = await callAnthropicAPI(systemPrompt, userContent);
-  const content = apiResult || deterministicCondensation(summaries.map(s => s.content));
+  if (!apiResult) return null;
 
   return {
     id,
-    content,
+    content: apiResult,
     childSummaryIds: summaries.map(s => s.id),
     minSequence: Math.min(...summaries.map(s => s.min_sequence ?? Infinity)),
     maxSequence: Math.max(...summaries.map(s => s.max_sequence ?? -Infinity)),

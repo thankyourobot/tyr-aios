@@ -355,6 +355,10 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
 
     log(`LCM: Creating leaf summary for messages ${minSeq}-${maxSeq}`);
     const leafResult = await createLeafSummary(toSummarize, messageIds, minSeq, maxSeq);
+    if (!leafResult) {
+      log('LCM: Summarization API unavailable — skipping summary, will retry next persist');
+      return;
+    }
     storeSummary({
       id: leafResult.id,
       conversation_id: conversationId,
@@ -385,6 +389,10 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
       const toCondense = uncoveredLeaves.slice(0, LCM_CONDENSE_THRESHOLD);
       log(`LCM: Condensing ${toCondense.length} leaf summaries`);
       const condensedResult = await createCondensedSummary(toCondense);
+      if (!condensedResult) {
+        log('LCM: Condensation API unavailable — skipping, will retry next persist');
+        return;
+      }
       storeSummary({
         id: condensedResult.id,
         conversation_id: conversationId,
