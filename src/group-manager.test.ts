@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
 import type { AppState } from './app-state.js';
-import { GroupManager } from './group-manager.js';
+import { GroupManager, cleanupOldContainerLogs } from './group-manager.js';
 import { channelJid, threadJid, type ChannelJid, type AnyJid } from './jid.js';
 import type { NewMessage, RegisteredGroup } from './types.js';
 
@@ -35,6 +38,14 @@ vi.mock('./logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
     debug: vi.fn(),
+  },
+}));
+
+// Mock config.js for cleanupOldContainerLogs — GROUPS_DIR overridden per-test
+let testGroupsDir = '/tmp/nanoclaw-test-groups';
+vi.mock('./config.js', () => ({
+  get GROUPS_DIR() {
+    return testGroupsDir;
   },
 }));
 
@@ -500,5 +511,62 @@ describe('GroupManager', () => {
       const targets = gm.resolveTargetGroups(CHANNEL_JID, undefined, msg);
       expect(targets).toHaveLength(0);
     });
+  });
+});
+
+// =============================================
+// cleanupOldContainerLogs
+// =============================================
+
+describe('cleanupOldContainerLogs', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nanoclaw-cleanup-test-'));
+    testGroupsDir = tmpDir;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('deletes container logs older than maxAgeDays', () => {
+    const logsDir = path.join(tmpDir, 'test-group', 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    // Create an old log (40 days ago)
+    const oldLog = path.join(logsDir, 'container-2026-01-01T00-00-00-000Z.log');
+    fs.writeFileSync(oldLog, 'old log content');
+    const fortyDaysAgo = Date.now() - 40 * 24 * 60 * 60 * 1000;
+    fs.utimesSync(oldLog, new Date(fortyDaysAgo), new Date(fortyDaysAgo));
+
+    // Create a recent log (today)
+    const newLog = path.join(logsDir, 'container-2026-04-07T00-00-00-000Z.log');
+    fs.writeFileSync(newLog, 'new log content');
+
+    cleanupOldContainerLogs(30);
+
+    expect(fs.existsSync(oldLog)).toBe(false);
+    expect(fs.existsSync(newLog)).toBe(true);
+  });
+
+  it('ignores non-container files', () => {
+    const logsDir = path.join(tmpDir, 'test-group', 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+
+    const otherFile = path.join(logsDir, 'other-file.log');
+    fs.writeFileSync(otherFile, 'keep me');
+    const oldTime = Date.now() - 40 * 24 * 60 * 60 * 1000;
+    fs.utimesSync(otherFile, new Date(oldTime), new Date(oldTime));
+
+    cleanupOldContainerLogs(30);
+
+    expect(fs.existsSync(otherFile)).toBe(true);
+  });
+
+  it('handles groups with no logs directory', () => {
+    fs.mkdirSync(path.join(tmpDir, 'empty-group'), { recursive: true });
+    // Should not throw
+    expect(() => cleanupOldContainerLogs(30)).not.toThrow();
   });
 });

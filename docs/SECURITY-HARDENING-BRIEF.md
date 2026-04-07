@@ -122,6 +122,105 @@ Rootless Docker does not have a `docker0` bridge interface. NanoClaw's credentia
 ### Credential rotation automation
 **Why deferred:** OAuth tokens expire naturally. SSH keys are passphrase-protected. Manual rotation with a documented runbook is sufficient at current scale. Worth automating when there are more credentials to manage.
 
+## Information Environment Hardening (HIGH PRIORITY)
+
+**Source:** Google DeepMind, "AI Agent Traps" (Franklin et al., 2026) — a systematic framework for adversarial content embedded in the information environment that targets agent perception, reasoning, memory, and action.
+
+**Paper reference:** `/Users/jeremiah/Downloads/ssrn-6372438.pdf`
+
+### Threat Summary
+
+Our security model is infrastructure-hardened (containment, credentials, supply chain) but largely undefended against **information-layer attacks** — adversarial content that manipulates what agents *perceive and believe* rather than breaking out of their sandbox. The paper identifies six attack categories:
+
+1. **Content Injection** — hidden instructions in HTML/CSS, metadata, images targeting agent parsers
+2. **Semantic Manipulation** — biased framing, jailbreak wrapping, persona manipulation via retrieval
+3. **Cognitive State** — poisoning agent memory, summaries, or in-context learning over time
+4. **Behavioural Control** — embedded jailbreaks, data exfiltration prompts, sub-agent spawning traps
+5. **Systemic** — correlated multi-agent failures via congestion, cascades, compositional fragment attacks
+6. **Human-in-the-Loop** — using a compromised agent to social-engineer the human operator
+
+### Current Coverage
+
+| Category | Coverage | Why |
+|---|---|---|
+| Content Injection | Partial | Container sandbox limits blast radius, but no pre-ingestion content sanitization |
+| Semantic Manipulation | Low | Relies entirely on Claude's built-in alignment (upstream) |
+| Cognitive State | Moderate | Session isolation + read-only skill mounts prevent cross-agent contamination |
+| Behavioural Control | **Strong** | Credential proxy, cap-drop, no-new-privileges, IPC auth |
+| Systemic | Moderate | Rate limiting, fixed identities, queue slots — but no cross-agent anomaly detection |
+| Human-in-the-Loop | Low | Sole operator reviewing all output with no automated review layer |
+
+### Architectural Response: Read/Write Agent Separation
+
+**Principle:** Agents that ingest external (untrusted) content should never directly produce outputs that reach users or take actions. Separate the **perception** surface from the **action** surface.
+
+**The trust boundary is content authorship, not API source.** A QuickBooks invoice retrieved via a trusted API still carries untrusted content if the invoice description was written by an external party. A single API response can mix trusted fields (amounts, dates, account codes) with untrusted fields (free-text descriptions, memos, customer-provided names). The review layer must account for this — the boundary isn't "internal app vs external web," it's "did someone outside our trust boundary author this content?"
+
+**Examples of untrusted content arriving via trusted APIs:**
+- Invoice/bill descriptions and line item names (QBO)
+- Email bodies and subjects
+- GitHub issue/PR comments from external contributors
+- Customer-provided fields in any SaaS tool
+- Attachment contents and document text
+
+**Trusted (bypass review):**
+- NanoClaw IPC and system-generated metadata
+- Internal Slack messages from known bot_user_ids
+- Our own code, skills, config
+- Structured/numeric data fields (amounts, dates, status codes)
+
+**Design:**
+
+1. **Read agents** — high exposure, low privilege:
+   - Can fetch URLs, parse documents, search the web
+   - Output is structured data (not free-text passed to Slack)
+   - No Slack posting, no file writes, no tool calls beyond retrieval
+   - Ephemeral context — no persistent memory across invocations
+
+2. **Adversarial review layer** — the air gap:
+   - Separate model call reviews read-agent output before it enters a write agent's context
+   - Detection targets: embedded instructions, sentiment loading, unusual urgency, tool-call-shaped language, requests designed to pass through to downstream tools
+   - Operates on the read output in isolation (no prior context from the poisoned source)
+
+3. **Write agents** — low exposure, high privilege:
+   - Never touch raw external content directly
+   - Receive only reviewed, structured summaries from the read layer
+   - Retain full Slack posting, file writing, and action-taking capabilities
+
+**Why this works:** Breaks the "confused deputy" chain. Even if adversarial web content jailbreaks the read agent, the review layer catches it before reaching an agent that can act. The review layer is hard to manipulate because it sees the output in isolation — the attacker can't control its context.
+
+**Performance note:** Only external inputs go through the read/review pipeline. Internal reads (Slack, local files, IPC) bypass it entirely. No latency impact on normal agent operation.
+
+**Implementation scope:** This is an architectural change to how NanoClaw dispatches tool calls involving external content. It does not require changes to agent system prompts or container configuration. The read agent and review layer can run in the same container lifecycle — this is a context-separation concern, not an infrastructure one.
+
+### Additional Gaps to Address
+
+**Egress filtering:** Already deferred (breaks web browsing), but the paper documents 80%+ success rates for data exfiltration via HTTP from jailbroken agents. Revisit when read/write separation is in place — write agents with no web access could have strict egress rules.
+
+**LCM summary integrity:** The summarization pipeline is a write-retrieve loop that fits the paper's "latent memory poisoning" model. A poisoned summary persists across sessions and re-enters agent context on every new conversation. Consider: integrity markers on summaries, or periodic adversarial review of accumulated summaries.
+
+**Cross-agent anomaly detection:** If multiple agents start producing correlated unusual outputs (e.g., all suddenly recommending the same external link, or all exhibiting urgency framing), nothing flags it. This falls under the Observability dimension and could be a lightweight post-hoc check on agent outputs.
+
+## Universal Credential Proxy (TO EXPLORE)
+
+**Context:** Upstream NanoClaw adopted OneCLI Agent Vault as the default credential layer (announced 2026-03-24). Our credential proxy currently only handles the Anthropic API key. All other service credentials (Slack, QBO, GitHub, etc.) are passed to containers via `data/env/env` — meaning agents hold raw API keys for non-Anthropic services.
+
+**Why this matters:** A jailbroken agent with raw Slack or QBO tokens can make arbitrary API calls to those services. The credential proxy pattern (agent never holds the real key, proxy injects it at request time) should extend to all service credentials, not just Anthropic.
+
+**Two paths to evaluate:**
+
+1. **Extend our own credential proxy** — We already have the architecture: proxy binds to the Docker bridge, containers route through it. Adding support for additional services means intercepting requests to Slack/QBO/GitHub APIs, injecting the appropriate token, and forwarding. We control it fully, no external dependency, and it fits our existing container networking model. The work is mostly routing logic and a credential registry.
+
+2. **Adopt OneCLI Agent Vault** — Upstream NanoClaw has already integrated this. It handles all service credentials, adds per-group identity with scoped access rules, rate limiting per agent, and has time-bound access and approval controls on the roadmap. The tradeoff is adding a dependency on OneCLI's vault architecture and whatever trust/availability assumptions that brings. Worth reading the implementation (`github.com/onecli/onecli`) before deciding.
+
+**What the policy layer enables (either path):**
+- Per-group credential scoping (Alfred gets QBO access, Ryan doesn't)
+- Rate limiting per agent per service (caps blast radius of a compromised agent)
+- Audit logging of which agent accessed which service and when (fills the Observability gap)
+- Time-bound access and approval gates for sensitive operations (future)
+
+**Decision needed:** Read the OneCLI Agent Vault implementation and compare against the effort to extend our proxy. The right answer depends on how opinionated their architecture is and whether it fits our fork's container networking (especially with the rootless Docker migration pending).
+
 ## Incident Response Runbook (To Be Created)
 
 If a compromise is suspected, rotate in this order:
@@ -138,14 +237,16 @@ If a compromise is suspected, rotate in this order:
 
 Verified defenses:
 - `package-lock.json` committed and used with `npm ci` ✅
-- `ignore-scripts=true` in `~/.npmrc` ✅
+- `ignore-scripts=true` in `~/.npmrc` and `.npmrc` in repo ✅
 - Small dependency surface (7 direct deps) ✅
 - Override pinning for risky transitive deps (`axios: 1.13.6`) ✅
 - Production deploys never run `npm install` ✅
+- Weekly `npm audit` via host cron → `#aios-alerts` ✅ (added 2026-04-07)
+
+Policies:
+- **7-day release gate** — do not adopt new dependency versions within 7 days of release. Use `npm outdated` to check, but delay updates. The axios attack had a 3-hour window; a 7-day gate would have avoided it entirely.
 
 Recommended additions:
-- **7-day release gate** — delay adopting new dependency versions. The axios attack had a 3-hour window; a 7-day gate would have avoided it entirely.
-- **Periodic `npm audit`** — catches known CVEs in current dependency tree. Low effort.
 - **Dependency tree monitoring** — alert when transitive dependencies change. Would have caught axios adding `plain-crypto-js` as a new dependency.
 
 ## Log Scrubbing & Sensitive Data in Logs (Audit: 2026-04-06)

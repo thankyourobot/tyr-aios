@@ -36,7 +36,7 @@ import {
 } from './db.js';
 import { AgentExecutor } from './agent-executor.js';
 import { AppState, BUSY_EMOJI } from './app-state.js';
-import { GroupManager } from './group-manager.js';
+import { GroupManager, cleanupOldContainerLogs } from './group-manager.js';
 import { MessageProcessor } from './message-processor.js';
 import {
   buildThreadJid,
@@ -947,7 +947,8 @@ async function main(): Promise<void> {
       answer: string;
     }) => {
       const answerJid = params.chatJid as AnyJid;
-      const answerBaseJid = getParentJid(answerJid) ?? (answerJid as ChannelJid);
+      const answerBaseJid =
+        getParentJid(answerJid) ?? (answerJid as ChannelJid);
 
       // Post the answer visibly in Slack thread (neutral attribution)
       const channel = findChannel(state.channels, answerBaseJid);
@@ -956,10 +957,14 @@ async function main(): Promise<void> {
       );
       if (channel && group) {
         const quoted = params.answer.replace(/\n/g, '\n> ');
-        await channel.sendMessage(answerBaseJid, `_User answered:_\n> ${quoted}`, {
-          botToken: group.botToken,
-          threadTs: params.threadTs,
-        });
+        await channel.sendMessage(
+          answerBaseJid,
+          `_User answered:_\n> ${quoted}`,
+          {
+            botToken: group.botToken,
+            threadTs: params.threadTs,
+          },
+        );
       }
 
       // Always store for thread history
@@ -1198,7 +1203,12 @@ async function main(): Promise<void> {
         await channel.addReaction(jid as AnyJid, messageTs, emoji);
       }
     },
-    onPlanReady: async (chatJid: string, groupFolder: string, plan: string, threadTs?: string) => {
+    onPlanReady: async (
+      chatJid: string,
+      groupFolder: string,
+      plan: string,
+      threadTs?: string,
+    ) => {
       const channel = findChannel(state.channels, chatJid as AnyJid);
       if (!channel) {
         logger.warn({ chatJid }, 'No channel for plan_ready IPC');
@@ -1212,7 +1222,8 @@ async function main(): Promise<void> {
         logger.warn({ groupFolder }, 'No group for plan_ready IPC');
         return;
       }
-      const baseJid = getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
+      const baseJid =
+        getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
 
       // Send plan text
       await channel.sendMessage(chatJid as AnyJid, plan, {
@@ -1265,7 +1276,12 @@ async function main(): Promise<void> {
       }
       logger.info({ chatJid, groupFolder, threadTs }, 'Plan posted from IPC');
     },
-    onAskUser: async (chatJid: string, groupFolder: string, questions: unknown[], threadTs?: string) => {
+    onAskUser: async (
+      chatJid: string,
+      groupFolder: string,
+      questions: unknown[],
+      threadTs?: string,
+    ) => {
       const channel = findChannel(state.channels, chatJid as AnyJid);
       if (!channel) {
         logger.warn({ chatJid }, 'No channel for ask_user IPC');
@@ -1279,7 +1295,8 @@ async function main(): Promise<void> {
         return;
       }
 
-      const baseJid = getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
+      const baseJid =
+        getParentJid(chatJid as AnyJid) ?? (chatJid as ChannelJid);
       const typedQuestions = questions as Array<{
         question: string;
         header?: string;
@@ -1291,16 +1308,30 @@ async function main(): Promise<void> {
       const questionId = `aq_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       state.pendingQuestions.set(questionId, typedQuestions);
       // Auto-cleanup after 30 min
-      setTimeout(() => state.pendingQuestions.delete(questionId), 30 * 60 * 1000);
+      setTimeout(
+        () => state.pendingQuestions.delete(questionId),
+        30 * 60 * 1000,
+      );
 
       // Show questions as text + single "Answer" button that opens a modal
-      const questionText = typedQuestions.map((q, i) => {
-        let text = q.header ? `*${q.header}:* ${q.question}` : `*${i + 1}.* ${q.question}`;
-        if (q.options?.length) {
-          text += '\n' + q.options.map((o) => `  • ${o.label}${o.description ? ` — ${o.description}` : ''}`).join('\n');
-        }
-        return text;
-      }).join('\n\n');
+      const questionText = typedQuestions
+        .map((q, i) => {
+          let text = q.header
+            ? `*${q.header}:* ${q.question}`
+            : `*${i + 1}.* ${q.question}`;
+          if (q.options?.length) {
+            text +=
+              '\n' +
+              q.options
+                .map(
+                  (o) =>
+                    `  • ${o.label}${o.description ? ` — ${o.description}` : ''}`,
+                )
+                .join('\n');
+          }
+          return text;
+        })
+        .join('\n\n');
 
       const blocks: Record<string, unknown>[] = [
         {
@@ -1341,13 +1372,16 @@ async function main(): Promise<void> {
           },
         );
       }
-      logger.info({ chatJid, groupFolder, threadTs }, 'Questions posted from IPC');
+      logger.info(
+        { chatJid, groupFolder, threadTs },
+        'Questions posted from IPC',
+      );
     },
   });
   state.queue.setProcessMessagesFn(processGroupMessages);
   recoverPendingMessages();
 
-  // Daily cleanup of old thread membership data (every 24 hours)
+  // Daily cleanup (every 24 hours)
   setInterval(
     () => {
       try {
@@ -1355,11 +1389,17 @@ async function main(): Promise<void> {
       } catch (err) {
         logger.warn({ err }, 'Thread data cleanup error');
       }
+      try {
+        cleanupOldContainerLogs(30);
+      } catch (err) {
+        logger.warn({ err }, 'Container log cleanup error');
+      }
     },
     24 * 60 * 60 * 1000,
   );
   // Run once at startup
   cleanupOldThreadData(30);
+  cleanupOldContainerLogs(30);
 
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');

@@ -88,7 +88,9 @@ vi.mock('child_process', async () => {
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import { channelJid } from './jid.js';
+import { logger } from './logger.js';
 import type { RegisteredGroup } from './types.js';
+import fs from 'fs';
 
 const testGroup: RegisteredGroup = {
   name: 'Test Group',
@@ -179,6 +181,57 @@ describe('container-runner timeout behavior', () => {
     expect(result.status).toBe('error');
     expect(result.error).toContain('timed out');
     expect(onOutput).not.toHaveBeenCalled();
+  });
+
+  it('error exit redacts prompt from file log and truncates pino output', async () => {
+    const sensitivePrompt = 'my-secret-password-12345 and other sensitive data';
+    const sensitiveInput = {
+      ...testInput,
+      prompt: sensitivePrompt,
+    };
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      sensitiveInput,
+      () => {},
+      onOutput,
+    );
+
+    // Write some stderr before error exit
+    fakeProc.stderr.push('Error: something went wrong\n');
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Error exit
+    fakeProc.emit('close', 1);
+
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+
+    // Verify file log redacts the prompt
+    const writeFileCall = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find(
+        (call) =>
+          typeof call[1] === 'string' && call[1].includes('=== Input ==='),
+      );
+    expect(writeFileCall).toBeDefined();
+    const logContent = writeFileCall![1] as string;
+    expect(logContent).not.toContain(sensitivePrompt);
+    expect(logContent).toContain(`[REDACTED: ${sensitivePrompt.length} chars]`);
+
+    // Verify pino error call uses stderrTail and stdoutLength, not full content
+    const errorCall = vi
+      .mocked(logger.error)
+      .mock.calls.find((call) => call[1] === 'Container exited with error');
+    expect(errorCall).toBeDefined();
+    const errorObj = errorCall![0] as Record<string, unknown>;
+    expect(errorObj).toHaveProperty('stderrTail');
+    expect(errorObj).toHaveProperty('stdoutLength');
+    expect(errorObj).not.toHaveProperty('stderr');
+    expect(errorObj).not.toHaveProperty('stdout');
   });
 
   it('normal exit after output resolves as success', async () => {

@@ -46,6 +46,7 @@ export function startCredentialProxy(
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
+      const startTime = Date.now();
       const chunks: Buffer[] = [];
       req.on('data', (c) => chunks.push(c));
       req.on('end', () => {
@@ -88,6 +89,15 @@ export function startCredentialProxy(
             headers,
           } as RequestOptions,
           (upRes) => {
+            logger.info(
+              {
+                method: req.method,
+                path: req.url,
+                status: upRes.statusCode,
+                durationMs: Date.now() - startTime,
+              },
+              'proxy request',
+            );
             res.writeHead(upRes.statusCode!, upRes.headers);
             upRes.pipe(res);
           },
@@ -95,7 +105,12 @@ export function startCredentialProxy(
 
         upstream.on('error', (err) => {
           logger.error(
-            { err, url: req.url },
+            {
+              err,
+              method: req.method,
+              url: req.url,
+              durationMs: Date.now() - startTime,
+            },
             'Credential proxy upstream error',
           );
           if (!res.headersSent) {
