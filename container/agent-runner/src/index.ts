@@ -471,9 +471,10 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
       log(`LCM: Creating leaf summary for messages ${minSeq}-${maxSeq} (${chunk.length} msgs, ~${chunkTokens} tokens)`);
       const leafResult = await createLeafSummary(chunk, messageIds, minSeq, maxSeq, lastPrevSummary);
       if (!leafResult) {
-        log('LCM: Summarization API unavailable — skipping remaining chunks, will retry next persist');
+        log('LCM: Leaf summarization failed — skipping remaining chunks, will retry next persist');
         break;
       }
+      log(`LCM: Leaf summary created: ${leafResult.id} (${leafResult.content.length} chars)`);
       storeSummary({
         id: leafResult.id,
         conversation_id: conversationId,
@@ -495,28 +496,33 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
       chunkStart = chunkEnd;
     }
 
-    // Check condensation threshold
-    const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
-    const condensedSummaries = getSummariesForConversation(conversationId).filter(s => s.depth > 0);
-    const coveredLeafIds = new Set<string>();
-    for (const cs of condensedSummaries) {
-      if (cs.child_summary_ids) {
-        for (const childId of JSON.parse(cs.child_summary_ids) as string[]) {
-          coveredLeafIds.add(childId);
+    // Condensation loop: keep condensing while uncovered leaves >= threshold
+    let condensationPass = 0;
+    while (true) {
+      const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
+      const condensedSummaries = getSummariesForConversation(conversationId).filter(s => s.depth > 0);
+      const coveredLeafIds = new Set<string>();
+      for (const cs of condensedSummaries) {
+        if (cs.child_summary_ids) {
+          for (const childId of JSON.parse(cs.child_summary_ids) as string[]) {
+            coveredLeafIds.add(childId);
+          }
         }
       }
-    }
-    const uncoveredLeaves = leafSummaries.filter(s => !coveredLeafIds.has(s.id));
+      const uncoveredLeaves = leafSummaries.filter(s => !coveredLeafIds.has(s.id));
 
-    if (uncoveredLeaves.length >= LCM_CONDENSE_THRESHOLD) {
+      if (uncoveredLeaves.length < LCM_CONDENSE_THRESHOLD) break;
+
+      condensationPass++;
       const toCondense = uncoveredLeaves.slice(0, LCM_CONDENSE_THRESHOLD);
       const latestCondensed = condensedSummaries.sort((a, b) => (b.max_sequence ?? 0) - (a.max_sequence ?? 0))[0];
-      log(`LCM: Condensing ${toCondense.length} leaf summaries`);
+      log(`LCM: Condensation pass ${condensationPass} — condensing ${toCondense.length} leaf summaries (${uncoveredLeaves.length} uncovered)`);
       const condensedResult = await createCondensedSummary(toCondense, latestCondensed?.content);
       if (!condensedResult) {
-        log('LCM: Condensation API unavailable — skipping, will retry next persist');
-        return;
+        log('LCM: Condensation failed — skipping, will retry next persist');
+        break;
       }
+      log(`LCM: Condensed summary created: ${condensedResult.id} (depth ${condensedResult.depth}, ${condensedResult.content.length} chars)`);
       storeSummary({
         id: condensedResult.id,
         conversation_id: conversationId,
