@@ -515,9 +515,13 @@ export async function runContainerAgent(
       const isError = code !== 0;
 
       if (isVerbose || isError) {
+        const redactedInput = {
+          ...input,
+          prompt: `[REDACTED: ${input.prompt.length} chars]`,
+        };
         logLines.push(
           `=== Input ===`,
-          JSON.stringify(input, null, 2),
+          JSON.stringify(redactedInput, null, 2),
           ``,
           `=== Container Args ===`,
           containerArgs.join(' '),
@@ -559,8 +563,8 @@ export async function runContainerAgent(
             group: group.name,
             code,
             duration,
-            stderr,
-            stdout,
+            stderrTail: stderr.slice(-200),
+            stdoutLength: stdout.length,
             logFile,
           },
           'Container exited with error',

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 import type { AppState } from './app-state.js';
+import { GROUPS_DIR } from './config.js';
 import {
   addThreadMember,
   countBotTriggers,
@@ -295,5 +296,31 @@ export class GroupManager {
     }
 
     return targets;
+  }
+}
+
+/** Delete container log files older than maxAgeDays. */
+export function cleanupOldContainerLogs(maxAgeDays: number = 30): void {
+  const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  let totalDeleted = 0;
+
+  for (const entry of fs.readdirSync(GROUPS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const logsDir = path.join(GROUPS_DIR, entry.name, 'logs');
+    if (!fs.existsSync(logsDir)) continue;
+
+    for (const file of fs.readdirSync(logsDir)) {
+      if (!file.startsWith('container-') || !file.endsWith('.log')) continue;
+      const filePath = path.join(logsDir, file);
+      const stat = fs.statSync(filePath);
+      if (stat.mtimeMs < cutoffMs) {
+        fs.unlinkSync(filePath);
+        totalDeleted++;
+      }
+    }
+  }
+
+  if (totalDeleted > 0) {
+    logger.info({ totalDeleted }, 'Cleaned up old container logs');
   }
 }

@@ -333,8 +333,8 @@ ${formatMessages([parentMsg], TIMEZONE)}
           const useThreadTs = hasChannelTags ? undefined : lastThreadTs;
           if (hasChannelTags) text = text.replace(/<\/?channel>/g, '').trim();
           logger.info(
-            { group: group.name },
-            `Agent output: ${raw.slice(0, 200)}`,
+            { group: group.name, outputLength: raw.length },
+            'Agent output received',
           );
           if (text) {
             await channel.sendMessage(chatJid, text, {
