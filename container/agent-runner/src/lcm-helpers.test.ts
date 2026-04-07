@@ -8,7 +8,7 @@ import {
   parseTranscript,
   assembleLcmContext,
 } from './lcm-helpers.js';
-import { _initTestLcmDatabase, storeSummary } from './lcm-store.js';
+import { _initTestLcmDatabase, storeSummary, type StoreSummaryInput } from './lcm-store.js';
 
 // --- getConversationId ---
 
@@ -147,9 +147,10 @@ describe('assembleLcmContext', () => {
 
     const result = assembleLcmContext('conv1', 'unused');
     expect(result).not.toBeNull();
-    expect(result).toContain('<lcm_summary id="s1"');
+    expect(result).toContain('<summary id="s1"');
+    expect(result).toContain('kind="leaf"');
     expect(result).toContain('Summary of segment 1');
-    expect(result).toContain('</lcm_summary>');
+    expect(result).toContain('</summary>');
   });
 
   it('prioritizes condensed summaries over uncovered leaves', () => {
@@ -196,8 +197,10 @@ describe('assembleLcmContext', () => {
     // condensed1 should appear (covers leaf1), leaf2 is uncovered so it also appears
     expect(result).toContain('condensed1');
     expect(result).toContain('leaf2');
-    // leaf1 is covered by condensed1, so it should NOT appear
-    expect(result).not.toContain('id="leaf1"');
+    // leaf1 is covered by condensed1, so it should NOT appear as a standalone summary
+    expect(result).not.toMatch(/<summary id="leaf1"/);
+    // But it may appear as a summary_ref inside condensed1's parents
+    expect(result).toContain('<summary_ref id="leaf1"');
   });
 
   it('respects token budget', () => {
@@ -219,4 +222,27 @@ describe('assembleLcmContext', () => {
 
     expect(assembleLcmContext('conv1', 'unused')).toBeNull();
   });
+
+  it('includes recall policy prompt when summaries exist', () => {
+    storeSummary({
+      id: 's1',
+      conversation_id: 'conv1',
+      depth: 0,
+      content: 'Summary content',
+      source_message_ids: null,
+      parent_summary_ids: null,
+      child_summary_ids: null,
+      min_sequence: 0,
+      max_sequence: 5,
+      created_at: '2026-01-01T00:00:00Z',
+    });
+
+    const result = assembleLcmContext('conv1', 'unused')!;
+    expect(result).toContain('Lossless Recall Policy');
+    expect(result).toContain('lcm_grep');
+    expect(result).toContain('lcm_describe');
+    expect(result).toContain('lcm_expand');
+    expect(result).toContain('Tool escalation');
+  });
 });
+

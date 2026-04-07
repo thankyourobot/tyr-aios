@@ -7,6 +7,7 @@
 
 import crypto from 'crypto';
 import { extractTextForSummary } from './lcm-helpers.js';
+import { summarizationBreaker } from './lcm-circuit-breaker.js';
 
 // --- Configuration ---
 
@@ -16,6 +17,7 @@ const LCM_CONDENSE_THRESHOLD = parseInt(process.env.LCM_CONDENSE_THRESHOLD || '8
 const MAX_CONDENSE_DEPTH = 3;
 const DEFAULT_LEAF_TARGET_TOKENS = 2400;
 const DEFAULT_CONDENSED_TARGET_TOKENS = 2000;
+const LCM_SUMMARY_MAX_OVERAGE_FACTOR = parseInt(process.env.LCM_SUMMARY_MAX_OVERAGE_FACTOR || '3', 10);
 
 export { LCM_CONDENSE_THRESHOLD };
 
@@ -63,9 +65,34 @@ function hasApiCredentials(): boolean {
   return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN);
 }
 
+/**
+ * Cap summary text that exceeds the overage threshold.
+ * Truncates to approximately targetTokens worth of characters and appends a marker.
+ */
+function capSummaryOverage(text: string, targetTokens: number): string {
+  const estimatedTokens = Math.ceil(text.length / 4);
+  const maxTokens = targetTokens * LCM_SUMMARY_MAX_OVERAGE_FACTOR;
+  if (estimatedTokens <= maxTokens) return text;
+
+  const maxChars = maxTokens * 4;
+  const truncated = text.slice(0, maxChars);
+  // Try to truncate at a sentence boundary
+  const lastPeriod = truncated.lastIndexOf('. ');
+  const cutPoint = lastPeriod > maxChars * 0.7 ? lastPeriod + 1 : maxChars;
+  return truncated.slice(0, cutPoint) + '\n\n[Summary truncated — exceeded token budget]';
+}
+
+const BREAKER_KEY = LCM_SUMMARY_MODEL;
+
 async function callAnthropicAPI(userContent: string, maxTokens: number = 2048): Promise<string | null> {
   if (!hasApiCredentials()) {
     console.error('[lcm-summarize] No API credentials available, skipping API call');
+    return null;
+  }
+
+  // Circuit breaker check
+  if (summarizationBreaker.isOpen(BREAKER_KEY)) {
+    console.error(`[lcm-summarize] Circuit breaker open for ${BREAKER_KEY}, skipping API call`);
     return null;
   }
 
@@ -101,12 +128,21 @@ async function callAnthropicAPI(userContent: string, maxTokens: number = 2048): 
 
     if (!response.ok) {
       console.error(`[lcm-summarize] API error: ${response.status} ${response.statusText}`);
+      // Record auth failures for circuit breaker
+      if (response.status === 401 || response.status === 403) {
+        summarizationBreaker.recordFailure(BREAKER_KEY);
+      }
       return null;
     }
 
     const data = await response.json() as { content: Array<{ type: string; text: string }> };
     const textParts = data.content?.filter(c => c.type === 'text').map(c => c.text);
-    return textParts?.join('') || null;
+    const result = textParts?.join('') || null;
+
+    if (result) {
+      summarizationBreaker.recordSuccess(BREAKER_KEY);
+    }
+    return result;
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
       console.error(`[lcm-summarize] API call timed out after ${LCM_SUMMARIZE_TIMEOUT_MS}ms`);
@@ -136,6 +172,7 @@ function buildLeafPrompt(text: string, targetTokens: number, previousSummary?: s
     '- Preserve key decisions, rationale, constraints, and active tasks.',
     '- Keep essential technical details needed to continue work safely.',
     '- Remove obvious repetition and conversational filler.',
+    '- Routine scheduled check-ins with no actions taken may be compressed to a single line noting the check occurred.',
     '',
     'Output requirements:',
     '- Plain text only.',
@@ -278,7 +315,8 @@ export async function createLeafSummary(
   const apiResult = await callAnthropicAPI(prompt);
   if (!apiResult) return null;
 
-  return { id, content: apiResult, sourceMessageIds: messageIds, minSequence, maxSequence };
+  const content = capSummaryOverage(apiResult, targetTokens);
+  return { id, content, sourceMessageIds: messageIds, minSequence, maxSequence };
 }
 
 /**
@@ -313,9 +351,10 @@ export async function createCondensedSummary(
   const apiResult = await callAnthropicAPI(prompt);
   if (!apiResult) return null;
 
+  const content = capSummaryOverage(apiResult, targetTokens);
   return {
     id,
-    content: apiResult,
+    content,
     childSummaryIds: summaries.map(s => s.id),
     minSequence: Math.min(...summaries.map(s => s.min_sequence ?? Infinity)),
     maxSequence: Math.max(...summaries.map(s => s.max_sequence ?? -Infinity)),

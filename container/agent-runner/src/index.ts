@@ -16,6 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { query, HookCallback, PreCompactHookInput } from './claude-backend.js';
 import { fileURLToPath } from 'url';
 import {
@@ -25,6 +26,7 @@ import {
   parseTranscript,
   assembleLcmContext,
   setDetectedContextWindow,
+  decomposeMessage,
   LCM_LEAF_CHUNK_TOKENS,
 } from './lcm-helpers.js';
 import {
@@ -34,6 +36,13 @@ import {
   getSummariesForConversation,
   getMaxSequence,
   contentHash,
+  appendContextItems,
+  replaceContextItemsWithSummary,
+  replaceContextSummariesWithCondensed,
+  storeMessageParts,
+  getBootstrapState,
+  upsertBootstrapState,
+  storeLargeFile,
 } from './lcm-store.js';
 import {
   createLeafSummary,
@@ -319,17 +328,102 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
     }
     log(`Found transcript: ${transcriptPath}`);
 
+    // Bootstrap tracking: skip re-reading unchanged files
+    const fileStat = fs.statSync(transcriptPath);
+    const bootstrapState = getBootstrapState(conversationId);
+    if (bootstrapState
+      && bootstrapState.session_file_path === transcriptPath
+      && bootstrapState.last_seen_size === fileStat.size
+      && bootstrapState.last_seen_mtime_ms === Math.floor(fileStat.mtimeMs)) {
+      log('Bootstrap: transcript unchanged since last persist, skipping');
+      return;
+    }
+
+    // Read transcript (full read for now; incremental append-only optimization is future work)
     const content = fs.readFileSync(transcriptPath, 'utf-8');
     const messages = parseTranscript(content);
     log(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
     if (messages.length === 0) return;
+
+    // Large file interception: externalize content blocks > 100K chars before storing
+    const LCM_FILES_DIR = '/home/node/.claude/lcm-files';
+    for (const msg of messages) {
+      if (msg.content.length <= 100000) continue;
+      try {
+        const blocks = JSON.parse(msg.content);
+        if (!Array.isArray(blocks)) continue;
+        let modified = false;
+        for (let i = 0; i < blocks.length; i++) {
+          const block = blocks[i];
+          let blockContent: string | null = null;
+          if (block.type === 'tool_result') {
+            blockContent = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+          } else if (block.type === 'text' && typeof block.text === 'string') {
+            blockContent = block.text;
+          } else if (block.type === 'tool_use' && block.input) {
+            const inputStr = JSON.stringify(block.input);
+            if (inputStr.length > 100000) blockContent = inputStr;
+          }
+          if (blockContent && blockContent.length > 100000) {
+            const fileId = `file_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+            fs.mkdirSync(LCM_FILES_DIR, { recursive: true });
+            const storagePath = path.join(LCM_FILES_DIR, fileId);
+            fs.writeFileSync(storagePath, blockContent);
+            storeLargeFile({
+              file_id: fileId,
+              conversation_id: conversationId,
+              file_name: null,
+              mime_type: null,
+              byte_size: blockContent.length,
+              storage_uri: storagePath,
+              exploration_summary: null,
+              created_at: new Date().toISOString(),
+            });
+            blocks[i] = { ...block, content: `[large content externalized: file_id=${fileId}, ${blockContent.length} bytes]` };
+            modified = true;
+          }
+        }
+        if (modified) {
+          msg.content = JSON.stringify(blocks);
+        }
+      } catch { /* not JSON, skip */ }
+    }
 
     const currentMaxSeq = getMaxSequence(conversationId);
     const startSequence = currentMaxSeq + 1;
     const newlyInserted = storeMessages(conversationId, messages, startSequence);
     log(`Stored ${newlyInserted}/${messages.length} messages (dedup)`);
 
-    if (newlyInserted === 0) return;
+    // Store message parts for newly inserted messages
+    if (newlyInserted > 0) {
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        const msgId = contentHash(conversationId, msg.role, msg.content);
+        const parts = decomposeMessage(msgId, msg.content);
+        if (parts.length > 0) storeMessageParts(parts);
+      }
+
+      // Append context items for new messages
+      const newItems = messages.map((msg, i) => ({
+        item_type: 'message' as const,
+        message_id: contentHash(conversationId, msg.role, msg.content),
+      }));
+      appendContextItems(conversationId, newItems);
+    }
+
+    if (newlyInserted === 0) {
+      // Still update bootstrap state even if all messages were deduped
+      upsertBootstrapState({
+        conversation_id: conversationId,
+        session_file_path: transcriptPath,
+        last_seen_size: fileStat.size,
+        last_seen_mtime_ms: Math.floor(fileStat.mtimeMs),
+        last_processed_offset: fileStat.size,
+        last_processed_entry_hash: null,
+        updated_at: new Date().toISOString(),
+      });
+      return;
+    }
 
     // Check if we should create a leaf summary (token-based threshold)
     if (!shouldSummarize(conversationId)) return;
@@ -393,6 +487,9 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
         created_at: new Date().toISOString(),
       });
 
+      // Replace message context items with summary item
+      replaceContextItemsWithSummary(conversationId, messageIds, leafResult.id);
+
       // Use this summary as previous context for the next chunk
       lastPrevSummary = leafResult.content;
       chunkStart = chunkEnd;
@@ -432,7 +529,25 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
         max_sequence: condensedResult.maxSequence,
         created_at: new Date().toISOString(),
       });
+
+      // Replace child summary context items with condensed summary item
+      replaceContextSummariesWithCondensed(
+        conversationId,
+        condensedResult.childSummaryIds,
+        condensedResult.id,
+      );
     }
+
+    // Update bootstrap state last — after all operations succeeded
+    upsertBootstrapState({
+      conversation_id: conversationId,
+      session_file_path: transcriptPath,
+      last_seen_size: fileStat.size,
+      last_seen_mtime_ms: Math.floor(fileStat.mtimeMs),
+      last_processed_offset: fileStat.size,
+      last_processed_entry_hash: null,
+      updated_at: new Date().toISOString(),
+    });
   } catch (err) {
     log(`persist error (non-fatal): ${err instanceof Error ? err.stack || err.message : String(err)}`);
   }
@@ -517,7 +632,7 @@ async function runQuery(
   if (!sessionId && !containerInput.planMode && process.env.LCM_ENABLED !== 'false') {
     try {
       const convId = getConversationId(containerInput);
-      lcmContext = assembleLcmContext(convId, LCM_DB_PATH);
+      lcmContext = assembleLcmContext(convId, LCM_DB_PATH, containerInput.prompt);
       if (lcmContext) log(`LCM: Assembled summary context (${lcmContext.length} chars)`);
     } catch (err) {
       log(`LCM context assembly error (non-fatal): ${err instanceof Error ? err.message : String(err)}`);

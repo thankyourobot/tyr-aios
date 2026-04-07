@@ -1,6 +1,7 @@
 /**
  * LCM (Lossless Context Management) Store
- * SQLite database for persisting messages and summary DAG nodes.
+ * SQLite database for persisting messages, summary DAG nodes,
+ * context window items, message parts, bootstrap state, and large files.
  */
 
 import Database from 'better-sqlite3';
@@ -26,11 +27,61 @@ export interface LcmSummary {
   depth: number;
   content: string;
   token_estimate: number;
-  source_message_ids: string | null;   // JSON array of lcm_messages.id (for depth 0)
-  parent_summary_ids: string | null;   // JSON array of lcm_summaries.id (for depth 1+)
-  child_summary_ids: string | null;    // JSON array of lcm_summaries.id condensed into this node
+  source_message_ids: string | null;
+  parent_summary_ids: string | null;
+  child_summary_ids: string | null;
   min_sequence: number | null;
   max_sequence: number | null;
+  created_at: string;
+  // Phase 2 additions
+  kind: string | null;
+  earliest_at: string | null;
+  latest_at: string | null;
+  descendant_count: number;
+  descendant_token_count: number;
+  source_message_token_count: number;
+}
+
+export interface LcmContextItem {
+  conversation_id: string;
+  ordinal: number;
+  item_type: 'message' | 'summary';
+  message_id: string | null;
+  summary_id: string | null;
+  created_at: string;
+}
+
+export interface LcmMessagePart {
+  part_id: string;
+  message_id: string;
+  part_type: 'text' | 'reasoning' | 'tool' | 'file' | 'compaction';
+  ordinal: number;
+  text_content: string | null;
+  tool_call_id: string | null;
+  tool_name: string | null;
+  tool_input: string | null;
+  tool_output: string | null;
+  metadata: string | null;
+}
+
+export interface LcmBootstrapState {
+  conversation_id: string;
+  session_file_path: string;
+  last_seen_size: number;
+  last_seen_mtime_ms: number;
+  last_processed_offset: number;
+  last_processed_entry_hash: string | null;
+  updated_at: string;
+}
+
+export interface LcmLargeFile {
+  file_id: string;
+  conversation_id: string;
+  file_name: string | null;
+  mime_type: string | null;
+  byte_size: number | null;
+  storage_uri: string;
+  exploration_summary: string | null;
   created_at: string;
 }
 
@@ -64,7 +115,6 @@ CREATE TABLE IF NOT EXISTS lcm_summaries (
 CREATE INDEX IF NOT EXISTS idx_lcm_summaries_conversation ON lcm_summaries(conversation_id, depth);
 `;
 
-// FTS5 tables and triggers - created separately since they use IF NOT EXISTS
 const FTS_SQL = `
 CREATE VIRTUAL TABLE IF NOT EXISTS lcm_messages_fts USING fts5(
   content, content=lcm_messages, content_rowid=rowid
@@ -74,7 +124,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS lcm_summaries_fts USING fts5(
 );
 `;
 
-// Triggers must be created idempotently
 const TRIGGERS_SQL = `
 CREATE TRIGGER IF NOT EXISTS lcm_messages_ai AFTER INSERT ON lcm_messages BEGIN
   INSERT INTO lcm_messages_fts(rowid, content) VALUES (new.rowid, new.content);
@@ -99,6 +148,105 @@ CREATE TRIGGER IF NOT EXISTS lcm_summaries_au AFTER UPDATE ON lcm_summaries BEGI
 END;
 `;
 
+// --- Migration framework ---
+
+const MIGRATIONS: Array<(db: Database.Database) => void> = [
+  // v0 → v1: Richer summary metadata
+  (db) => {
+    const addCol = (col: string, type: string) => {
+      try { db.exec(`ALTER TABLE lcm_summaries ADD COLUMN ${col} ${type}`); } catch { /* already exists */ }
+    };
+    addCol('kind', 'TEXT');
+    addCol('earliest_at', 'TEXT');
+    addCol('latest_at', 'TEXT');
+    addCol('descendant_count', 'INTEGER DEFAULT 0');
+    addCol('descendant_token_count', 'INTEGER DEFAULT 0');
+    addCol('source_message_token_count', 'INTEGER DEFAULT 0');
+  },
+
+  // v1 → v2: Context items table
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS lcm_context_items (
+        conversation_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        item_type TEXT NOT NULL CHECK (item_type IN ('message', 'summary')),
+        message_id TEXT,
+        summary_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (conversation_id, ordinal)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lcm_context_items_conv ON lcm_context_items(conversation_id, ordinal);
+    `);
+  },
+
+  // v2 → v3: Message parts table
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS lcm_message_parts (
+        part_id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL,
+        part_type TEXT NOT NULL CHECK (part_type IN ('text', 'reasoning', 'tool', 'file', 'compaction')),
+        ordinal INTEGER NOT NULL,
+        text_content TEXT,
+        tool_call_id TEXT,
+        tool_name TEXT,
+        tool_input TEXT,
+        tool_output TEXT,
+        metadata TEXT,
+        UNIQUE (message_id, ordinal)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lcm_message_parts_msg ON lcm_message_parts(message_id);
+    `);
+  },
+
+  // v3 → v4: Bootstrap state table
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS lcm_bootstrap_state (
+        conversation_id TEXT PRIMARY KEY,
+        session_file_path TEXT NOT NULL,
+        last_seen_size INTEGER NOT NULL,
+        last_seen_mtime_ms INTEGER NOT NULL,
+        last_processed_offset INTEGER NOT NULL,
+        last_processed_entry_hash TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  },
+
+  // v4 → v5: Large files table
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS lcm_large_files (
+        file_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        file_name TEXT,
+        mime_type TEXT,
+        byte_size INTEGER,
+        storage_uri TEXT NOT NULL,
+        exploration_summary TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  },
+];
+
+function runMigrations(database: Database.Database): void {
+  database.exec(`CREATE TABLE IF NOT EXISTS lcm_schema_version (version INTEGER NOT NULL)`);
+  const row = database.prepare('SELECT version FROM lcm_schema_version LIMIT 1').get() as { version: number } | undefined;
+  let currentVersion = row?.version ?? 0;
+
+  if (!row) {
+    database.prepare('INSERT INTO lcm_schema_version (version) VALUES (?)').run(0);
+  }
+
+  for (let i = currentVersion; i < MIGRATIONS.length; i++) {
+    MIGRATIONS[i](database);
+    database.prepare('UPDATE lcm_schema_version SET version = ?').run(i + 1);
+  }
+}
+
 // --- Database ---
 
 let db: Database.Database | null = null;
@@ -115,7 +263,7 @@ export function initLcmDatabase(dbPath: string): Database.Database | null {
   db.exec(FTS_SQL);
   db.exec(TRIGGERS_SQL);
 
-  // Migration: rename session_id to conversation_id if needed
+  // Legacy migration: rename session_id to conversation_id if needed
   try {
     db.exec(`ALTER TABLE lcm_messages RENAME COLUMN session_id TO conversation_id`);
     db.exec(`ALTER TABLE lcm_summaries RENAME COLUMN session_id TO conversation_id`);
@@ -123,6 +271,7 @@ export function initLcmDatabase(dbPath: string): Database.Database | null {
     /* columns already renamed or don't exist */
   }
 
+  runMigrations(db);
   dbInitialized = true;
   return db;
 }
@@ -133,6 +282,7 @@ export function _initTestLcmDatabase(): void {
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
   db.exec(TRIGGERS_SQL);
+  runMigrations(db);
   dbInitialized = true;
 }
 
@@ -153,12 +303,8 @@ function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-// --- Store functions ---
+// --- Message store ---
 
-/**
- * Store messages in the LCM database with content-hash dedup.
- * Returns the number of newly inserted messages (0 for duplicates).
- */
 export function storeMessages(
   conversationId: string,
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
@@ -185,12 +331,39 @@ export function storeMessages(
   return insertedCount;
 }
 
-export function storeSummary(summary: Omit<LcmSummary, 'token_estimate'>): void {
+// --- Summary store ---
+
+export interface StoreSummaryInput {
+  id: string;
+  conversation_id: string;
+  depth: number;
+  content: string;
+  source_message_ids: string | null;
+  parent_summary_ids: string | null;
+  child_summary_ids: string | null;
+  min_sequence: number | null;
+  max_sequence: number | null;
+  created_at: string;
+  kind?: string | null;
+  earliest_at?: string | null;
+  latest_at?: string | null;
+  descendant_count?: number;
+  descendant_token_count?: number;
+  source_message_token_count?: number;
+}
+
+export function storeSummary(summary: StoreSummaryInput): void {
   const database = getLcmDb();
   const tokenEstimate = estimateTokens(summary.content);
+  const kind = summary.kind ?? (summary.depth === 0 ? 'leaf' : 'condensed');
   database.prepare(`
-    INSERT OR IGNORE INTO lcm_summaries (id, conversation_id, depth, content, token_estimate, source_message_ids, parent_summary_ids, child_summary_ids, min_sequence, max_sequence, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO lcm_summaries (
+      id, conversation_id, depth, content, token_estimate,
+      source_message_ids, parent_summary_ids, child_summary_ids,
+      min_sequence, max_sequence, created_at,
+      kind, earliest_at, latest_at,
+      descendant_count, descendant_token_count, source_message_token_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     summary.id,
     summary.conversation_id,
@@ -203,6 +376,12 @@ export function storeSummary(summary: Omit<LcmSummary, 'token_estimate'>): void 
     summary.min_sequence,
     summary.max_sequence,
     summary.created_at,
+    kind,
+    summary.earliest_at ?? null,
+    summary.latest_at ?? null,
+    summary.descendant_count ?? 0,
+    summary.descendant_token_count ?? 0,
+    summary.source_message_token_count ?? 0,
   );
 }
 
@@ -261,10 +440,8 @@ export function getMaxSequence(conversationId: string): number {
   return row?.max_seq ?? -1;
 }
 
-/**
- * Sanitize a query for FTS5 MATCH. Wraps each token in double quotes to prevent
- * operator injection (e.g., hyphens becoming NOT, OR/AND being treated as boolean).
- */
+// --- FTS ---
+
 export function sanitizeFtsQuery(query: string): string {
   return query
     .split(/\s+/)
@@ -307,4 +484,234 @@ export function getChildSummaries(summaryId: string): LcmSummary[] {
 
   const placeholders = ids.map(() => '?').join(',');
   return database.prepare(`SELECT * FROM lcm_summaries WHERE id IN (${placeholders}) ORDER BY min_sequence`).all(...ids) as LcmSummary[];
+}
+
+// --- Context items ---
+
+export function appendContextItems(
+  conversationId: string,
+  items: Array<{ item_type: 'message' | 'summary'; message_id?: string; summary_id?: string }>,
+): void {
+  const database = getLcmDb();
+  const maxRow = database.prepare(
+    'SELECT MAX(ordinal) as max_ord FROM lcm_context_items WHERE conversation_id = ?',
+  ).get(conversationId) as { max_ord: number | null } | undefined;
+  let nextOrdinal = (maxRow?.max_ord ?? -1) + 1;
+
+  const stmt = database.prepare(`
+    INSERT INTO lcm_context_items (conversation_id, ordinal, item_type, message_id, summary_id)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  const insertMany = database.transaction(() => {
+    for (const item of items) {
+      stmt.run(conversationId, nextOrdinal++, item.item_type, item.message_id ?? null, item.summary_id ?? null);
+    }
+  });
+  insertMany();
+}
+
+/**
+ * Replace context items for the given message IDs with a single summary item.
+ * Looks up items by message_id (not ordinal) to avoid number-space mismatches.
+ */
+export function replaceContextItemsWithSummary(
+  conversationId: string,
+  messageIds: string[],
+  summaryId: string,
+): void {
+  if (messageIds.length === 0) return;
+  const database = getLcmDb();
+  database.transaction(() => {
+    const placeholders = messageIds.map(() => '?').join(',');
+    const range = database.prepare(
+      `SELECT MIN(ordinal) as min_ord, MAX(ordinal) as max_ord
+       FROM lcm_context_items
+       WHERE conversation_id = ? AND message_id IN (${placeholders})`,
+    ).get(conversationId, ...messageIds) as { min_ord: number | null; max_ord: number | null };
+
+    if (range.min_ord === null) return;
+
+    database.prepare(
+      'DELETE FROM lcm_context_items WHERE conversation_id = ? AND ordinal >= ? AND ordinal <= ?',
+    ).run(conversationId, range.min_ord, range.max_ord);
+
+    database.prepare(
+      'INSERT INTO lcm_context_items (conversation_id, ordinal, item_type, summary_id) VALUES (?, ?, ?, ?)',
+    ).run(conversationId, range.min_ord, 'summary', summaryId);
+
+    // Recompact ordinals to be contiguous
+    const items = database.prepare(
+      'SELECT rowid FROM lcm_context_items WHERE conversation_id = ? ORDER BY ordinal',
+    ).all(conversationId) as Array<{ rowid: number }>;
+    const reindex = database.prepare('UPDATE lcm_context_items SET ordinal = ? WHERE rowid = ?');
+    for (let i = 0; i < items.length; i++) {
+      reindex.run(i, items[i].rowid);
+    }
+  })();
+}
+
+/**
+ * Replace context items for the given child summary IDs with a single condensed summary item.
+ */
+export function replaceContextSummariesWithCondensed(
+  conversationId: string,
+  childSummaryIds: string[],
+  condensedSummaryId: string,
+): void {
+  if (childSummaryIds.length === 0) return;
+  const database = getLcmDb();
+  database.transaction(() => {
+    const placeholders = childSummaryIds.map(() => '?').join(',');
+    const range = database.prepare(
+      `SELECT MIN(ordinal) as min_ord, MAX(ordinal) as max_ord
+       FROM lcm_context_items
+       WHERE conversation_id = ? AND summary_id IN (${placeholders})`,
+    ).get(conversationId, ...childSummaryIds) as { min_ord: number | null; max_ord: number | null };
+
+    if (range.min_ord === null) return;
+
+    database.prepare(
+      'DELETE FROM lcm_context_items WHERE conversation_id = ? AND ordinal >= ? AND ordinal <= ?',
+    ).run(conversationId, range.min_ord, range.max_ord);
+
+    database.prepare(
+      'INSERT INTO lcm_context_items (conversation_id, ordinal, item_type, summary_id) VALUES (?, ?, ?, ?)',
+    ).run(conversationId, range.min_ord, 'summary', condensedSummaryId);
+
+    const items = database.prepare(
+      'SELECT rowid FROM lcm_context_items WHERE conversation_id = ? ORDER BY ordinal',
+    ).all(conversationId) as Array<{ rowid: number }>;
+    const reindex = database.prepare('UPDATE lcm_context_items SET ordinal = ? WHERE rowid = ?');
+    for (let i = 0; i < items.length; i++) {
+      reindex.run(i, items[i].rowid);
+    }
+  })();
+}
+
+export function getContextItems(conversationId: string): LcmContextItem[] {
+  const database = getLcmDb();
+  return database.prepare(
+    'SELECT * FROM lcm_context_items WHERE conversation_id = ? ORDER BY ordinal',
+  ).all(conversationId) as LcmContextItem[];
+}
+
+// --- Message parts ---
+
+export function storeMessageParts(parts: LcmMessagePart[]): void {
+  if (parts.length === 0) return;
+  const database = getLcmDb();
+  const stmt = database.prepare(`
+    INSERT OR IGNORE INTO lcm_message_parts (part_id, message_id, part_type, ordinal, text_content, tool_call_id, tool_name, tool_input, tool_output, metadata)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertMany = database.transaction(() => {
+    for (const part of parts) {
+      stmt.run(
+        part.part_id, part.message_id, part.part_type, part.ordinal,
+        part.text_content, part.tool_call_id, part.tool_name,
+        part.tool_input, part.tool_output, part.metadata,
+      );
+    }
+  });
+  insertMany();
+}
+
+export function getMessageParts(messageId: string): LcmMessagePart[] {
+  const database = getLcmDb();
+  return database.prepare(
+    'SELECT * FROM lcm_message_parts WHERE message_id = ? ORDER BY ordinal',
+  ).all(messageId) as LcmMessagePart[];
+}
+
+export function searchMessageParts(
+  partType: string,
+  query: string,
+  limit: number = 20,
+): Array<LcmMessagePart & { conversation_id: string; role: string; sequence: number }> {
+  const database = getLcmDb();
+  const likePattern = `%${query}%`;
+  return database.prepare(`
+    SELECT p.*, m.conversation_id, m.role, m.sequence
+    FROM lcm_message_parts p
+    JOIN lcm_messages m ON m.id = p.message_id
+    WHERE p.part_type = ?
+      AND (p.text_content LIKE ? OR p.tool_name LIKE ? OR p.tool_output LIKE ?)
+    ORDER BY m.sequence DESC
+    LIMIT ?
+  `).all(partType, likePattern, likePattern, likePattern, limit) as Array<LcmMessagePart & { conversation_id: string; role: string; sequence: number }>;
+}
+
+// --- Bootstrap state ---
+
+export function getBootstrapState(conversationId: string): LcmBootstrapState | undefined {
+  const database = getLcmDb();
+  return database.prepare(
+    'SELECT * FROM lcm_bootstrap_state WHERE conversation_id = ?',
+  ).get(conversationId) as LcmBootstrapState | undefined;
+}
+
+export function upsertBootstrapState(state: LcmBootstrapState): void {
+  const database = getLcmDb();
+  database.prepare(`
+    INSERT OR REPLACE INTO lcm_bootstrap_state (conversation_id, session_file_path, last_seen_size, last_seen_mtime_ms, last_processed_offset, last_processed_entry_hash, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    state.conversation_id, state.session_file_path, state.last_seen_size,
+    state.last_seen_mtime_ms, state.last_processed_offset,
+    state.last_processed_entry_hash, state.updated_at ?? new Date().toISOString(),
+  );
+}
+
+// --- Large files ---
+
+export function storeLargeFile(file: LcmLargeFile): void {
+  const database = getLcmDb();
+  database.prepare(`
+    INSERT OR IGNORE INTO lcm_large_files (file_id, conversation_id, file_name, mime_type, byte_size, storage_uri, exploration_summary, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    file.file_id, file.conversation_id, file.file_name, file.mime_type,
+    file.byte_size, file.storage_uri, file.exploration_summary,
+    file.created_at ?? new Date().toISOString(),
+  );
+}
+
+export function getLargeFile(fileId: string): LcmLargeFile | undefined {
+  const database = getLcmDb();
+  return database.prepare('SELECT * FROM lcm_large_files WHERE file_id = ?').get(fileId) as LcmLargeFile | undefined;
+}
+
+// --- Subtree manifest ---
+
+export interface SubtreeNode {
+  id: string;
+  depth: number;
+  kind: string | null;
+  token_estimate: number;
+  descendant_count: number;
+  descendant_token_count: number;
+  children: SubtreeNode[];
+}
+
+export function getSubtreeManifest(summaryId: string, visited = new Set<string>()): SubtreeNode | null {
+  if (visited.has(summaryId)) return null; // Cycle guard
+  visited.add(summaryId);
+
+  const summary = getSummaryById(summaryId);
+  if (!summary) return null;
+
+  const children = getChildSummaries(summaryId);
+  const childNodes = children.map(c => getSubtreeManifest(c.id, visited)).filter((n): n is SubtreeNode => n !== null);
+
+  return {
+    id: summary.id,
+    depth: summary.depth,
+    kind: summary.kind,
+    token_estimate: summary.token_estimate,
+    descendant_count: summary.descendant_count ?? 0,
+    descendant_token_count: summary.descendant_token_count ?? 0,
+    children: childNodes,
+  };
 }

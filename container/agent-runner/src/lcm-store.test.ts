@@ -13,7 +13,12 @@ import {
   searchSummaries,
   getChildSummaries,
   sanitizeFtsQuery,
-  type LcmSummary,
+  getSubtreeManifest,
+  appendContextItems,
+  replaceContextItemsWithSummary,
+  replaceContextSummariesWithCondensed,
+  getContextItems,
+  type StoreSummaryInput,
 } from './lcm-store.js';
 
 beforeEach(() => {
@@ -22,7 +27,7 @@ beforeEach(() => {
 
 // --- Helpers ---
 
-function makeSummary(overrides: Partial<Omit<LcmSummary, 'token_estimate'>> = {}): Omit<LcmSummary, 'token_estimate'> {
+function makeSummary(overrides: Partial<StoreSummaryInput> = {}): StoreSummaryInput {
   return {
     id: 'sum-1',
     conversation_id: 'conv-1',
@@ -311,5 +316,95 @@ describe('getChildSummaries', () => {
   it('returns empty when no children', () => {
     storeSummary(makeSummary({ id: 'lone', child_summary_ids: null }));
     expect(getChildSummaries('lone')).toHaveLength(0);
+  });
+});
+
+describe('getSubtreeManifest', () => {
+  it('returns null for missing summary', () => {
+    expect(getSubtreeManifest('nonexistent')).toBeNull();
+  });
+
+  it('returns manifest for leaf summary', () => {
+    storeSummary(makeSummary({ id: 'leaf-1' }));
+    const manifest = getSubtreeManifest('leaf-1');
+    expect(manifest).not.toBeNull();
+    expect(manifest!.id).toBe('leaf-1');
+    expect(manifest!.children).toHaveLength(0);
+  });
+
+  it('survives cyclic child_summary_ids without infinite recursion', () => {
+    // Create a cycle: A -> B -> A
+    storeSummary(makeSummary({ id: 'cycle-a', depth: 1, child_summary_ids: JSON.stringify(['cycle-b']) }));
+    storeSummary(makeSummary({ id: 'cycle-b', depth: 1, child_summary_ids: JSON.stringify(['cycle-a']) }));
+    const manifest = getSubtreeManifest('cycle-a');
+    expect(manifest).not.toBeNull();
+    // cycle-b should appear as child, but cycle-a should NOT recurse again
+    expect(manifest!.children).toHaveLength(1);
+    expect(manifest!.children[0].id).toBe('cycle-b');
+    expect(manifest!.children[0].children).toHaveLength(0); // cycle-a blocked by visited set
+  });
+});
+
+describe('context items', () => {
+  it('appends items with sequential ordinals', () => {
+    appendContextItems('conv1', [
+      { item_type: 'message', message_id: 'm1' },
+      { item_type: 'message', message_id: 'm2' },
+    ]);
+    const items = getContextItems('conv1');
+    expect(items).toHaveLength(2);
+    expect(items[0].ordinal).toBe(0);
+    expect(items[1].ordinal).toBe(1);
+  });
+
+  it('replaces message items by ID and recompacts ordinals', () => {
+    appendContextItems('conv1', [
+      { item_type: 'message', message_id: 'm1' },
+      { item_type: 'message', message_id: 'm2' },
+      { item_type: 'message', message_id: 'm3' },
+      { item_type: 'message', message_id: 'm4' },
+    ]);
+
+    // Replace m2 and m3 with a summary (by message ID, not ordinal)
+    replaceContextItemsWithSummary('conv1', ['m2', 'm3'], 'sum-1');
+
+    const items = getContextItems('conv1');
+    expect(items).toHaveLength(3); // m1, sum-1, m4
+    expect(items[0].ordinal).toBe(0);
+    expect(items[1].ordinal).toBe(1);
+    expect(items[2].ordinal).toBe(2);
+    expect(items[0].message_id).toBe('m1');
+    expect(items[1].summary_id).toBe('sum-1');
+    expect(items[2].message_id).toBe('m4');
+  });
+
+  it('replaces summary items with condensed summary', () => {
+    appendContextItems('conv1', [
+      { item_type: 'summary', summary_id: 'sum-a' },
+      { item_type: 'summary', summary_id: 'sum-b' },
+      { item_type: 'message', message_id: 'm1' },
+    ]);
+
+    replaceContextSummariesWithCondensed('conv1', ['sum-a', 'sum-b'], 'sum-condensed');
+
+    const items = getContextItems('conv1');
+    expect(items).toHaveLength(2);
+    expect(items[0].ordinal).toBe(0);
+    expect(items[0].summary_id).toBe('sum-condensed');
+    expect(items[1].ordinal).toBe(1);
+    expect(items[1].message_id).toBe('m1');
+  });
+
+  it('handles replacement when message IDs not found in context items', () => {
+    appendContextItems('conv1', [
+      { item_type: 'message', message_id: 'm1' },
+    ]);
+
+    // These IDs don't exist — should be a no-op
+    replaceContextItemsWithSummary('conv1', ['nonexistent'], 'sum-1');
+
+    const items = getContextItems('conv1');
+    expect(items).toHaveLength(1);
+    expect(items[0].message_id).toBe('m1');
   });
 });

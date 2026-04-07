@@ -3,13 +3,16 @@
  * index.ts imports from this module; tests can import directly without triggering main().
  */
 
+import crypto from 'crypto';
 import {
   initLcmDatabase,
   getSummariesForConversation,
   getMaxSequence,
   getLcmDb,
   type LcmMessage,
+  type LcmMessagePart,
 } from './lcm-store.js';
+import { scoreRelevance } from './lcm-relevance.js';
 
 // --- Types ---
 
@@ -261,11 +264,120 @@ export function parseTranscript(content: string): ParsedMessage[] {
   return messages;
 }
 
+// --- Message decomposition ---
+
+/**
+ * Decompose a message's content into typed parts for structured storage and querying.
+ */
+export function decomposeMessage(messageId: string, content: string): LcmMessagePart[] {
+  const parts: LcmMessagePart[] = [];
+
+  try {
+    const blocks = JSON.parse(content);
+    if (!Array.isArray(blocks)) {
+      // Plain text content
+      parts.push({
+        part_id: crypto.createHash('sha256').update(`${messageId}:0`).digest('hex').slice(0, 16),
+        message_id: messageId,
+        part_type: 'text',
+        ordinal: 0,
+        text_content: content,
+        tool_call_id: null,
+        tool_name: null,
+        tool_input: null,
+        tool_output: null,
+        metadata: null,
+      });
+      return parts;
+    }
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const partId = crypto.createHash('sha256').update(`${messageId}:${i}`).digest('hex').slice(0, 16);
+      const base = {
+        part_id: partId,
+        message_id: messageId,
+        ordinal: i,
+        text_content: null as string | null,
+        tool_call_id: null as string | null,
+        tool_name: null as string | null,
+        tool_input: null as string | null,
+        tool_output: null as string | null,
+        metadata: null as string | null,
+      };
+
+      if (block.type === 'text') {
+        parts.push({ ...base, part_type: 'text', text_content: block.text ?? null });
+      } else if (block.type === 'tool_use') {
+        parts.push({
+          ...base,
+          part_type: 'tool',
+          tool_call_id: block.id ?? null,
+          tool_name: block.name ?? null,
+          tool_input: block.input ? JSON.stringify(block.input) : null,
+        });
+      } else if (block.type === 'tool_result') {
+        const resultText = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+        parts.push({
+          ...base,
+          part_type: 'tool',
+          tool_call_id: block.tool_use_id ?? null,
+          tool_output: resultText,
+        });
+      } else if (block.type === 'thinking') {
+        parts.push({ ...base, part_type: 'reasoning', text_content: block.thinking ?? null });
+      }
+    }
+  } catch {
+    // Plain text content (not JSON)
+    parts.push({
+      part_id: crypto.createHash('sha256').update(`${messageId}:0`).digest('hex').slice(0, 16),
+      message_id: messageId,
+      part_type: 'text',
+      ordinal: 0,
+      text_content: content,
+      tool_call_id: null,
+      tool_name: null,
+      tool_input: null,
+      tool_output: null,
+      metadata: null,
+    });
+  }
+
+  return parts;
+}
+
+// --- Recall Policy ---
+
+const RECALL_POLICY_PROMPT = `
+## Lossless Recall Policy
+
+The lossless context management (LCM) system is active. These summaries are compressed context from earlier in the conversation.
+
+**Conflict handling:** If newer evidence conflicts with an older summary, prefer the newer evidence. Do not trust a stale summary over fresher contradictory information.
+
+**Contradictions/uncertainty:** If facts seem contradictory or uncertain, verify with LCM recall tools before answering instead of trusting the summary at face value.
+
+**Tool escalation (use in this order):**
+1. \`lcm_grep\` — search by keyword across messages and summaries (fast, cheap)
+2. \`lcm_describe\` — inspect a specific summary node's metadata and subtree (no API call)
+3. \`lcm_expand\` — deep recall on a specific summary: navigates the DAG to answer a focused question (~15s)
+4. \`lcm_expand_query\` — exploratory recall: searches for relevant summaries and expands them to answer a question (~30s)
+
+**When to expand:** Before asserting exact commands, SHAs, file paths, timestamps, config values, or causal claims from condensed summaries. If a summary includes an "Expand for details about:" footer, use it as a cue.
+
+**Usage examples:**
+- \`lcm_grep({ query: "database migration", scope: "both" })\`
+- \`lcm_describe({ id: "sum_abc123" })\`
+- \`lcm_expand({ id: "sum_abc123", query: "What config changes were made?" })\`
+- \`lcm_expand_query({ query: "auth middleware", prompt: "What strategy was decided for session tokens?" })\`
+`.trim();
+
 /**
  * Assemble LCM summary context for injection into system prompt.
  * Returns formatted XML summary blocks, or null if no summaries are available.
  */
-export function assembleLcmContext(conversationId: string, dbPath: string): string | null {
+export function assembleLcmContext(conversationId: string, dbPath: string, prompt?: string): string | null {
   try {
     initLcmDatabase(dbPath);
   } catch {
@@ -293,16 +405,41 @@ export function assembleLcmContext(conversationId: string, dbPath: string): stri
     ...uncoveredLeaves.sort((a, b) => (a.min_sequence ?? 0) - (b.min_sequence ?? 0)),
   ];
 
-  // Fit within budget
+  // Fit within budget — use relevance scoring when prompt is available and not all items fit
   const budgetTokens = Math.floor(LCM_SUMMARY_BUDGET_PCT / 100 * getContextWindowTokens());
+  const totalTokens = sorted.reduce((sum, s) => sum + (s.token_estimate || Math.ceil(s.content.length / 4)), 0);
   let remainingBudget = budgetTokens;
   const selected: typeof sorted = [];
 
-  for (const summary of sorted) {
-    const tokens = summary.token_estimate || Math.ceil(summary.content.length / 4);
-    if (tokens > remainingBudget) continue;
-    selected.push(summary);
-    remainingBudget -= tokens;
+  if (prompt && totalTokens > budgetTokens) {
+    // Score within priority tiers: condensed first (preserves DAG hierarchy), then uncovered leaves
+    const tiers = [
+      condensed.sort((a, b) => b.depth - a.depth || (a.min_sequence ?? 0) - (b.min_sequence ?? 0)),
+      uncoveredLeaves.sort((a, b) => (a.min_sequence ?? 0) - (b.min_sequence ?? 0)),
+    ];
+
+    for (const tier of tiers) {
+      const scored = tier.map(s => ({
+        summary: s,
+        tokens: s.token_estimate || Math.ceil(s.content.length / 4),
+        score: scoreRelevance(s.content, prompt),
+      }));
+      scored.sort((a, b) => b.score - a.score);
+
+      for (const item of scored) {
+        if (item.tokens > remainingBudget) continue;
+        selected.push(item.summary);
+        remainingBudget -= item.tokens;
+      }
+    }
+  } else {
+    // Chronological selection (default — all fit or no prompt)
+    for (const summary of sorted) {
+      const tokens = summary.token_estimate || Math.ceil(summary.content.length / 4);
+      if (tokens > remainingBudget) continue;
+      selected.push(summary);
+      remainingBudget -= tokens;
+    }
   }
 
   if (selected.length === 0) return null;
@@ -310,10 +447,32 @@ export function assembleLcmContext(conversationId: string, dbPath: string): stri
   // Sort selected by sequence for chronological presentation
   selected.sort((a, b) => (a.min_sequence ?? 0) - (b.min_sequence ?? 0));
 
-  // Format as XML blocks with metadata
-  const blocks = selected.map(s =>
-    `<lcm_summary id="${s.id}" depth="${s.depth}" tokens="${s.token_estimate}" created="${s.created_at}">\n${s.content}\n</lcm_summary>`
-  );
+  // Format as XML blocks with rich metadata
+  const blocks = selected.map(s => {
+    const kind = s.kind ?? (s.depth === 0 ? 'leaf' : 'condensed');
+    const attrs = [
+      `id="${s.id}"`,
+      `kind="${kind}"`,
+      `depth="${s.depth}"`,
+      s.descendant_count ? `descendant_count="${s.descendant_count}"` : null,
+      s.earliest_at ? `earliest_at="${s.earliest_at}"` : null,
+      s.latest_at ? `latest_at="${s.latest_at}"` : null,
+    ].filter(Boolean).join(' ');
+
+    // Add parent references for condensed summaries
+    let parentsBlock = '';
+    if (s.depth > 0 && s.child_summary_ids) {
+      try {
+        const childIds = JSON.parse(s.child_summary_ids) as string[];
+        if (childIds.length > 0) {
+          const refs = childIds.map(id => `    <summary_ref id="${id}" />`).join('\n');
+          parentsBlock = `\n  <parents>\n${refs}\n  </parents>`;
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    return `<summary ${attrs}>${parentsBlock}\n  <content>\n${s.content}\n  </content>\n</summary>`;
+  });
 
   // Dynamic header based on compaction depth
   const maxDepth = Math.max(...selected.map(s => s.depth));
@@ -331,5 +490,7 @@ IMPORTANT: These summaries compress significant conversation detail through mult
 
   return `${header}
 
-${blocks.join('\n\n')}`;
+${blocks.join('\n\n')}
+
+${RECALL_POLICY_PROMPT}`;
 }
