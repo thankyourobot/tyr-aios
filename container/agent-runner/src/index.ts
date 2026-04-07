@@ -29,6 +29,7 @@ import {
   decomposeMessage,
   LCM_LEAF_CHUNK_TOKENS,
 } from './lcm-helpers.js';
+import { repairToolPairing } from './lcm-transcript-repair.js';
 import {
   initLcmDatabase,
   storeMessages,
@@ -341,7 +342,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
 
     // Read transcript (full read for now; incremental append-only optimization is future work)
     const content = fs.readFileSync(transcriptPath, 'utf-8');
-    const messages = parseTranscript(content);
+    const messages = repairToolPairing(parseTranscript(content));
     log(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
     if (messages.length === 0) return;
 

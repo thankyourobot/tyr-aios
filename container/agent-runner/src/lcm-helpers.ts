@@ -13,6 +13,7 @@ import {
   type LcmMessagePart,
 } from './lcm-store.js';
 import { scoreRelevance } from './lcm-relevance.js';
+import { repairToolPairing } from './lcm-transcript-repair.js';
 
 // --- Types ---
 
