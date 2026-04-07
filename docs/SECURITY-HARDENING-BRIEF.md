@@ -138,14 +138,16 @@ If a compromise is suspected, rotate in this order:
 
 Verified defenses:
 - `package-lock.json` committed and used with `npm ci` ✅
-- `ignore-scripts=true` in `~/.npmrc` ✅
+- `ignore-scripts=true` in `~/.npmrc` and `.npmrc` in repo ✅
 - Small dependency surface (7 direct deps) ✅
 - Override pinning for risky transitive deps (`axios: 1.13.6`) ✅
 - Production deploys never run `npm install` ✅
+- Weekly `npm audit` via host cron → `#aios-alerts` ✅ (added 2026-04-07)
+
+Policies:
+- **7-day release gate** — do not adopt new dependency versions within 7 days of release. Use `npm outdated` to check, but delay updates. The axios attack had a 3-hour window; a 7-day gate would have avoided it entirely.
 
 Recommended additions:
-- **7-day release gate** — delay adopting new dependency versions. The axios attack had a 3-hour window; a 7-day gate would have avoided it entirely.
-- **Periodic `npm audit`** — catches known CVEs in current dependency tree. Low effort.
 - **Dependency tree monitoring** — alert when transitive dependencies change. Would have caught axios adding `plain-crypto-js` as a new dependency.
 
 ## Log Scrubbing & Sensitive Data in Logs (Audit: 2026-04-06)

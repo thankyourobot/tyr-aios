@@ -12,6 +12,7 @@ vi.mock('./logger.js', () => ({
 }));
 
 import { startCredentialProxy } from './credential-proxy.js';
+import { logger } from './logger.js';
 
 function makeRequest(
   port: number,
@@ -166,6 +167,41 @@ describe('credential-proxy', () => {
     // custom keep-alive and transfer-encoding must not be forwarded.
     expect(lastUpstreamHeaders['keep-alive']).toBeUndefined();
     expect(lastUpstreamHeaders['transfer-encoding']).toBeUndefined();
+  });
+
+  it('logs request metadata without leaking secrets or body', async () => {
+    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+    vi.mocked(logger.info).mockClear();
+
+    await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': 'placeholder',
+        },
+      },
+      '{"prompt": "secret user message"}',
+    );
+
+    const proxyLogCall = vi
+      .mocked(logger.info)
+      .mock.calls.find((call) => call[1] === 'proxy request');
+    expect(proxyLogCall).toBeDefined();
+    const logObj = proxyLogCall![0] as Record<string, unknown>;
+    expect(logObj).toHaveProperty('method', 'POST');
+    expect(logObj).toHaveProperty('path', '/v1/messages');
+    expect(logObj).toHaveProperty('status', 200);
+    expect(logObj).toHaveProperty('durationMs');
+    expect(typeof logObj.durationMs).toBe('number');
+
+    // Verify no secrets or body content leaked
+    const allLogArgs = JSON.stringify(vi.mocked(logger.info).mock.calls);
+    expect(allLogArgs).not.toContain('sk-ant-real-key');
+    expect(allLogArgs).not.toContain('secret user message');
+    expect(allLogArgs).not.toContain('authorization');
   });
 
   it('returns 502 when upstream is unreachable', async () => {
