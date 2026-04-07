@@ -35,6 +35,7 @@ import {
   storeMessages,
   storeSummary,
   getSummariesForConversation,
+  getCoveredLeafIds,
   getMaxSequence,
   contentHash,
   appendContextItems,
@@ -502,14 +503,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
     while (true) {
       const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
       const condensedSummaries = getSummariesForConversation(conversationId).filter(s => s.depth > 0);
-      const coveredLeafIds = new Set<string>();
-      for (const cs of condensedSummaries) {
-        if (cs.child_summary_ids) {
-          for (const childId of JSON.parse(cs.child_summary_ids) as string[]) {
-            coveredLeafIds.add(childId);
-          }
-        }
-      }
+      const coveredLeafIds = getCoveredLeafIds(conversationId);
       const uncoveredLeaves = leafSummaries.filter(s => !coveredLeafIds.has(s.id));
 
       if (uncoveredLeaves.length < LCM_CONDENSE_THRESHOLD) break;

@@ -7,6 +7,8 @@ import crypto from 'crypto';
 import {
   initLcmDatabase,
   getSummariesForConversation,
+  getCoveredLeafIds,
+  getChildSummaries,
   getMaxSequence,
   getLcmDb,
   type LcmMessage,
@@ -388,16 +390,9 @@ export function assembleLcmContext(conversationId: string, dbPath: string, promp
   const allSummaries = getSummariesForConversation(conversationId);
   if (allSummaries.length === 0) return null;
 
-  // Build set of leaf IDs covered by condensed summaries
-  const coveredLeafIds = new Set<string>();
+  // Build set of leaf IDs covered by condensed summaries (via junction table)
+  const coveredLeafIds = getCoveredLeafIds(conversationId);
   const condensed = allSummaries.filter(s => s.depth > 0);
-  for (const cs of condensed) {
-    if (cs.child_summary_ids) {
-      for (const childId of JSON.parse(cs.child_summary_ids) as string[]) {
-        coveredLeafIds.add(childId);
-      }
-    }
-  }
 
   // Prioritize: condensed (high depth) first, then uncovered leaves
   const uncoveredLeaves = allSummaries.filter(s => s.depth === 0 && !coveredLeafIds.has(s.id));
@@ -460,16 +455,14 @@ export function assembleLcmContext(conversationId: string, dbPath: string, promp
       s.latest_at ? `latest_at="${s.latest_at}"` : null,
     ].filter(Boolean).join(' ');
 
-    // Add parent references for condensed summaries
+    // Add parent references for condensed summaries (from junction table)
     let parentsBlock = '';
-    if (s.depth > 0 && s.child_summary_ids) {
-      try {
-        const childIds = JSON.parse(s.child_summary_ids) as string[];
-        if (childIds.length > 0) {
-          const refs = childIds.map(id => `    <summary_ref id="${id}" />`).join('\n');
-          parentsBlock = `\n  <parents>\n${refs}\n  </parents>`;
-        }
-      } catch { /* ignore parse errors */ }
+    if (s.depth > 0) {
+      const children = getChildSummaries(s.id);
+      if (children.length > 0) {
+        const refs = children.map(c => `    <summary_ref id="${c.id}" />`).join('\n');
+        parentsBlock = `\n  <parents>\n${refs}\n  </parents>`;
+      }
     }
 
     return `<summary ${attrs}>${parentsBlock}\n  <content>\n${s.content}\n  </content>\n</summary>`;

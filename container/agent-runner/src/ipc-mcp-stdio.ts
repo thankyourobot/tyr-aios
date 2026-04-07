@@ -735,8 +735,10 @@ server.tool(
       return { content: [{ type: 'text' as const, text: `Summary "${args.id}" not found.` }], isError: true };
     }
 
-    const sourceCount = summary.source_message_ids ? JSON.parse(summary.source_message_ids).length : 0;
-    const childCount = summary.child_summary_ids ? JSON.parse(summary.child_summary_ids).length : 0;
+    const sourceMessages = getMessagesForSummary(args.id);
+    const childSummaries = getChildSummaries(args.id);
+    const sourceCount = sourceMessages.length;
+    const childCount = childSummaries.length;
     const preview = summary.content.slice(0, 500) + (summary.content.length > 500 ? '...' : '');
 
     const info: string[] = [

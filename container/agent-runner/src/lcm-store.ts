@@ -230,6 +230,56 @@ const MIGRATIONS: Array<(db: Database.Database) => void> = [
       );
     `);
   },
+
+  // v5 → v6: Junction tables for summary lineage (replaces JSON arrays)
+  (db) => {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS lcm_summary_messages (
+        summary_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        PRIMARY KEY (summary_id, message_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lcm_summary_messages_msg ON lcm_summary_messages(message_id);
+
+      CREATE TABLE IF NOT EXISTS lcm_summary_parents (
+        summary_id TEXT NOT NULL,
+        parent_summary_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        PRIMARY KEY (summary_id, parent_summary_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lcm_summary_parents_parent ON lcm_summary_parents(parent_summary_id);
+    `);
+
+    // Backfill from existing JSON arrays
+    const summaries = db.prepare('SELECT id, source_message_ids, child_summary_ids FROM lcm_summaries').all() as Array<{
+      id: string; source_message_ids: string | null; child_summary_ids: string | null;
+    }>;
+    const insertMsg = db.prepare('INSERT OR IGNORE INTO lcm_summary_messages (summary_id, message_id, ordinal) VALUES (?, ?, ?)');
+    const insertParent = db.prepare('INSERT OR IGNORE INTO lcm_summary_parents (summary_id, parent_summary_id, ordinal) VALUES (?, ?, ?)');
+
+    const backfill = db.transaction(() => {
+      for (const s of summaries) {
+        if (s.source_message_ids) {
+          try {
+            const ids: string[] = JSON.parse(s.source_message_ids);
+            for (let i = 0; i < ids.length; i++) {
+              insertMsg.run(s.id, ids[i], i);
+            }
+          } catch { /* malformed JSON, skip */ }
+        }
+        if (s.child_summary_ids) {
+          try {
+            const ids: string[] = JSON.parse(s.child_summary_ids);
+            for (let i = 0; i < ids.length; i++) {
+              insertParent.run(s.id, ids[i], i);
+            }
+          } catch { /* malformed JSON, skip */ }
+        }
+      }
+    });
+    backfill();
+  },
 ];
 
 function runMigrations(database: Database.Database): void {
@@ -356,33 +406,56 @@ export function storeSummary(summary: StoreSummaryInput): void {
   const database = getLcmDb();
   const tokenEstimate = estimateTokens(summary.content);
   const kind = summary.kind ?? (summary.depth === 0 ? 'leaf' : 'condensed');
-  database.prepare(`
-    INSERT OR IGNORE INTO lcm_summaries (
-      id, conversation_id, depth, content, token_estimate,
-      source_message_ids, parent_summary_ids, child_summary_ids,
-      min_sequence, max_sequence, created_at,
-      kind, earliest_at, latest_at,
-      descendant_count, descendant_token_count, source_message_token_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    summary.id,
-    summary.conversation_id,
-    summary.depth,
-    summary.content,
-    tokenEstimate,
-    summary.source_message_ids,
-    summary.parent_summary_ids,
-    summary.child_summary_ids,
-    summary.min_sequence,
-    summary.max_sequence,
-    summary.created_at,
-    kind,
-    summary.earliest_at ?? null,
-    summary.latest_at ?? null,
-    summary.descendant_count ?? 0,
-    summary.descendant_token_count ?? 0,
-    summary.source_message_token_count ?? 0,
-  );
+
+  database.transaction(() => {
+    database.prepare(`
+      INSERT OR IGNORE INTO lcm_summaries (
+        id, conversation_id, depth, content, token_estimate,
+        source_message_ids, parent_summary_ids, child_summary_ids,
+        min_sequence, max_sequence, created_at,
+        kind, earliest_at, latest_at,
+        descendant_count, descendant_token_count, source_message_token_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      summary.id,
+      summary.conversation_id,
+      summary.depth,
+      summary.content,
+      tokenEstimate,
+      summary.source_message_ids,
+      summary.parent_summary_ids,
+      summary.child_summary_ids,
+      summary.min_sequence,
+      summary.max_sequence,
+      summary.created_at,
+      kind,
+      summary.earliest_at ?? null,
+      summary.latest_at ?? null,
+      summary.descendant_count ?? 0,
+      summary.descendant_token_count ?? 0,
+      summary.source_message_token_count ?? 0,
+    );
+
+    // Write to junction tables (source of truth for lineage queries)
+    if (summary.source_message_ids) {
+      try {
+        const ids: string[] = JSON.parse(summary.source_message_ids);
+        const stmt = database.prepare('INSERT OR IGNORE INTO lcm_summary_messages (summary_id, message_id, ordinal) VALUES (?, ?, ?)');
+        for (let i = 0; i < ids.length; i++) {
+          stmt.run(summary.id, ids[i], i);
+        }
+      } catch { /* malformed JSON */ }
+    }
+    if (summary.child_summary_ids) {
+      try {
+        const ids: string[] = JSON.parse(summary.child_summary_ids);
+        const stmt = database.prepare('INSERT OR IGNORE INTO lcm_summary_parents (summary_id, parent_summary_id, ordinal) VALUES (?, ?, ?)');
+        for (let i = 0; i < ids.length; i++) {
+          stmt.run(summary.id, ids[i], i);
+        }
+      } catch { /* malformed JSON */ }
+    }
+  })();
 }
 
 export function getSummariesForConversation(
@@ -417,14 +490,12 @@ export function getSummaryById(id: string): LcmSummary | undefined {
 
 export function getMessagesForSummary(summaryId: string): LcmMessage[] {
   const database = getLcmDb();
-  const summary = database.prepare('SELECT source_message_ids FROM lcm_summaries WHERE id = ?').get(summaryId) as { source_message_ids: string | null } | undefined;
-  if (!summary?.source_message_ids) return [];
-
-  const ids: string[] = JSON.parse(summary.source_message_ids);
-  if (ids.length === 0) return [];
-
-  const placeholders = ids.map(() => '?').join(',');
-  return database.prepare(`SELECT * FROM lcm_messages WHERE id IN (${placeholders}) ORDER BY sequence`).all(...ids) as LcmMessage[];
+  return database.prepare(`
+    SELECT m.* FROM lcm_messages m
+    JOIN lcm_summary_messages sm ON sm.message_id = m.id
+    WHERE sm.summary_id = ?
+    ORDER BY sm.ordinal
+  `).all(summaryId) as LcmMessage[];
 }
 
 export function getMessagesBySequenceRange(conversationId: string, minSeq: number, maxSeq: number): LcmMessage[] {
@@ -476,14 +547,52 @@ export function searchSummaries(queryStr: string, limit: number = 20): Array<Lcm
 
 export function getChildSummaries(summaryId: string): LcmSummary[] {
   const database = getLcmDb();
-  const summary = getSummaryById(summaryId);
-  if (!summary?.child_summary_ids) return [];
+  return database.prepare(`
+    SELECT s.* FROM lcm_summaries s
+    JOIN lcm_summary_parents sp ON sp.parent_summary_id = s.id
+    WHERE sp.summary_id = ?
+    ORDER BY sp.ordinal
+  `).all(summaryId) as LcmSummary[];
+}
 
-  const ids: string[] = JSON.parse(summary.child_summary_ids);
-  if (ids.length === 0) return [];
+/**
+ * Find all summaries that cover a given message (reverse lookup).
+ */
+export function getSummariesForMessage(messageId: string): LcmSummary[] {
+  const database = getLcmDb();
+  return database.prepare(`
+    SELECT s.* FROM lcm_summaries s
+    JOIN lcm_summary_messages sm ON sm.summary_id = s.id
+    WHERE sm.message_id = ?
+    ORDER BY s.min_sequence
+  `).all(messageId) as LcmSummary[];
+}
 
-  const placeholders = ids.map(() => '?').join(',');
-  return database.prepare(`SELECT * FROM lcm_summaries WHERE id IN (${placeholders}) ORDER BY min_sequence`).all(...ids) as LcmSummary[];
+/**
+ * Get IDs of all leaf summaries that are covered by condensed summaries.
+ */
+export function getCoveredLeafIds(conversationId: string): Set<string> {
+  const database = getLcmDb();
+  const rows = database.prepare(`
+    SELECT DISTINCT sp.parent_summary_id as id
+    FROM lcm_summary_parents sp
+    JOIN lcm_summaries s ON s.id = sp.summary_id
+    WHERE s.conversation_id = ?
+  `).all(conversationId) as Array<{ id: string }>;
+  return new Set(rows.map(r => r.id));
+}
+
+/**
+ * Find all parent summaries that condensed a given child summary (reverse lookup).
+ */
+export function getParentSummaries(childSummaryId: string): LcmSummary[] {
+  const database = getLcmDb();
+  return database.prepare(`
+    SELECT s.* FROM lcm_summaries s
+    JOIN lcm_summary_parents sp ON sp.summary_id = s.id
+    WHERE sp.parent_summary_id = ?
+    ORDER BY s.min_sequence
+  `).all(childSummaryId) as LcmSummary[];
 }
 
 // --- Context items ---

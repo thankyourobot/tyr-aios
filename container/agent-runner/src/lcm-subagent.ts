@@ -88,8 +88,8 @@ function executeDescribeTool(args: { id: string }): string {
   const summary = getSummaryById(args.id);
   if (!summary) return `Summary "${args.id}" not found.`;
 
-  const sourceCount = summary.source_message_ids ? JSON.parse(summary.source_message_ids).length : 0;
-  const childCount = summary.child_summary_ids ? JSON.parse(summary.child_summary_ids).length : 0;
+  const sourceCount = getMessagesForSummary(args.id).length;
+  const childCount = getChildSummaries(args.id).length;
 
   const lines = [
     `ID: ${summary.id}`,
