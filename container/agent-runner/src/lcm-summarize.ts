@@ -12,7 +12,7 @@ import { summarizationBreaker } from './lcm-circuit-breaker.js';
 // --- Configuration ---
 
 const LCM_SUMMARY_MODEL = process.env.LCM_SUMMARY_MODEL || 'claude-haiku-4-5-20251001';
-const LCM_SUMMARIZE_TIMEOUT_MS = parseInt(process.env.LCM_SUMMARIZE_TIMEOUT_MS || '15000', 10);
+const LCM_SUMMARIZE_TIMEOUT_MS = parseInt(process.env.LCM_SUMMARIZE_TIMEOUT_MS || '30000', 10);
 const LCM_CONDENSE_THRESHOLD = parseInt(process.env.LCM_CONDENSE_THRESHOLD || '8', 10);
 const MAX_CONDENSE_DEPTH = 3;
 const DEFAULT_LEAF_TARGET_TOKENS = 2400;
