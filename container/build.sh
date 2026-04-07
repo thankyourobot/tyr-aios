@@ -15,6 +15,9 @@ echo "Image: ${IMAGE_NAME}:${TAG}"
 
 ${CONTAINER_RUNTIME} build -t "${IMAGE_NAME}:${TAG}" .
 
+# Prune dangling images from previous builds
+${CONTAINER_RUNTIME} image prune -f --filter "until=1h" 2>/dev/null || true
+
 echo ""
 echo "Build complete!"
 echo "Image: ${IMAGE_NAME}:${TAG}"
