@@ -16,9 +16,10 @@ export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
 
 /**
  * Address the credential proxy binds to.
- * Docker Desktop (macOS): 127.0.0.1 — the VM routes host.docker.internal to loopback.
- * Docker (Linux): bind to the docker0 bridge IP so only containers can reach it,
- *   falling back to 0.0.0.0 if the interface isn't found.
+ * Docker Desktop (macOS/WSL): 127.0.0.1 — the VM routes host.docker.internal to loopback.
+ * Docker (Linux, rootful): bind to the docker0 bridge IP so only containers can reach it.
+ * Docker (Linux, rootless): bind to 127.0.0.1 — containers reach it via host-gateway
+ *   mapping (slirp4netns routes host.docker.internal to the host's loopback).
  */
 export const PROXY_BIND_HOST =
   process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
@@ -30,14 +31,18 @@ function detectProxyBindHost(): string {
   // Check /proc filesystem, not env vars — WSL_DISTRO_NAME isn't set under systemd.
   if (fs.existsSync('/proc/sys/fs/binfmt_misc/WSLInterop')) return '127.0.0.1';
 
-  // Bare-metal Linux: bind to the docker0 bridge IP instead of 0.0.0.0
+  // Bare-metal Linux: try docker0 bridge IP (rootful Docker)
   const ifaces = os.networkInterfaces();
   const docker0 = ifaces['docker0'];
   if (docker0) {
     const ipv4 = docker0.find((a) => a.family === 'IPv4');
     if (ipv4) return ipv4.address;
   }
-  return '0.0.0.0';
+
+  // No docker0 = rootless Docker or unusual setup.
+  // Bind to 127.0.0.1 — containers reach it via --add-host=host.docker.internal:host-gateway
+  // which maps to the slirp4netns gateway. More secure than 0.0.0.0.
+  return '127.0.0.1';
 }
 
 /** CLI args needed for the container to resolve the host gateway. */
