@@ -187,7 +187,9 @@ function buildVolumeMounts(
     group.folder,
     'agent-runner-src',
   );
-  if (!fs.existsSync(groupAgentRunnerDir) && fs.existsSync(agentRunnerSrc)) {
+  // Always sync agent-runner source to pick up deploys.
+  // Per-group customization is overwritten — deploy wins.
+  if (fs.existsSync(agentRunnerSrc)) {
     fs.cpSync(agentRunnerSrc, groupAgentRunnerDir, { recursive: true });
   }
   mounts.push({
@@ -240,9 +242,9 @@ function buildContainerArgs(
     args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
 
-  // Request 1M context window — server currently rejects for OAuth/SDK subscriptions
-  // but will auto-activate when Anthropic enables it (no code change needed).
-  args.push('-e', 'ANTHROPIC_BETAS=context-1m-2025-08-07');
+  // 1M context is handled by the [1m] model suffix in agent-runner.
+  // Do NOT set ANTHROPIC_BETAS here — it overrides Claude Code's internal
+  // beta headers and breaks WebSearch.
   args.push('-e', 'ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6[1m]');
 
   // Runtime-specific args for host gateway resolution
@@ -474,6 +476,7 @@ export async function runContainerAgent(
               status: 'success',
               result: null,
               newSessionId: parseState.newSessionId,
+              sessionReset: parseState.sessionReset,
             });
           });
           return;
@@ -586,6 +589,7 @@ export async function runContainerAgent(
             status: 'success',
             result: null,
             newSessionId: parseState.newSessionId,
+            sessionReset: parseState.sessionReset,
           });
         });
         return;

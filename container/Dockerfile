@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     sqlite3 \
     git \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --break-system-packages python-ulid typing_extensions

@@ -16,8 +16,39 @@
 
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { query, HookCallback, PreCompactHookInput } from './claude-backend.js';
 import { fileURLToPath } from 'url';
+import {
+  getConversationId,
+  shouldProactivelyCompact,
+  shouldSummarize,
+  parseTranscript,
+  assembleLcmContext,
+  setDetectedContextWindow,
+  decomposeMessage,
+  LCM_LEAF_CHUNK_TOKENS,
+} from './lcm-helpers.js';
+import {
+  initLcmDatabase,
+  storeMessages,
+  storeSummary,
+  getSummariesForConversation,
+  getMaxSequence,
+  contentHash,
+  appendContextItems,
+  replaceContextItemsWithSummary,
+  replaceContextSummariesWithCondensed,
+  storeMessageParts,
+  getBootstrapState,
+  upsertBootstrapState,
+  storeLargeFile,
+} from './lcm-store.js';
+import {
+  createLeafSummary,
+  createCondensedSummary,
+  LCM_CONDENSE_THRESHOLD,
+} from './lcm-summarize.js';
 
 interface ContainerInput {
   prompt: string;
@@ -55,6 +86,7 @@ interface ContainerOutput {
     preTokens: number;
     trigger: 'manual' | 'auto';
   };
+  sessionReset?: boolean;
   error?: string;
   schemaVersion?: number;
 }
@@ -258,14 +290,284 @@ function formatToolUseSummary(
   return summary;
 }
 
+// --- LCM ---
+
+const LCM_DB_PATH = '/home/node/.claude/lcm.db';
+const LCM_FRESHNESS_WINDOW = parseInt(process.env.LCM_FRESHNESS_WINDOW || '32', 10);
+
+const LCM_TRANSCRIPT_DIR = '/home/node/.claude/projects/-workspace-group';
+
+/**
+ * Get the transcript JSONL path for a specific session ID.
+ * The Claude CLI names transcripts as {sessionId}.jsonl.
+ */
+function getTranscriptPath(sessionId: string): string | null {
+  const filePath = path.join(LCM_TRANSCRIPT_DIR, `${sessionId}.jsonl`);
+  if (fs.existsSync(filePath)) return filePath;
+  return null;
+}
+
+/**
+ * Persist messages to LCM and create summaries if token threshold crossed.
+ * Called after every query (always-persist) and from PreCompact hook (belt & suspenders).
+ * All errors are non-fatal.
+ */
+async function persistToLcm(conversationId: string, sessionId: string | undefined, assistantName?: string): Promise<void> {
+  log(`persistToLcm called (conversationId=${conversationId}, sessionId=${sessionId || 'none'}, LCM_ENABLED=${process.env.LCM_ENABLED ?? 'unset'})`);
+  if (process.env.LCM_ENABLED === 'false') return;
+  if (!sessionId) { log('No session ID, skipping'); return; }
+
+  try {
+    const db = initLcmDatabase(LCM_DB_PATH);
+    if (!db) { log('initLcmDatabase returned null'); return; }
+
+    const transcriptPath = getTranscriptPath(sessionId);
+    if (!transcriptPath) {
+      log(`No transcript found for session ${sessionId}`);
+      return;
+    }
+    log(`Found transcript: ${transcriptPath}`);
+
+    // Bootstrap tracking: skip re-reading unchanged files
+    const fileStat = fs.statSync(transcriptPath);
+    const bootstrapState = getBootstrapState(conversationId);
+    if (bootstrapState
+      && bootstrapState.session_file_path === transcriptPath
+      && bootstrapState.last_seen_size === fileStat.size
+      && bootstrapState.last_seen_mtime_ms === Math.floor(fileStat.mtimeMs)) {
+      log('Bootstrap: transcript unchanged since last persist, skipping');
+      return;
+    }
+
+    // Read transcript (full read for now; incremental append-only optimization is future work)
+    const content = fs.readFileSync(transcriptPath, 'utf-8');
+    const messages = parseTranscript(content);
+    log(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
+    if (messages.length === 0) return;
+
+    // Large file interception: externalize content blocks > 100K chars before storing
+    const LCM_FILES_DIR = '/home/node/.claude/lcm-files';
+    for (const msg of messages) {
+      if (msg.content.length <= 100000) continue;
+      try {
+        const blocks = JSON.parse(msg.content);
+        if (!Array.isArray(blocks)) continue;
+        let modified = false;
+        for (let i = 0; i < blocks.length; i++) {
+          const block = blocks[i];
+          let blockContent: string | null = null;
+          if (block.type === 'tool_result') {
+            blockContent = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+          } else if (block.type === 'text' && typeof block.text === 'string') {
+            blockContent = block.text;
+          } else if (block.type === 'tool_use' && block.input) {
+            const inputStr = JSON.stringify(block.input);
+            if (inputStr.length > 100000) blockContent = inputStr;
+          }
+          if (blockContent && blockContent.length > 100000) {
+            const fileId = `file_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+            fs.mkdirSync(LCM_FILES_DIR, { recursive: true });
+            const storagePath = path.join(LCM_FILES_DIR, fileId);
+            fs.writeFileSync(storagePath, blockContent);
+            storeLargeFile({
+              file_id: fileId,
+              conversation_id: conversationId,
+              file_name: null,
+              mime_type: null,
+              byte_size: blockContent.length,
+              storage_uri: storagePath,
+              exploration_summary: null,
+              created_at: new Date().toISOString(),
+            });
+            blocks[i] = { ...block, content: `[large content externalized: file_id=${fileId}, ${blockContent.length} bytes]` };
+            modified = true;
+          }
+        }
+        if (modified) {
+          msg.content = JSON.stringify(blocks);
+        }
+      } catch { /* not JSON, skip */ }
+    }
+
+    const currentMaxSeq = getMaxSequence(conversationId);
+    const startSequence = currentMaxSeq + 1;
+    const newlyInserted = storeMessages(conversationId, messages, startSequence);
+    log(`Stored ${newlyInserted}/${messages.length} messages (dedup)`);
+
+    // Store message parts for newly inserted messages
+    if (newlyInserted > 0) {
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        const msgId = contentHash(conversationId, msg.role, msg.content);
+        const parts = decomposeMessage(msgId, msg.content);
+        if (parts.length > 0) storeMessageParts(parts);
+      }
+
+      // Append context items for new messages
+      const newItems = messages.map((msg, i) => ({
+        item_type: 'message' as const,
+        message_id: contentHash(conversationId, msg.role, msg.content),
+      }));
+      appendContextItems(conversationId, newItems);
+    }
+
+    if (newlyInserted === 0) {
+      // Still update bootstrap state even if all messages were deduped
+      upsertBootstrapState({
+        conversation_id: conversationId,
+        session_file_path: transcriptPath,
+        last_seen_size: fileStat.size,
+        last_seen_mtime_ms: Math.floor(fileStat.mtimeMs),
+        last_processed_offset: fileStat.size,
+        last_processed_entry_hash: null,
+        updated_at: new Date().toISOString(),
+      });
+      return;
+    }
+
+    // Check if we should create a leaf summary (token-based threshold)
+    if (!shouldSummarize(conversationId)) return;
+
+    // Find unsummarized messages to summarize
+    const allSummaries = getSummariesForConversation(conversationId);
+    const maxSummarizedSeq = allSummaries.length > 0
+      ? Math.max(...allSummaries.map(s => s.max_sequence ?? -1))
+      : -1;
+
+    // Get the most recent summary content for previous-context continuity
+    const sortedSummaries = [...allSummaries].sort((a, b) => (b.max_sequence ?? 0) - (a.max_sequence ?? 0));
+    const previousSummary = sortedSummaries[0]?.content;
+
+    // Get unsummarized messages, leaving freshness window intact
+    const allUnsummarized = messages.filter((_, i) => {
+      const seq = startSequence + i;
+      return seq > maxSummarizedSeq;
+    });
+    const toSummarize = allUnsummarized.slice(0, Math.max(0, allUnsummarized.length - LCM_FRESHNESS_WINDOW));
+
+    if (toSummarize.length === 0) return;
+
+    // Incremental chunked compaction: create one leaf per ~LCM_LEAF_CHUNK_TOKENS chunk
+    const MIN_CHUNK_MESSAGES = 10;
+    let chunkStart = 0;
+    let lastPrevSummary = previousSummary;
+
+    while (chunkStart < toSummarize.length) {
+      // Build a chunk: accumulate until token threshold AND minimum message count
+      let chunkEnd = chunkStart;
+      let chunkTokens = 0;
+      while (chunkEnd < toSummarize.length) {
+        chunkTokens += Math.ceil(toSummarize[chunkEnd].content.length / 4);
+        chunkEnd++;
+        // Stop when we've hit the token threshold AND have enough messages
+        if (chunkTokens >= LCM_LEAF_CHUNK_TOKENS && (chunkEnd - chunkStart) >= MIN_CHUNK_MESSAGES) break;
+      }
+
+      const chunk = toSummarize.slice(chunkStart, chunkEnd);
+      const minSeq = maxSummarizedSeq + 1 + chunkStart;
+      const maxSeq = minSeq + chunk.length - 1;
+      const messageIds = chunk.map(msg => contentHash(conversationId, msg.role, msg.content));
+
+      log(`LCM: Creating leaf summary for messages ${minSeq}-${maxSeq} (${chunk.length} msgs, ~${chunkTokens} tokens)`);
+      const leafResult = await createLeafSummary(chunk, messageIds, minSeq, maxSeq, lastPrevSummary);
+      if (!leafResult) {
+        log('LCM: Leaf summarization failed — skipping remaining chunks, will retry next persist');
+        break;
+      }
+      log(`LCM: Leaf summary created: ${leafResult.id} (${leafResult.content.length} chars)`);
+      storeSummary({
+        id: leafResult.id,
+        conversation_id: conversationId,
+        depth: 0,
+        content: leafResult.content,
+        source_message_ids: JSON.stringify(leafResult.sourceMessageIds),
+        parent_summary_ids: null,
+        child_summary_ids: null,
+        min_sequence: leafResult.minSequence,
+        max_sequence: leafResult.maxSequence,
+        created_at: new Date().toISOString(),
+      });
+
+      // Replace message context items with summary item
+      replaceContextItemsWithSummary(conversationId, messageIds, leafResult.id);
+
+      // Use this summary as previous context for the next chunk
+      lastPrevSummary = leafResult.content;
+      chunkStart = chunkEnd;
+    }
+
+    // Condensation loop: keep condensing while uncovered leaves >= threshold
+    let condensationPass = 0;
+    while (true) {
+      const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
+      const condensedSummaries = getSummariesForConversation(conversationId).filter(s => s.depth > 0);
+      const coveredLeafIds = new Set<string>();
+      for (const cs of condensedSummaries) {
+        if (cs.child_summary_ids) {
+          for (const childId of JSON.parse(cs.child_summary_ids) as string[]) {
+            coveredLeafIds.add(childId);
+          }
+        }
+      }
+      const uncoveredLeaves = leafSummaries.filter(s => !coveredLeafIds.has(s.id));
+
+      if (uncoveredLeaves.length < LCM_CONDENSE_THRESHOLD) break;
+
+      condensationPass++;
+      const toCondense = uncoveredLeaves.slice(0, LCM_CONDENSE_THRESHOLD);
+      const latestCondensed = condensedSummaries.sort((a, b) => (b.max_sequence ?? 0) - (a.max_sequence ?? 0))[0];
+      log(`LCM: Condensation pass ${condensationPass} — condensing ${toCondense.length} leaf summaries (${uncoveredLeaves.length} uncovered)`);
+      const condensedResult = await createCondensedSummary(toCondense, latestCondensed?.content);
+      if (!condensedResult) {
+        log('LCM: Condensation failed — skipping, will retry next persist');
+        break;
+      }
+      log(`LCM: Condensed summary created: ${condensedResult.id} (depth ${condensedResult.depth}, ${condensedResult.content.length} chars)`);
+      storeSummary({
+        id: condensedResult.id,
+        conversation_id: conversationId,
+        depth: condensedResult.depth,
+        content: condensedResult.content,
+        source_message_ids: null,
+        parent_summary_ids: null,
+        child_summary_ids: JSON.stringify(condensedResult.childSummaryIds),
+        min_sequence: condensedResult.minSequence,
+        max_sequence: condensedResult.maxSequence,
+        created_at: new Date().toISOString(),
+      });
+
+      // Replace child summary context items with condensed summary item
+      replaceContextSummariesWithCondensed(
+        conversationId,
+        condensedResult.childSummaryIds,
+        condensedResult.id,
+      );
+    }
+
+    // Update bootstrap state last — after all operations succeeded
+    upsertBootstrapState({
+      conversation_id: conversationId,
+      session_file_path: transcriptPath,
+      last_seen_size: fileStat.size,
+      last_seen_mtime_ms: Math.floor(fileStat.mtimeMs),
+      last_processed_offset: fileStat.size,
+      last_processed_entry_hash: null,
+      updated_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    log(`persist error (non-fatal): ${err instanceof Error ? err.stack || err.message : String(err)}`);
+  }
+}
+
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
+  conversationId: string,
   resumeAt?: string,
-): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean }> {
+): Promise<{ newSessionId?: string; lastAssistantUuid?: string; closedDuringQuery: boolean; lastInputTokens?: number }> {
   const stream = new MessageStream();
   stream.push(prompt);
 
@@ -330,6 +632,22 @@ async function runQuery(
     globalClaudeMd = (globalClaudeMd || '') + planInstructions;
   }
 
+  // LCM: Inject summary context only when starting a fresh session (post-compaction).
+  // Resuming an existing session already has its context; injecting again would duplicate.
+  let lcmContext: string | null = null;
+  if (!sessionId && !containerInput.planMode && process.env.LCM_ENABLED !== 'false') {
+    try {
+      const convId = getConversationId(containerInput);
+      lcmContext = assembleLcmContext(convId, LCM_DB_PATH, containerInput.prompt);
+      if (lcmContext) log(`LCM: Assembled summary context (${lcmContext.length} chars)`);
+    } catch (err) {
+      log(`LCM context assembly error (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Combine system prompt parts
+  const systemPromptAppend = [globalClaudeMd, lcmContext].filter(Boolean).join('\n\n') || undefined;
+
   // Track context usage from assistant messages
   let lastContextUsage: ContainerOutput['contextUsage'] | undefined;
   let lastCompaction: ContainerOutput['compaction'] | undefined;
@@ -350,8 +668,8 @@ async function runQuery(
       resume: sessionId,
       resumeSessionAt: containerInput.resumeSessionAt || resumeAt,
       ...(containerInput.forkFromSession ? { forkSession: true } : {}),
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: systemPromptAppend
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: systemPromptAppend }
         : undefined,
       allowedTools: [
         'Bash',
@@ -490,6 +808,7 @@ async function runQuery(
         const firstModel = Object.values(modelUsage)[0];
         if (firstModel?.contextWindow) {
           lastContextUsage.contextWindow = firstModel.contextWindow;
+          setDetectedContextWindow(firstModel.contextWindow);
         }
       }
       const modelName = modelUsage ? Object.keys(modelUsage)[0] : undefined;
@@ -505,12 +824,29 @@ async function runQuery(
       });
       // Reset compaction after emitting (one-shot)
       lastCompaction = undefined;
+
+      // LCM: Persist messages immediately after each result
+      await persistToLcm(conversationId, newSessionId, containerInput.assistantName);
+
+      // LCM: Check for compact signal or proactive compaction threshold
+      const lcmCompactSignal = path.join(IPC_INPUT_DIR, '_lcm_compact');
+      const onDemandCompact = fs.existsSync(lcmCompactSignal);
+      if (onDemandCompact) {
+        try { fs.unlinkSync(lcmCompactSignal); } catch { /* ignore */ }
+      }
+      if (onDemandCompact || shouldProactivelyCompact(lastContextUsage?.inputTokens)) {
+        log(`LCM: ${onDemandCompact ? 'On-demand' : 'Proactive'} compaction — resetting session, exiting container`);
+        writeOutput({ status: 'success', result: null, sessionReset: true });
+        closedDuringQuery = true;
+        stream.end();
+        ipcPolling = false;
+      }
     }
   }
 
   ipcPolling = false;
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, lastInputTokens: lastContextUsage?.inputTokens };
 }
 
 async function main(): Promise<void> {
@@ -539,12 +875,13 @@ async function main(): Promise<void> {
     sdkEnv.NANOCLAW_ASSISTANT_NAME = containerInput.assistantName;
   }
 
-  // Pass context to hooks (plan-mode-hook.ts reads these)
+  // Pass context to hooks (plan-mode-hook.ts, precompact-hook.ts)
   sdkEnv.NANOCLAW_CHAT_JID = containerInput.chatJid;
   sdkEnv.NANOCLAW_GROUP_FOLDER = containerInput.groupFolder;
   if (containerInput.replyThreadTs) {
     sdkEnv.NANOCLAW_REPLY_THREAD_TS = containerInput.replyThreadTs;
   }
+  if (containerInput.threadTs) sdkEnv.NANOCLAW_THREAD_TS = containerInput.threadTs;
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
@@ -554,6 +891,15 @@ async function main(): Promise<void> {
 
   // Clean up stale _close sentinel from previous container runs
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
+
+  // LCM: Check for compact signal at startup (written by *compact before this container launched)
+  const lcmCompactAtStartup = path.join(IPC_INPUT_DIR, '_lcm_compact');
+  if (fs.existsSync(lcmCompactAtStartup)) {
+    try { fs.unlinkSync(lcmCompactAtStartup); } catch { /* ignore */ }
+    log('LCM: Compact signal found at startup — clearing session for fresh start');
+    writeOutput({ status: 'success', result: null, sessionReset: true });
+    sessionId = undefined;
+  }
 
   // Build initial prompt (drain any pending IPC messages too)
   let prompt = containerInput.prompt;
@@ -571,11 +917,13 @@ async function main(): Promise<void> {
 
   // Query loop: run query → wait for IPC message → run new query → repeat
   let resumeAt: string | undefined;
+  const conversationId = getConversationId(containerInput);
+
   try {
     while (true) {
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
-      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
+      const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, conversationId, resumeAt);
       if (queryResult.newSessionId) {
         sessionId = queryResult.newSessionId;
       }
@@ -583,7 +931,7 @@ async function main(): Promise<void> {
         resumeAt = queryResult.lastAssistantUuid;
       }
 
-      // If _close was consumed during the query, exit immediately.
+      // If _close was consumed during the query (or LCM compaction triggered), exit.
       // Don't emit a session-update marker (it would reset the host's
       // idle timer and cause a 30-min delay before the next _close).
       if (queryResult.closedDuringQuery) {

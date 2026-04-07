@@ -12,6 +12,21 @@ import path from 'path';
 import { execSync } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 import { ulid } from 'ulid';
+import {
+  initLcmDatabase,
+  searchMessages,
+  searchSummaries,
+  searchMessageParts,
+  getSummaryById,
+  getMessagesForSummary,
+  getChildSummaries,
+  getMessagesBySequenceRange,
+  getSubtreeManifest,
+  getLargeFile,
+} from './lcm-store.js';
+import { extractText } from './lcm-helpers.js';
+import { runLcmSubAgent } from './lcm-subagent.js';
+import { expansionAuth } from './lcm-expansion-auth.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
@@ -633,6 +648,295 @@ server.tool(
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+// --- LCM Memory Tools ---
+
+const LCM_DB_PATH = '/home/node/.claude/lcm.db';
+
+function ensureLcmDb(): boolean {
+  try {
+    if (!fs.existsSync(LCM_DB_PATH)) return false;
+    const db = initLcmDatabase(LCM_DB_PATH);
+    return db !== null;
+  } catch {
+    return false;
+  }
+}
+
+server.tool(
+  'lcm_grep',
+  'Search compacted conversation history using full-text search. Returns matching messages and/or summaries from previous conversation segments. Use this to find specific topics, decisions, or details from earlier in the conversation.',
+  {
+    query: z.string().describe('Search query (supports FTS5 syntax: AND, OR, NOT, "exact phrase")'),
+    scope: z.enum(['messages', 'summaries', 'both']).default('both').describe('Search scope'),
+    limit: z.number().default(10).describe('Maximum results to return'),
+    part_type: z.enum(['text', 'reasoning', 'tool', 'file', 'compaction']).optional()
+      .describe('Filter by message part type. When set, searches structured message parts instead of raw messages.'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const results: string[] = [];
+
+    if (args.scope === 'messages' || args.scope === 'both') {
+      if (args.part_type) {
+        // Search structured message parts
+        const parts = searchMessageParts(args.part_type, args.query, args.limit);
+        for (const p of parts) {
+          const content = p.text_content || p.tool_output || p.tool_name || '';
+          const snippet = content.slice(0, 300) + (content.length > 300 ? '...' : '');
+          results.push(`[part] type=${p.part_type} role=${p.role} seq=${p.sequence}${p.tool_name ? ` tool=${p.tool_name}` : ''}\n${snippet}`);
+        }
+      } else {
+        const msgs = searchMessages(args.query, args.limit);
+        for (const m of msgs) {
+          const snippet = m.content.slice(0, 300) + (m.content.length > 300 ? '...' : '');
+          results.push(`[message] role=${m.role} seq=${m.sequence} conv=${m.conversation_id}\n${snippet}`);
+        }
+      }
+    }
+
+    if (args.scope === 'summaries' || args.scope === 'both') {
+      const sums = searchSummaries(args.query, args.limit);
+      for (const s of sums) {
+        const snippet = s.content.slice(0, 300) + (s.content.length > 300 ? '...' : '');
+        results.push(`[summary] id=${s.id} depth=${s.depth} seq=${s.min_sequence}-${s.max_sequence}\n${snippet}`);
+      }
+    }
+
+    if (results.length === 0) {
+      return { content: [{ type: 'text' as const, text: `No results for "${args.query}".` }] };
+    }
+
+    return { content: [{ type: 'text' as const, text: results.join('\n\n---\n\n') }] };
+  },
+);
+
+server.tool(
+  'lcm_describe',
+  'Inspect a specific LCM summary node. Returns metadata, relationships, subtree manifest with budget-fit annotations, and a content preview.',
+  {
+    id: z.string().describe('Summary ID (starts with "sum_")'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const summary = getSummaryById(args.id);
+    if (!summary) {
+      return { content: [{ type: 'text' as const, text: `Summary "${args.id}" not found.` }], isError: true };
+    }
+
+    const sourceCount = summary.source_message_ids ? JSON.parse(summary.source_message_ids).length : 0;
+    const childCount = summary.child_summary_ids ? JSON.parse(summary.child_summary_ids).length : 0;
+    const preview = summary.content.slice(0, 500) + (summary.content.length > 500 ? '...' : '');
+
+    const info: string[] = [
+      `ID: ${summary.id}`,
+      `Kind: ${summary.kind ?? (summary.depth === 0 ? 'leaf' : 'condensed')}`,
+      `Depth: ${summary.depth}`,
+      `Conversation: ${summary.conversation_id}`,
+      `Tokens: ~${summary.token_estimate}`,
+      `Sequence range: ${summary.min_sequence}-${summary.max_sequence}`,
+      `Created: ${summary.created_at}`,
+      `Source messages: ${sourceCount}`,
+      `Child summaries: ${childCount}`,
+    ];
+
+    if (summary.descendant_count) {
+      info.push(`Descendants: ${summary.descendant_count} (~${summary.descendant_token_count} tokens)`);
+    }
+    if (summary.earliest_at) info.push(`Time range: ${summary.earliest_at} — ${summary.latest_at}`);
+
+    // Subtree manifest
+    const manifest = getSubtreeManifest(args.id);
+    if (manifest && manifest.children.length > 0) {
+      const expansionBudget = 25000; // default expansion budget
+      info.push('', 'Subtree manifest:');
+      const formatNode = (node: typeof manifest, indent: number): void => {
+        const prefix = '  '.repeat(indent);
+        const fits = node.token_estimate <= expansionBudget ? '✓ fits' : '✗ exceeds budget';
+        info.push(`${prefix}[${node.id}] depth=${node.depth} tokens=${node.token_estimate} (${fits})`);
+        for (const child of node.children) {
+          formatNode(child, indent + 1);
+        }
+      };
+      for (const child of manifest.children) {
+        formatNode(child, 1);
+      }
+    }
+
+    info.push('', `Content preview:\n${preview}`);
+
+    return { content: [{ type: 'text' as const, text: info.join('\n') }] };
+  },
+);
+
+server.tool(
+  'lcm_expand',
+  'Drill into a specific summary to answer a question. Uses an iterative sub-agent that can navigate the DAG (search, inspect, read source). Use when you know which summary to look at.',
+  {
+    id: z.string().describe('Summary ID to expand (starts with "sum_")'),
+    query: z.string().describe('What specific detail are you looking for?'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const summary = getSummaryById(args.id);
+    if (!summary) {
+      return { content: [{ type: 'text' as const, text: `Summary "${args.id}" not found.` }], isError: true };
+    }
+
+    // Create a scoped grant for the sub-agent
+    const grantId = expansionAuth.createGrant({
+      conversationIds: [summary.conversation_id],
+      summaryIds: [args.id],
+    });
+
+    try {
+      const result = await runLcmSubAgent({
+        query: args.query,
+        seedSummaryIds: [args.id],
+        grantId,
+      });
+
+      if (!result) {
+        return {
+          content: [{ type: 'text' as const, text: `lcm_expand failed: sub-agent returned no result. Try lcm_grep or lcm_describe instead.` }],
+          isError: true,
+        };
+      }
+
+      const cited = result.citedIds.length > 0 ? `\n\nCited: ${result.citedIds.join(', ')}` : '';
+      return { content: [{ type: 'text' as const, text: `## Expanded from ${args.id}\n\n${result.answer}${cited}` }] };
+    } finally {
+      expansionAuth.revokeGrant(grantId);
+      expansionAuth.cleanup();
+    }
+  },
+);
+
+server.tool(
+  'lcm_expand_query',
+  'Exploratory recall: searches for relevant summaries and expands them to answer a question. Use when you do not know which summary to look at. Slower than lcm_expand (~30s).',
+  {
+    query: z.string().describe('Search term to find relevant summaries'),
+    prompt: z.string().describe('Question to answer from the expanded context'),
+    summary_ids: z.array(z.string()).optional().describe('Optional starting summary IDs to seed the search'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    // Find seed summaries via search if not provided
+    let seedIds = args.summary_ids || [];
+    if (seedIds.length === 0) {
+      const searchResults = searchSummaries(args.query, 3);
+      seedIds = searchResults.map(s => s.id);
+    }
+
+    if (seedIds.length === 0) {
+      return { content: [{ type: 'text' as const, text: `No summaries found for "${args.query}". Try lcm_grep for a broader search.` }] };
+    }
+
+    // Create grant
+    const conversationIds = [...new Set(seedIds.map(id => getSummaryById(id)?.conversation_id).filter(Boolean))] as string[];
+    const grantId = expansionAuth.createGrant({
+      conversationIds,
+      summaryIds: seedIds,
+    });
+
+    try {
+      const result = await runLcmSubAgent({
+        query: `${args.prompt}\n\nSearch context: ${args.query}`,
+        seedSummaryIds: seedIds,
+        grantId,
+      });
+
+      if (!result) {
+        return {
+          content: [{ type: 'text' as const, text: `lcm_expand_query failed: sub-agent returned no result.` }],
+          isError: true,
+        };
+      }
+
+      const cited = result.citedIds.length > 0 ? `\n\nCited: ${result.citedIds.join(', ')}` : '';
+      return { content: [{ type: 'text' as const, text: `## Recall: ${args.prompt}\n\n${result.answer}${cited}` }] };
+    } finally {
+      expansionAuth.revokeGrant(grantId);
+      expansionAuth.cleanup();
+    }
+  },
+);
+
+server.tool(
+  'lcm_read_file',
+  'Read a large file that was externalized from LCM context. Returns the full file content.',
+  {
+    file_id: z.string().describe('File ID (starts with "file_")'),
+  },
+  async (args) => {
+    if (!ensureLcmDb()) {
+      return { content: [{ type: 'text' as const, text: 'No LCM history available yet.' }] };
+    }
+
+    const file = getLargeFile(args.file_id);
+    if (!file) {
+      return { content: [{ type: 'text' as const, text: `File "${args.file_id}" not found.` }], isError: true };
+    }
+
+    // Path traversal guard
+    const ALLOWED_LCM_FILE_PREFIX = '/home/node/.claude/lcm-files/';
+    const resolvedPath = path.resolve(file.storage_uri);
+    if (!resolvedPath.startsWith(ALLOWED_LCM_FILE_PREFIX)) {
+      return {
+        content: [{ type: 'text' as const, text: `File path outside expected storage directory: ${file.storage_uri}` }],
+        isError: true,
+      };
+    }
+
+    try {
+      const content = fs.readFileSync(resolvedPath, 'utf-8');
+      const header = [
+        file.file_name ? `File: ${file.file_name}` : null,
+        file.mime_type ? `Type: ${file.mime_type}` : null,
+        file.byte_size ? `Size: ${file.byte_size} bytes` : null,
+      ].filter(Boolean).join(', ');
+
+      return { content: [{ type: 'text' as const, text: header ? `${header}\n\n${content}` : content }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Failed to read file: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'lcm_compact',
+  'Force compaction of the current conversation. Persists all messages to LCM, creates summaries, and signals a session reset. Use when you want to start fresh but preserve memory of the conversation so far.',
+  {},
+  async () => {
+    // Signal the agent-runner main loop to trigger compaction
+    const signalPath = '/workspace/ipc/input/_lcm_compact';
+    try {
+      fs.writeFileSync(signalPath, JSON.stringify({ timestamp: new Date().toISOString() }));
+      return { content: [{ type: 'text' as const, text: 'Compaction requested. Session will reset after current query completes, with LCM summaries injected into the new session.' }] };
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Failed to signal compaction: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
     }

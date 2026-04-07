@@ -184,13 +184,17 @@ async function main(): Promise<void> {
 
   try {
     archiveTranscript(input, assistantName);
-    process.stdout.write(JSON.stringify({ continue: true }));
-    process.exit(0);
   } catch (err) {
     log(`Archive failed: ${err instanceof Error ? err.message : String(err)}`);
     process.stdout.write(JSON.stringify({ continue: false }));
     process.exit(2);
   }
+
+  // LCM persistence is handled by persistToLcm() in index.ts after every query.
+  // No need to duplicate here — the main loop always persists before the hook fires.
+
+  process.stdout.write(JSON.stringify({ continue: true }));
+  process.exit(0);
 }
 
 // Only run main when executed directly (not imported for tests)

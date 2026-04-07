@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
@@ -46,6 +48,7 @@ import {
   type ChannelJid,
 } from './jid.js';
 import { startIpcWatcher } from './ipc.js';
+import { resolveGroupIpcPath } from './group-folder.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
 import {
   isSenderAllowed,
@@ -278,6 +281,27 @@ async function handleCommand(
           botToken: group.botToken,
         },
       );
+    }
+    return true;
+  }
+
+  // *compact command — trigger on-demand LCM compaction
+  if (text === '*compact') {
+    if (!group) return true;
+    const threadKey = msg.threadTs || '__root__';
+    const ipcDir = resolveGroupIpcPath(group.folder);
+    const signalPath = path.join(ipcDir, 'input', threadKey, '_lcm_compact');
+    try {
+      fs.mkdirSync(path.dirname(signalPath), { recursive: true });
+      fs.writeFileSync(signalPath, JSON.stringify({ timestamp: new Date().toISOString() }));
+      await channel.sendMessage(chatJid, 'Compacting memory... session has reset with summaries preserved. Please send a message to continue.', {
+        displayName: group.displayName,
+        displayEmoji: group.displayEmoji,
+        displayIconUrl: group.displayIconUrl,
+        threadTs: msg.threadTs,
+      });
+    } catch (err) {
+      logger.error({ err }, '*compact failed');
     }
     return true;
   }

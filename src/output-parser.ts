@@ -8,6 +8,7 @@ export const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 export interface ParseState {
   buffer: string;
   newSessionId?: string;
+  sessionReset?: boolean;
   hadStreamingOutput: boolean;
 }
 
@@ -58,6 +59,9 @@ export function parseStreamingChunk(
       }
       if (parsed.newSessionId) {
         parseState.newSessionId = parsed.newSessionId;
+      }
+      if (parsed.sessionReset) {
+        parseState.sessionReset = true;
       }
       parseState.hadStreamingOutput = true;
       results.push(parsed);
