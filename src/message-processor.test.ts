@@ -235,6 +235,7 @@ describe('MessageProcessor', () => {
         expect.objectContaining({ verbose: false }),
         undefined,
         undefined,
+        'msg-1',
       );
     });
 

@@ -98,6 +98,11 @@ function createSchema(database: Database.Database): void {
       created_at TEXT NOT NULL,
       PRIMARY KEY (group_folder, thread_ts, slack_ts)
     );
+    -- Column order in this CREATE TABLE differs from on-disk DBs that grew via
+    -- the historical ALTER TABLE chain (since deleted). For named INSERT/SELECT
+    -- this is invisible — but DO NOT use positional INSERT INTO registered_groups
+    -- VALUES (...) because dev and prod will silently disagree on which value
+    -- maps to which column. Always use named column lists for this table.
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT NOT NULL,
       name TEXT NOT NULL,
