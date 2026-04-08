@@ -11,15 +11,22 @@ import { logger } from './logger.js';
 /** The container runtime binary name. */
 export const CONTAINER_RUNTIME_BIN = 'docker';
 
-/** Hostname containers use to reach the host machine. */
-export const CONTAINER_HOST_GATEWAY = 'host.docker.internal';
+/**
+ * Hostname containers use to reach the host machine.
+ * Default: 'host.docker.internal' (works for rootful Docker + Docker Desktop).
+ * Override via CONTAINER_HOST_GATEWAY env var for rootless Docker, where
+ * host.docker.internal resolves to the rootlesskit bridge (unreachable from
+ * the real host) — set it to the host's real IP instead.
+ */
+export const CONTAINER_HOST_GATEWAY =
+  process.env.CONTAINER_HOST_GATEWAY || 'host.docker.internal';
 
 /**
  * Address the credential proxy binds to.
  * Docker Desktop (macOS/WSL): 127.0.0.1 — the VM routes host.docker.internal to loopback.
  * Docker (Linux, rootful): bind to the docker0 bridge IP so only containers can reach it.
- * Docker (Linux, rootless): bind to 127.0.0.1 — containers reach it via host-gateway
- *   mapping (slirp4netns routes host.docker.internal to the host's loopback).
+ * Docker (Linux, rootless): bind to 0.0.0.0 (UFW default deny blocks external access).
+ *   Override via CREDENTIAL_PROXY_HOST env var.
  */
 export const PROXY_BIND_HOST =
   process.env.CREDENTIAL_PROXY_HOST || detectProxyBindHost();
@@ -39,14 +46,16 @@ function detectProxyBindHost(): string {
     if (ipv4) return ipv4.address;
   }
 
-  // No docker0 = rootless Docker or unusual setup.
-  // Bind to 127.0.0.1 — containers reach it via --add-host=host.docker.internal:host-gateway
-  // which maps to the slirp4netns gateway. More secure than 0.0.0.0.
-  return '127.0.0.1';
+  // No docker0 = rootless Docker. Containers are in rootlesskit's network
+  // namespace and can't reach 127.0.0.1 on the real host (--disable-host-loopback).
+  // Bind to 0.0.0.0 — containers reach via host's real IP. UFW blocks external.
+  return '0.0.0.0';
 }
 
 /** CLI args needed for the container to resolve the host gateway. */
 export function hostGatewayArgs(): string[] {
+  // If CONTAINER_HOST_GATEWAY is overridden to an IP (rootless mode), no DNS mapping needed
+  if (process.env.CONTAINER_HOST_GATEWAY) return [];
   // On Linux, host.docker.internal isn't built-in — add it explicitly
   if (os.platform() === 'linux') {
     return ['--add-host=host.docker.internal:host-gateway'];
