@@ -8,7 +8,6 @@ import {
   searchSummaries,
   getSummaryById,
   getMessagesForSummary,
-  getMessagesBySequenceRange,
   getChildSummaries,
   getSubtreeManifest,
   type LcmSummary,
@@ -130,13 +129,9 @@ function executeReadSourceTool(args: { id: string }): string {
   if (!summary) return `Summary "${args.id}" not found.`;
 
   if (summary.depth === 0) {
-    // Leaf — read source messages
-    let msgs = getMessagesForSummary(summary.id);
-    if (msgs.length === 0 && summary.min_sequence !== null && summary.max_sequence !== null) {
-      msgs = getMessagesBySequenceRange(summary.conversation_id, summary.min_sequence, summary.max_sequence);
-    }
+    // Leaf — read source messages via junction table
+    const msgs = getMessagesForSummary(summary.id);
     if (msgs.length === 0) return 'No source messages found.';
-
     return msgs
       .map(m => `[${m.role}]: ${extractText({ role: m.role as 'user' | 'assistant', content: m.content })}`)
       .join('\n\n');
@@ -144,7 +139,6 @@ function executeReadSourceTool(args: { id: string }): string {
     // Condensed — read child summaries
     const children = getChildSummaries(summary.id);
     if (children.length === 0) return 'No child summaries found.';
-
     return children
       .map(c => `--- Summary ${c.id} (depth ${c.depth}, seq ${c.min_sequence}-${c.max_sequence}) ---\n${c.content}`)
       .join('\n\n');

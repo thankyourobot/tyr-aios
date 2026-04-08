@@ -33,9 +33,6 @@ function makeSummary(overrides: Partial<StoreSummaryInput> = {}): StoreSummaryIn
     conversation_id: 'conv-1',
     depth: 0,
     content: 'Summary of messages',
-    source_message_ids: null,
-    parent_summary_ids: null,
-    child_summary_ids: null,
     min_sequence: 0,
     max_sequence: 5,
     created_at: new Date().toISOString(),
@@ -178,7 +175,7 @@ describe('getMessagesForSummary', () => {
     const idA = contentHash('conv-1', 'user', 'msg-a');
     const idB = contentHash('conv-1', 'assistant', 'msg-b');
 
-    storeSummary(makeSummary({ source_message_ids: JSON.stringify([idA, idB]) }));
+    storeSummary(makeSummary({ sourceMessageIds: [idA, idB] }));
 
     const messages = getMessagesForSummary('sum-1');
     expect(messages).toHaveLength(2);
@@ -186,8 +183,8 @@ describe('getMessagesForSummary', () => {
     expect(messages[1].content).toBe('msg-b');
   });
 
-  it('returns empty when source_message_ids is null', () => {
-    storeSummary(makeSummary({ source_message_ids: null }));
+  it('returns empty when no source messages linked', () => {
+    storeSummary(makeSummary({ sourceMessageIds: [] }));
     expect(getMessagesForSummary('sum-1')).toHaveLength(0);
   });
 });
@@ -304,7 +301,7 @@ describe('getChildSummaries', () => {
     storeSummary(makeSummary({
       id: 'parent',
       depth: 1,
-      child_summary_ids: JSON.stringify(['child-1', 'child-2']),
+      childSummaryIds: ['child-1', 'child-2'],
     }));
 
     const children = getChildSummaries('parent');
@@ -314,7 +311,7 @@ describe('getChildSummaries', () => {
   });
 
   it('returns empty when no children', () => {
-    storeSummary(makeSummary({ id: 'lone', child_summary_ids: null }));
+    storeSummary(makeSummary({ id: 'lone' }));
     expect(getChildSummaries('lone')).toHaveLength(0);
   });
 });
@@ -332,10 +329,10 @@ describe('getSubtreeManifest', () => {
     expect(manifest!.children).toHaveLength(0);
   });
 
-  it('survives cyclic child_summary_ids without infinite recursion', () => {
+  it('survives cyclic child links without infinite recursion', () => {
     // Create a cycle: A -> B -> A
-    storeSummary(makeSummary({ id: 'cycle-a', depth: 1, child_summary_ids: JSON.stringify(['cycle-b']) }));
-    storeSummary(makeSummary({ id: 'cycle-b', depth: 1, child_summary_ids: JSON.stringify(['cycle-a']) }));
+    storeSummary(makeSummary({ id: 'cycle-a', depth: 1, childSummaryIds: ['cycle-b'] }));
+    storeSummary(makeSummary({ id: 'cycle-b', depth: 1, childSummaryIds: ['cycle-a'] }));
     const manifest = getSubtreeManifest('cycle-a');
     expect(manifest).not.toBeNull();
     // cycle-b should appear as child, but cycle-a should NOT recurse again

@@ -137,9 +137,6 @@ describe('assembleLcmContext', () => {
       conversation_id: 'conv1',
       depth: 0,
       content: 'Summary of segment 1',
-      source_message_ids: null,
-      parent_summary_ids: null,
-      child_summary_ids: null,
       min_sequence: 0,
       max_sequence: 5,
       created_at: '2026-01-01T00:00:00Z',
@@ -154,15 +151,11 @@ describe('assembleLcmContext', () => {
   });
 
   it('prioritizes condensed summaries over uncovered leaves', () => {
-    // Leaf summaries
     storeSummary({
       id: 'leaf1',
       conversation_id: 'conv1',
       depth: 0,
       content: 'Leaf 1',
-      source_message_ids: null,
-      parent_summary_ids: null,
-      child_summary_ids: null,
       min_sequence: 0,
       max_sequence: 5,
       created_at: '2026-01-01T00:00:00Z',
@@ -172,22 +165,16 @@ describe('assembleLcmContext', () => {
       conversation_id: 'conv1',
       depth: 0,
       content: 'Leaf 2',
-      source_message_ids: null,
-      parent_summary_ids: null,
-      child_summary_ids: null,
       min_sequence: 6,
       max_sequence: 10,
       created_at: '2026-01-01T00:00:00Z',
     });
-    // Condensed summary covering leaf1
     storeSummary({
       id: 'condensed1',
       conversation_id: 'conv1',
       depth: 1,
       content: 'Condensed summary of leaf1',
-      source_message_ids: null,
-      parent_summary_ids: null,
-      child_summary_ids: JSON.stringify(['leaf1']),
+      childSummaryIds: ['leaf1'],
       min_sequence: 0,
       max_sequence: 5,
       created_at: '2026-01-01T00:00:00Z',
@@ -204,17 +191,12 @@ describe('assembleLcmContext', () => {
   });
 
   it('respects token budget', () => {
-    // With 1M window and 25% budget = 250k tokens budget.
-    // Create a summary whose token_estimate (content.length / 4) exceeds the budget.
-    const hugeContent = 'x'.repeat(1_100_000); // ~275k tokens, exceeds 250k budget
+    const hugeContent = 'x'.repeat(1_100_000);
     storeSummary({
       id: 'huge',
       conversation_id: 'conv1',
       depth: 0,
       content: hugeContent,
-      source_message_ids: null,
-      parent_summary_ids: null,
-      child_summary_ids: null,
       min_sequence: 0,
       max_sequence: 5,
       created_at: '2026-01-01T00:00:00Z',
@@ -229,9 +211,6 @@ describe('assembleLcmContext', () => {
       conversation_id: 'conv1',
       depth: 0,
       content: 'Summary content',
-      source_message_ids: null,
-      parent_summary_ids: null,
-      child_summary_ids: null,
       min_sequence: 0,
       max_sequence: 5,
       created_at: '2026-01-01T00:00:00Z',

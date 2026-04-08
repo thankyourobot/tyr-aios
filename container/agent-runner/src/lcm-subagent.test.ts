@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { runLcmSubAgent, _executeTool } from './lcm-subagent.js';
-import { _initTestLcmDatabase, storeMessages, storeSummary, type StoreSummaryInput } from './lcm-store.js';
+import { _initTestLcmDatabase, storeMessages, storeSummary, contentHash, type StoreSummaryInput } from './lcm-store.js';
 
 function makeSummary(overrides: Partial<StoreSummaryInput> = {}): StoreSummaryInput {
   return {
@@ -8,9 +8,6 @@ function makeSummary(overrides: Partial<StoreSummaryInput> = {}): StoreSummaryIn
     conversation_id: 'conv-1',
     depth: 0,
     content: 'Test summary about database migrations and auth changes',
-    source_message_ids: null,
-    parent_summary_ids: null,
-    child_summary_ids: null,
     min_sequence: 0,
     max_sequence: 5,
     created_at: new Date().toISOString(),
@@ -31,7 +28,6 @@ describe('sub-agent tool execution', () => {
       id: 'sum-leaf-1',
       depth: 0,
       content: 'Database schema updated for auth. Session token storage added to sessions table.',
-      source_message_ids: null,
       min_sequence: 0,
       max_sequence: 3,
     }));
@@ -46,7 +42,7 @@ describe('sub-agent tool execution', () => {
       id: 'sum-condensed',
       depth: 1,
       content: 'Auth system fully implemented with database, sessions, and API.',
-      child_summary_ids: JSON.stringify(['sum-leaf-1', 'sum-leaf-2']),
+      childSummaryIds: ['sum-leaf-1', 'sum-leaf-2'],
       min_sequence: 0,
       max_sequence: 7,
     }));
@@ -99,12 +95,15 @@ describe('sub-agent tool execution', () => {
 
   describe('lcm_read_source', () => {
     it('returns source messages for leaf summary', () => {
-      // Store with explicit source_message_ids linking
+      const msgIds = [
+        contentHash('conv-1', 'user', 'Please update the database schema for auth'),
+        contentHash('conv-1', 'assistant', 'I will update the migration files for the auth tables.'),
+      ];
       storeSummary(makeSummary({
         id: 'sum-with-sources',
         depth: 0,
         content: 'Summary with sources',
-        source_message_ids: null, // No explicit links, will fall back to sequence range
+        sourceMessageIds: msgIds,
         min_sequence: 0,
         max_sequence: 3,
       }));

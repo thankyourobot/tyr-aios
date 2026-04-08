@@ -17,9 +17,6 @@ function makeSummary(overrides: Partial<StoreSummaryInput> = {}): StoreSummaryIn
     conversation_id: 'conv-1',
     depth: 0,
     content: 'Test summary',
-    source_message_ids: null,
-    parent_summary_ids: null,
-    child_summary_ids: null,
     min_sequence: 0,
     max_sequence: 5,
     created_at: new Date().toISOString(),
@@ -34,36 +31,61 @@ beforeEach(() => {
 describe('pruneConversations', () => {
   it('returns zero counts when nothing is stale', () => {
     storeMessages('conv-1', [{ role: 'user', content: 'hello' }]);
-    const result = pruneConversations(new Date('2020-01-01'), true);
+    const result = pruneConversations(new Date('2020-01-01'));
     expect(result.conversationsDeleted).toBe(0);
     expect(result.dryRun).toBe(true);
   });
 
   it('identifies stale conversations in dry run', () => {
     storeMessages('conv-old', [{ role: 'user', content: 'old message' }]);
-    const result = pruneConversations(new Date('2099-01-01'), true);
-    expect(result.conversationsDeleted).toBe(1);
-    expect(result.messagesDeleted).toBe(1);
+    storeMessages('conv-new', [{ role: 'user', content: 'keeps safety floor happy' }]);
+    const result = pruneConversations(new Date('2099-01-01'), { dryRun: true, force: true });
+    expect(result.conversationsDeleted).toBe(2);
     expect(result.dryRun).toBe(true);
-
-    // Verify nothing was actually deleted
-    const items = getSummariesForConversation('conv-old');
-    // Messages should still exist (dry run)
   });
 
-  it('deletes stale conversations when not dry run', () => {
+  it('refuses to delete when safety floor would wipe everything', () => {
+    storeMessages('conv-only', [{ role: 'user', content: 'only conversation' }]);
+    const result = pruneConversations(new Date('2099-01-01'), { dryRun: false });
+    expect(result.conversationsDeleted).toBe(0);
+    expect(result.aborted).toBeDefined();
+    expect(result.aborted).toContain('minRetained');
+  });
+
+  it('refuses when more than maxDeleteFraction would be removed', () => {
+    // 3 stale out of 4 total = 75% deletion, exceeds default 0.5.
+    // Need to stub MAX(created_at) for the "fresh" conversation to be after cutoff.
+    // Since storeMessages uses new Date() (now), any cutoff in the past passes the stale filter for all.
+    // So we use a cutoff in the future to mark everything as stale, then add one "fresh" message with
+    // a cutoff that leaves one conversation unstale.
+    storeMessages('conv-1', [{ role: 'user', content: 'msg 1' }]);
+    storeMessages('conv-2', [{ role: 'user', content: 'msg 2' }]);
+    storeMessages('conv-3', [{ role: 'user', content: 'msg 3' }]);
+    storeMessages('conv-4', [{ role: 'user', content: 'msg 4' }]);
+    // 4 total. Default maxDeleteFraction=0.5 → max 2 can be deleted.
+    // But all 4 are "stale" relative to 2099, so 100% > 50%.
+    // We need a safety floor that doesn't also trip minRetained.
+    // With minRetained=1, 3 stale out of 4 means remaining=1, OK for minRetained.
+    // But 3/4 = 75% > 50%, so maxDeleteFraction should trip.
+    // Problem: all 4 are stale. Let's use a forcibly-low minRetained so minRetained doesn't fire.
+    const result = pruneConversations(new Date('2099-01-01'), { dryRun: false, minRetainedConversations: 0 });
+    expect(result.conversationsDeleted).toBe(0);
+    expect(result.aborted).toBeDefined();
+    expect(result.aborted).toContain('maxDeleteFraction');
+  });
+
+  it('deletes stale conversations when force=true', () => {
     storeMessages('conv-old', [
       { role: 'user', content: 'old msg 1' },
       { role: 'assistant', content: 'old msg 2' },
     ]);
     storeSummary(makeSummary({ id: 'sum-old', conversation_id: 'conv-old' }));
-
-    // Keep a recent conversation
     storeMessages('conv-new', [{ role: 'user', content: 'new message' }]);
 
-    const result = pruneConversations(new Date('2099-01-01'), false);
-    expect(result.conversationsDeleted).toBe(2); // both are "old" relative to 2099
+    const result = pruneConversations(new Date('2099-01-01'), { dryRun: false, force: true });
+    expect(result.conversationsDeleted).toBe(2);
     expect(result.dryRun).toBe(false);
+    expect(result.aborted).toBeUndefined();
   });
 });
 

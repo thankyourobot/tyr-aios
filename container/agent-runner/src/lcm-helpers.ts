@@ -7,7 +7,7 @@ import crypto from 'crypto';
 import {
   initLcmDatabase,
   getSummariesForConversation,
-  getCoveredLeafIds,
+  getCoveredSummaryIds,
   getChildSummaries,
   getMaxSequence,
   getLcmDb,
@@ -15,7 +15,6 @@ import {
   type LcmMessagePart,
 } from './lcm-store.js';
 import { scoreRelevance } from './lcm-relevance.js';
-import { repairToolPairing } from './lcm-transcript-repair.js';
 
 // --- Types ---
 
@@ -391,7 +390,7 @@ export function assembleLcmContext(conversationId: string, dbPath: string, promp
   if (allSummaries.length === 0) return null;
 
   // Build set of leaf IDs covered by condensed summaries (via junction table)
-  const coveredLeafIds = getCoveredLeafIds(conversationId);
+  const coveredLeafIds = getCoveredSummaryIds(conversationId);
   const condensed = allSummaries.filter(s => s.depth > 0);
 
   // Prioritize: condensed (high depth) first, then uncovered leaves

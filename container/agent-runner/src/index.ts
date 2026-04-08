@@ -29,13 +29,12 @@ import {
   decomposeMessage,
   LCM_LEAF_CHUNK_TOKENS,
 } from './lcm-helpers.js';
-import { repairToolPairing } from './lcm-transcript-repair.js';
 import {
   initLcmDatabase,
   storeMessages,
   storeSummary,
   getSummariesForConversation,
-  getCoveredLeafIds,
+  getCoveredSummaryIds,
   getMaxSequence,
   contentHash,
   appendContextItems,
@@ -343,7 +342,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
 
     // Read transcript (full read for now; incremental append-only optimization is future work)
     const content = fs.readFileSync(transcriptPath, 'utf-8');
-    const messages = repairToolPairing(parseTranscript(content));
+    const messages = parseTranscript(content);
     log(`Parsed ${messages.length} messages from transcript (${content.length} bytes)`);
     if (messages.length === 0) return;
 
@@ -482,9 +481,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
         conversation_id: conversationId,
         depth: 0,
         content: leafResult.content,
-        source_message_ids: JSON.stringify(leafResult.sourceMessageIds),
-        parent_summary_ids: null,
-        child_summary_ids: null,
+        sourceMessageIds: leafResult.sourceMessageIds,
         min_sequence: leafResult.minSequence,
         max_sequence: leafResult.maxSequence,
         created_at: new Date().toISOString(),
@@ -503,7 +500,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
     while (true) {
       const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
       const condensedSummaries = getSummariesForConversation(conversationId).filter(s => s.depth > 0);
-      const coveredLeafIds = getCoveredLeafIds(conversationId);
+      const coveredLeafIds = getCoveredSummaryIds(conversationId);
       const uncoveredLeaves = leafSummaries.filter(s => !coveredLeafIds.has(s.id));
 
       if (uncoveredLeaves.length < LCM_CONDENSE_THRESHOLD) break;
@@ -523,9 +520,7 @@ async function persistToLcm(conversationId: string, sessionId: string | undefine
         conversation_id: conversationId,
         depth: condensedResult.depth,
         content: condensedResult.content,
-        source_message_ids: null,
-        parent_summary_ids: null,
-        child_summary_ids: JSON.stringify(condensedResult.childSummaryIds),
+        childSummaryIds: condensedResult.childSummaryIds,
         min_sequence: condensedResult.minSequence,
         max_sequence: condensedResult.maxSequence,
         created_at: new Date().toISOString(),

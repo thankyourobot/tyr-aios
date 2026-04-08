@@ -25,16 +25,37 @@ export interface PruneResult {
   fileBytesFreed: number;
 }
 
+export interface PruneOptions {
+  dryRun?: boolean;
+  /** Refuse to delete if fewer than this many conversations would remain. Default: 1 */
+  minRetainedConversations?: number;
+  /** Refuse to delete if more than this fraction of conversations would be removed. Default: 0.5 */
+  maxDeleteFraction?: number;
+  /** Bypass safety floors. Use only for explicit operator overrides. */
+  force?: boolean;
+}
+
 /**
  * Delete all LCM data for conversations with no messages newer than the cutoff.
- * Pass dryRun=true to preview without deleting.
+ * Safety floors prevent wiping the entire database by mistake.
  */
 export function pruneConversations(
   beforeDate: Date,
-  dryRun = true,
-): PruneResult & { dryRun: boolean } {
+  opts: PruneOptions = {},
+): PruneResult & { dryRun: boolean; aborted?: string } {
+  const dryRun = opts.dryRun ?? true;
+  const minRetained = opts.minRetainedConversations ?? 1;
+  const maxFraction = opts.maxDeleteFraction ?? 0.5;
+  const force = opts.force ?? false;
+
   const database = getLcmDb();
   const cutoff = beforeDate.toISOString();
+
+  // Count total conversations for safety floor calculations
+  const totalRow = database.prepare(
+    'SELECT COUNT(DISTINCT conversation_id) as c FROM lcm_messages',
+  ).get() as { c: number };
+  const totalConversations = totalRow.c;
 
   // Find conversations where ALL messages are older than the cutoff
   const staleConversations = database.prepare(`
@@ -46,6 +67,26 @@ export function pruneConversations(
 
   if (staleConversations.length === 0) {
     return { conversationsDeleted: 0, messagesDeleted: 0, summariesDeleted: 0, contextItemsDeleted: 0, partsDeleted: 0, filesDeleted: 0, fileBytesFreed: 0, dryRun };
+  }
+
+  // Safety floor checks (skip when force=true)
+  if (!force) {
+    const remaining = totalConversations - staleConversations.length;
+    if (remaining < minRetained) {
+      return {
+        conversationsDeleted: 0, messagesDeleted: 0, summariesDeleted: 0, contextItemsDeleted: 0, partsDeleted: 0, filesDeleted: 0, fileBytesFreed: 0,
+        dryRun,
+        aborted: `Would leave ${remaining} conversations, below minRetained=${minRetained}. Pass force=true to override.`,
+      };
+    }
+    if (totalConversations > 0 && staleConversations.length / totalConversations > maxFraction) {
+      const pct = Math.round((staleConversations.length / totalConversations) * 100);
+      return {
+        conversationsDeleted: 0, messagesDeleted: 0, summariesDeleted: 0, contextItemsDeleted: 0, partsDeleted: 0, filesDeleted: 0, fileBytesFreed: 0,
+        dryRun,
+        aborted: `Would delete ${pct}% of conversations, exceeds maxDeleteFraction=${maxFraction}. Pass force=true to override.`,
+      };
+    }
   }
 
   const convIds = staleConversations.map(c => c.conversation_id);
@@ -175,21 +216,17 @@ export function checkIntegrity(conversationId: string): IntegrityFinding[] {
   }
 
   // 3. Leaf summaries have message lineage (via junction table)
+  // No fallback: getMessagesForSummary only reads from lcm_summary_messages,
+  // so a leaf with no junction entries is effectively unreachable for expansion.
   const leafSummaries = getSummariesForConversation(conversationId, { depth: 0 });
   for (const leaf of leafSummaries) {
     const messages = getMessagesForSummary(leaf.id);
-    if (messages.length === 0 && leaf.min_sequence !== null) {
-      // Check if we at least have a sequence range to fall back on
-      const rangeCount = database.prepare(
-        'SELECT COUNT(*) as c FROM lcm_messages WHERE conversation_id = ? AND sequence >= ? AND sequence <= ?',
-      ).get(conversationId, leaf.min_sequence, leaf.max_sequence) as { c: number };
-      if (rangeCount.c === 0) {
-        findings.push({
-          check: 'summaries_have_lineage',
-          severity: 'warning',
-          message: `Leaf summary ${leaf.id} has no linked messages and no messages in sequence range ${leaf.min_sequence}-${leaf.max_sequence}`,
-        });
-      }
+    if (messages.length === 0) {
+      findings.push({
+        check: 'summaries_have_lineage',
+        severity: 'error',
+        message: `Leaf summary ${leaf.id} has no linked source messages — unreachable for expansion`,
+      });
     }
   }
 
@@ -200,23 +237,25 @@ export function checkIntegrity(conversationId: string): IntegrityFinding[] {
     if (children.length === 0) {
       findings.push({
         check: 'summaries_have_lineage',
-        severity: 'warning',
-        message: `Condensed summary ${cs.id} (depth ${cs.depth}) has no child summaries linked`,
+        severity: 'error',
+        message: `Condensed summary ${cs.id} (depth ${cs.depth}) has no child summaries linked — unreachable for expansion`,
       });
     }
   }
 
-  // 5. No orphan summaries (summaries not in context window and not children of another summary)
+  // 5. No orphan summaries (not in context window and not a parent of another summary)
+  // Single query to get the set of summaries that are referenced as parents.
   const contextSummaryIds = new Set(contextItems.filter(i => i.summary_id).map(i => i.summary_id!));
-  const childSummaryIds = new Set<string>();
+  const parentRefRows = database.prepare(`
+    SELECT DISTINCT sp.parent_summary_id as id
+    FROM lcm_summary_parents sp
+    JOIN lcm_summaries s ON s.id = sp.summary_id
+    WHERE s.conversation_id = ?
+  `).all(conversationId) as Array<{ id: string }>;
+  const referencedAsChild = new Set(parentRefRows.map(r => r.id));
+
   for (const s of [...leafSummaries, ...condensedSummaries]) {
-    const children = getChildSummaries(s.id);
-    for (const c of children) {
-      childSummaryIds.add(c.id);
-    }
-  }
-  for (const s of [...leafSummaries, ...condensedSummaries]) {
-    if (!contextSummaryIds.has(s.id) && !childSummaryIds.has(s.id)) {
+    if (!contextSummaryIds.has(s.id) && !referencedAsChild.has(s.id)) {
       findings.push({
         check: 'no_orphan_summaries',
         severity: 'warning',

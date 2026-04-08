@@ -20,7 +20,6 @@ import {
   getSummaryById,
   getMessagesForSummary,
   getChildSummaries,
-  getMessagesBySequenceRange,
   getSubtreeManifest,
   getLargeFile,
 } from './lcm-store.js';

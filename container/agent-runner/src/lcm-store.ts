@@ -27,13 +27,9 @@ export interface LcmSummary {
   depth: number;
   content: string;
   token_estimate: number;
-  source_message_ids: string | null;
-  parent_summary_ids: string | null;
-  child_summary_ids: string | null;
   min_sequence: number | null;
   max_sequence: number | null;
   created_at: string;
-  // Phase 2 additions
   kind: string | null;
   earliest_at: string | null;
   latest_at: string | null;
@@ -105,14 +101,80 @@ CREATE TABLE IF NOT EXISTS lcm_summaries (
   depth INTEGER NOT NULL,
   content TEXT NOT NULL,
   token_estimate INTEGER,
-  source_message_ids TEXT,
-  parent_summary_ids TEXT,
-  child_summary_ids TEXT,
   min_sequence INTEGER,
   max_sequence INTEGER,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  kind TEXT,
+  earliest_at TEXT,
+  latest_at TEXT,
+  descendant_count INTEGER DEFAULT 0,
+  descendant_token_count INTEGER DEFAULT 0,
+  source_message_token_count INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_lcm_summaries_conversation ON lcm_summaries(conversation_id, depth);
+
+CREATE TABLE IF NOT EXISTS lcm_summary_messages (
+  summary_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  PRIMARY KEY (summary_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_lcm_summary_messages_msg ON lcm_summary_messages(message_id);
+
+CREATE TABLE IF NOT EXISTS lcm_summary_parents (
+  summary_id TEXT NOT NULL,
+  parent_summary_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  PRIMARY KEY (summary_id, parent_summary_id)
+);
+CREATE INDEX IF NOT EXISTS idx_lcm_summary_parents_parent ON lcm_summary_parents(parent_summary_id);
+
+CREATE TABLE IF NOT EXISTS lcm_context_items (
+  conversation_id TEXT NOT NULL,
+  ordinal INTEGER NOT NULL,
+  item_type TEXT NOT NULL CHECK (item_type IN ('message', 'summary')),
+  message_id TEXT,
+  summary_id TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (conversation_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_lcm_context_items_conv ON lcm_context_items(conversation_id, ordinal);
+
+CREATE TABLE IF NOT EXISTS lcm_message_parts (
+  part_id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  part_type TEXT NOT NULL CHECK (part_type IN ('text', 'reasoning', 'tool', 'file', 'compaction')),
+  ordinal INTEGER NOT NULL,
+  text_content TEXT,
+  tool_call_id TEXT,
+  tool_name TEXT,
+  tool_input TEXT,
+  tool_output TEXT,
+  metadata TEXT,
+  UNIQUE (message_id, ordinal)
+);
+CREATE INDEX IF NOT EXISTS idx_lcm_message_parts_msg ON lcm_message_parts(message_id);
+
+CREATE TABLE IF NOT EXISTS lcm_bootstrap_state (
+  conversation_id TEXT PRIMARY KEY,
+  session_file_path TEXT NOT NULL,
+  last_seen_size INTEGER NOT NULL,
+  last_seen_mtime_ms INTEGER NOT NULL,
+  last_processed_offset INTEGER NOT NULL,
+  last_processed_entry_hash TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS lcm_large_files (
+  file_id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  file_name TEXT,
+  mime_type TEXT,
+  byte_size INTEGER,
+  storage_uri TEXT NOT NULL,
+  exploration_summary TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 const FTS_SQL = `
@@ -148,155 +210,6 @@ CREATE TRIGGER IF NOT EXISTS lcm_summaries_au AFTER UPDATE ON lcm_summaries BEGI
 END;
 `;
 
-// --- Migration framework ---
-
-const MIGRATIONS: Array<(db: Database.Database) => void> = [
-  // v0 → v1: Richer summary metadata
-  (db) => {
-    const addCol = (col: string, type: string) => {
-      try { db.exec(`ALTER TABLE lcm_summaries ADD COLUMN ${col} ${type}`); } catch { /* already exists */ }
-    };
-    addCol('kind', 'TEXT');
-    addCol('earliest_at', 'TEXT');
-    addCol('latest_at', 'TEXT');
-    addCol('descendant_count', 'INTEGER DEFAULT 0');
-    addCol('descendant_token_count', 'INTEGER DEFAULT 0');
-    addCol('source_message_token_count', 'INTEGER DEFAULT 0');
-  },
-
-  // v1 → v2: Context items table
-  (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS lcm_context_items (
-        conversation_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,
-        item_type TEXT NOT NULL CHECK (item_type IN ('message', 'summary')),
-        message_id TEXT,
-        summary_id TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        PRIMARY KEY (conversation_id, ordinal)
-      );
-      CREATE INDEX IF NOT EXISTS idx_lcm_context_items_conv ON lcm_context_items(conversation_id, ordinal);
-    `);
-  },
-
-  // v2 → v3: Message parts table
-  (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS lcm_message_parts (
-        part_id TEXT PRIMARY KEY,
-        message_id TEXT NOT NULL,
-        part_type TEXT NOT NULL CHECK (part_type IN ('text', 'reasoning', 'tool', 'file', 'compaction')),
-        ordinal INTEGER NOT NULL,
-        text_content TEXT,
-        tool_call_id TEXT,
-        tool_name TEXT,
-        tool_input TEXT,
-        tool_output TEXT,
-        metadata TEXT,
-        UNIQUE (message_id, ordinal)
-      );
-      CREATE INDEX IF NOT EXISTS idx_lcm_message_parts_msg ON lcm_message_parts(message_id);
-    `);
-  },
-
-  // v3 → v4: Bootstrap state table
-  (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS lcm_bootstrap_state (
-        conversation_id TEXT PRIMARY KEY,
-        session_file_path TEXT NOT NULL,
-        last_seen_size INTEGER NOT NULL,
-        last_seen_mtime_ms INTEGER NOT NULL,
-        last_processed_offset INTEGER NOT NULL,
-        last_processed_entry_hash TEXT,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-  },
-
-  // v4 → v5: Large files table
-  (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS lcm_large_files (
-        file_id TEXT PRIMARY KEY,
-        conversation_id TEXT NOT NULL,
-        file_name TEXT,
-        mime_type TEXT,
-        byte_size INTEGER,
-        storage_uri TEXT NOT NULL,
-        exploration_summary TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-  },
-
-  // v5 → v6: Junction tables for summary lineage (replaces JSON arrays)
-  (db) => {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS lcm_summary_messages (
-        summary_id TEXT NOT NULL,
-        message_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,
-        PRIMARY KEY (summary_id, message_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_lcm_summary_messages_msg ON lcm_summary_messages(message_id);
-
-      CREATE TABLE IF NOT EXISTS lcm_summary_parents (
-        summary_id TEXT NOT NULL,
-        parent_summary_id TEXT NOT NULL,
-        ordinal INTEGER NOT NULL,
-        PRIMARY KEY (summary_id, parent_summary_id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_lcm_summary_parents_parent ON lcm_summary_parents(parent_summary_id);
-    `);
-
-    // Backfill from existing JSON arrays
-    const summaries = db.prepare('SELECT id, source_message_ids, child_summary_ids FROM lcm_summaries').all() as Array<{
-      id: string; source_message_ids: string | null; child_summary_ids: string | null;
-    }>;
-    const insertMsg = db.prepare('INSERT OR IGNORE INTO lcm_summary_messages (summary_id, message_id, ordinal) VALUES (?, ?, ?)');
-    const insertParent = db.prepare('INSERT OR IGNORE INTO lcm_summary_parents (summary_id, parent_summary_id, ordinal) VALUES (?, ?, ?)');
-
-    const backfill = db.transaction(() => {
-      for (const s of summaries) {
-        if (s.source_message_ids) {
-          try {
-            const ids: string[] = JSON.parse(s.source_message_ids);
-            for (let i = 0; i < ids.length; i++) {
-              insertMsg.run(s.id, ids[i], i);
-            }
-          } catch { /* malformed JSON, skip */ }
-        }
-        if (s.child_summary_ids) {
-          try {
-            const ids: string[] = JSON.parse(s.child_summary_ids);
-            for (let i = 0; i < ids.length; i++) {
-              insertParent.run(s.id, ids[i], i);
-            }
-          } catch { /* malformed JSON, skip */ }
-        }
-      }
-    });
-    backfill();
-  },
-];
-
-function runMigrations(database: Database.Database): void {
-  database.exec(`CREATE TABLE IF NOT EXISTS lcm_schema_version (version INTEGER NOT NULL)`);
-  const row = database.prepare('SELECT version FROM lcm_schema_version LIMIT 1').get() as { version: number } | undefined;
-  let currentVersion = row?.version ?? 0;
-
-  if (!row) {
-    database.prepare('INSERT INTO lcm_schema_version (version) VALUES (?)').run(0);
-  }
-
-  for (let i = currentVersion; i < MIGRATIONS.length; i++) {
-    MIGRATIONS[i](database);
-    database.prepare('UPDATE lcm_schema_version SET version = ?').run(i + 1);
-  }
-}
-
 // --- Database ---
 
 let db: Database.Database | null = null;
@@ -312,16 +225,6 @@ export function initLcmDatabase(dbPath: string): Database.Database | null {
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
   db.exec(TRIGGERS_SQL);
-
-  // Legacy migration: rename session_id to conversation_id if needed
-  try {
-    db.exec(`ALTER TABLE lcm_messages RENAME COLUMN session_id TO conversation_id`);
-    db.exec(`ALTER TABLE lcm_summaries RENAME COLUMN session_id TO conversation_id`);
-  } catch {
-    /* columns already renamed or don't exist */
-  }
-
-  runMigrations(db);
   dbInitialized = true;
   return db;
 }
@@ -332,7 +235,6 @@ export function _initTestLcmDatabase(): void {
   db.exec(SCHEMA_SQL);
   db.exec(FTS_SQL);
   db.exec(TRIGGERS_SQL);
-  runMigrations(db);
   dbInitialized = true;
 }
 
@@ -388,9 +290,8 @@ export interface StoreSummaryInput {
   conversation_id: string;
   depth: number;
   content: string;
-  source_message_ids: string | null;
-  parent_summary_ids: string | null;
-  child_summary_ids: string | null;
+  sourceMessageIds?: string[];
+  childSummaryIds?: string[];
   min_sequence: number | null;
   max_sequence: number | null;
   created_at: string;
@@ -411,20 +312,16 @@ export function storeSummary(summary: StoreSummaryInput): void {
     database.prepare(`
       INSERT OR IGNORE INTO lcm_summaries (
         id, conversation_id, depth, content, token_estimate,
-        source_message_ids, parent_summary_ids, child_summary_ids,
         min_sequence, max_sequence, created_at,
         kind, earliest_at, latest_at,
         descendant_count, descendant_token_count, source_message_token_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       summary.id,
       summary.conversation_id,
       summary.depth,
       summary.content,
       tokenEstimate,
-      summary.source_message_ids,
-      summary.parent_summary_ids,
-      summary.child_summary_ids,
       summary.min_sequence,
       summary.max_sequence,
       summary.created_at,
@@ -436,24 +333,18 @@ export function storeSummary(summary: StoreSummaryInput): void {
       summary.source_message_token_count ?? 0,
     );
 
-    // Write to junction tables (source of truth for lineage queries)
-    if (summary.source_message_ids) {
-      try {
-        const ids: string[] = JSON.parse(summary.source_message_ids);
-        const stmt = database.prepare('INSERT OR IGNORE INTO lcm_summary_messages (summary_id, message_id, ordinal) VALUES (?, ?, ?)');
-        for (let i = 0; i < ids.length; i++) {
-          stmt.run(summary.id, ids[i], i);
-        }
-      } catch { /* malformed JSON */ }
+    // Write to junction tables
+    if (summary.sourceMessageIds && summary.sourceMessageIds.length > 0) {
+      const stmt = database.prepare('INSERT OR IGNORE INTO lcm_summary_messages (summary_id, message_id, ordinal) VALUES (?, ?, ?)');
+      for (let i = 0; i < summary.sourceMessageIds.length; i++) {
+        stmt.run(summary.id, summary.sourceMessageIds[i], i);
+      }
     }
-    if (summary.child_summary_ids) {
-      try {
-        const ids: string[] = JSON.parse(summary.child_summary_ids);
-        const stmt = database.prepare('INSERT OR IGNORE INTO lcm_summary_parents (summary_id, parent_summary_id, ordinal) VALUES (?, ?, ?)');
-        for (let i = 0; i < ids.length; i++) {
-          stmt.run(summary.id, ids[i], i);
-        }
-      } catch { /* malformed JSON */ }
+    if (summary.childSummaryIds && summary.childSummaryIds.length > 0) {
+      const stmt = database.prepare('INSERT OR IGNORE INTO lcm_summary_parents (summary_id, parent_summary_id, ordinal) VALUES (?, ?, ?)');
+      for (let i = 0; i < summary.childSummaryIds.length; i++) {
+        stmt.run(summary.id, summary.childSummaryIds[i], i);
+      }
     }
   })();
 }
@@ -569,9 +460,10 @@ export function getSummariesForMessage(messageId: string): LcmSummary[] {
 }
 
 /**
- * Get IDs of all leaf summaries that are covered by condensed summaries.
+ * Get IDs of all summaries (of any depth) that are covered by a parent summary.
+ * Used to exclude covered summaries from direct context injection.
  */
-export function getCoveredLeafIds(conversationId: string): Set<string> {
+export function getCoveredSummaryIds(conversationId: string): Set<string> {
   const database = getLcmDb();
   const rows = database.prepare(`
     SELECT DISTINCT sp.parent_summary_id as id
