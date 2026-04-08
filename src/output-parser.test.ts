@@ -2,7 +2,6 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   createParseState,
   parseStreamingChunk,
-  parseLegacyOutput,
   OUTPUT_START_MARKER,
   OUTPUT_END_MARKER,
 } from './output-parser.js';
@@ -112,36 +111,6 @@ describe('output-parser', () => {
 
       parseStreamingChunk(state, wrapOutput(out2));
       expect(state.newSessionId).toBe('abc123');
-    });
-  });
-
-  describe('parseLegacyOutput', () => {
-    it('parses output between markers', () => {
-      const output = { status: 'success', result: 'legacy result' };
-      const stdout = `Some log output\n${wrapOutput(output)}\nMore logs`;
-
-      const parsed = parseLegacyOutput(stdout);
-
-      expect(parsed.status).toBe('success');
-      expect(parsed.result).toBe('legacy result');
-    });
-
-    it('falls back to last line when no markers present', () => {
-      const output = { status: 'success', result: 'fallback' };
-      const stdout = `Log line 1\nLog line 2\n${JSON.stringify(output)}`;
-
-      const parsed = parseLegacyOutput(stdout);
-
-      expect(parsed.status).toBe('success');
-      expect(parsed.result).toBe('fallback');
-    });
-
-    it('throws on empty stdout', () => {
-      expect(() => parseLegacyOutput('')).toThrow();
-    });
-
-    it('throws on non-JSON content', () => {
-      expect(() => parseLegacyOutput('just some text')).toThrow();
     });
   });
 });

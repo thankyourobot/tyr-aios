@@ -27,14 +27,11 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
-import {
-  createParseState,
-  parseStreamingChunk,
-  parseLegacyOutput,
-} from './output-parser.js';
+import { createParseState, parseStreamingChunk } from './output-parser.js';
 import { ContainerInput, ContainerOutput, RegisteredGroup } from './types.js';
 
-// Re-export for backwards compatibility
+// Re-export ContainerInput/ContainerOutput so callers can pull them from this module
+// without also importing from ./types.js. Used by 24 callers across the codebase.
 export type { ContainerInput, ContainerOutput } from './types.js';
 
 interface VolumeMount {
@@ -277,7 +274,7 @@ export async function runContainerAgent(
   group: RegisteredGroup,
   input: ContainerInput,
   onProcess: (proc: ChildProcess, containerName: string) => void,
-  onOutput?: (output: ContainerOutput) => Promise<void>,
+  onOutput: (output: ContainerOutput) => Promise<void>,
 ): Promise<ContainerOutput> {
   const startTime = Date.now();
 
@@ -376,16 +373,14 @@ export async function runContainerAgent(
       }
 
       // Stream-parse for output markers
-      if (onOutput) {
-        const results = parseStreamingChunk(parseState, chunk, group.name);
-        for (const parsed of results) {
-          hadStreamingOutput = true;
-          // Activity detected — reset the hard timeout
-          resetTimeout();
-          // Call onOutput for all markers (including null results)
-          // so idle timers start even for "silent" query completions.
-          outputChain = outputChain.then(() => onOutput(parsed));
-        }
+      const results = parseStreamingChunk(parseState, chunk, group.name);
+      for (const parsed of results) {
+        hadStreamingOutput = true;
+        // Activity detected — reset the hard timeout
+        resetTimeout();
+        // Call onOutput for all markers (including null results)
+        // so idle timers start even for "silent" query completions.
+        outputChain = outputChain.then(() => onOutput(parsed));
       }
     });
 
@@ -578,59 +573,23 @@ export async function runContainerAgent(
         return;
       }
 
-      // Streaming mode: wait for output chain to settle, return completion marker
-      if (onOutput) {
-        outputChain.then(() => {
-          logger.info(
-            {
-              group: group.name,
-              duration,
-              newSessionId: parseState.newSessionId,
-            },
-            'Container completed (streaming mode)',
-          );
-          resolve({
-            status: 'success',
-            result: null,
-            newSessionId: parseState.newSessionId,
-            sessionReset: parseState.sessionReset,
-          });
-        });
-        return;
-      }
-
-      // Legacy mode: parse the last output marker pair from accumulated stdout
-      try {
-        const output = parseLegacyOutput(stdout);
-
+      // Wait for output chain to settle, then return completion marker
+      outputChain.then(() => {
         logger.info(
           {
             group: group.name,
             duration,
-            status: output.status,
-            hasResult: !!output.result,
+            newSessionId: parseState.newSessionId,
           },
-          'Container completed',
+          'Container completed (streaming mode)',
         );
-
-        resolve(output);
-      } catch (err) {
-        logger.error(
-          {
-            group: group.name,
-            stdout,
-            stderr,
-            error: err,
-          },
-          'Failed to parse container output',
-        );
-
         resolve({
-          status: 'error',
+          status: 'success',
           result: null,
-          error: `Failed to parse container output: ${err instanceof Error ? err.message : String(err)}`,
+          newSessionId: parseState.newSessionId,
+          sessionReset: parseState.sessionReset,
         });
-      }
+      });
     });
 
     container.on('error', (err) => {

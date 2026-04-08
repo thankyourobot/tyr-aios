@@ -75,26 +75,3 @@ export function parseStreamingChunk(
 
   return results;
 }
-
-/**
- * Parse the final stdout for legacy (non-streaming) output.
- * Looks for the last OUTPUT_START/END marker pair, falls back to last line.
- */
-export function parseLegacyOutput(stdout: string): ContainerOutput {
-  // Extract JSON between sentinel markers for robust parsing
-  const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
-  const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-
-  let jsonLine: string;
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    jsonLine = stdout
-      .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
-      .trim();
-  } else {
-    // Fallback: last non-empty line (backwards compatibility)
-    const lines = stdout.trim().split('\n');
-    jsonLine = lines[lines.length - 1];
-  }
-
-  return JSON.parse(jsonLine);
-}

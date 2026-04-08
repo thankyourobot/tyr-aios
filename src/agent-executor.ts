@@ -86,7 +86,7 @@ export class AgentExecutor {
     group: RegisteredGroup,
     prompt: string,
     chatJid: ChannelJid,
-    onOutput?: (output: ContainerOutput) => Promise<void>,
+    onOutput: (output: ContainerOutput) => Promise<void> = async () => {},
     toggleState?: { verbose: boolean; thinking: boolean; planMode: boolean },
     threadTs?: string,
     rewindOpts?: { sourceSessionId: string; resumeSessionAt: string },
@@ -102,12 +102,15 @@ export class AgentExecutor {
     const threadSessionId = isCompacted ? undefined : rawThreadSessionId;
     const isNewThread = !!threadTs && !threadSessionId && !isCompacted;
     const rawParentSessionId = this.state.sessions[group.folder];
-    const parentSessionId = rawParentSessionId === '__compacted__' ? undefined : rawParentSessionId;
+    const parentSessionId =
+      rawParentSessionId === '__compacted__' ? undefined : rawParentSessionId;
     // For rewind: use the source session with fork, not the current thread session
     // For compacted: no session, no fork — truly fresh with LCM context
     const sessionId = rewindOpts
       ? rewindOpts.sourceSessionId
-      : isCompacted ? undefined : (threadSessionId || parentSessionId);
+      : isCompacted
+        ? undefined
+        : threadSessionId || parentSessionId;
     const shouldFork = rewindOpts ? true : isNewThread;
 
     // Update tasks snapshot for container to read (filtered by group)
@@ -181,35 +184,36 @@ export class AgentExecutor {
     );
 
     // Wrap onOutput to track session ID from streamed results
-    const wrappedOnOutput = onOutput
-      ? async (output: ContainerOutput) => {
-          if (output.sessionReset) {
-            // LCM compaction: mark session as compacted so next container starts fresh
-            if (threadTs) {
-              setThreadSession(group.folder, threadTs, '__compacted__');
-            } else {
-              this.state.sessions[group.folder] = '__compacted__';
-              setSession(group.folder, '__compacted__');
-            }
-            logger.info({ group: group.folder, threadTs }, 'Session reset (LCM compaction)');
-          } else if (output.newSessionId) {
-            if (threadTs && (isNewThread || rewindOpts)) {
-              // New thread fork or rewind — store thread session
-              setThreadSession(
-                group.folder,
-                threadTs,
-                output.newSessionId,
-                rewindOpts?.sourceSessionId || parentSessionId,
-              );
-            } else if (!threadTs) {
-              // Channel root — update as before
-              this.state.sessions[group.folder] = output.newSessionId;
-              setSession(group.folder, output.newSessionId);
-            }
-          }
-          await onOutput(output);
+    const wrappedOnOutput = async (output: ContainerOutput) => {
+      if (output.sessionReset) {
+        // LCM compaction: mark session as compacted so next container starts fresh
+        if (threadTs) {
+          setThreadSession(group.folder, threadTs, '__compacted__');
+        } else {
+          this.state.sessions[group.folder] = '__compacted__';
+          setSession(group.folder, '__compacted__');
         }
-      : undefined;
+        logger.info(
+          { group: group.folder, threadTs },
+          'Session reset (LCM compaction)',
+        );
+      } else if (output.newSessionId) {
+        if (threadTs && (isNewThread || rewindOpts)) {
+          // New thread fork or rewind — store thread session
+          setThreadSession(
+            group.folder,
+            threadTs,
+            output.newSessionId,
+            rewindOpts?.sourceSessionId || parentSessionId,
+          );
+        } else if (!threadTs) {
+          // Channel root — update as before
+          this.state.sessions[group.folder] = output.newSessionId;
+          setSession(group.folder, output.newSessionId);
+        }
+      }
+      await onOutput(output);
+    };
 
     // Use toggle state passed from caller (with thread context), fall back to group default
     const effectiveToggle = toggleState || this.state.getToggleState(chatJid);
