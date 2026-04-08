@@ -2,16 +2,16 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
-import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
-import { channelJid } from './jid.js';
-
-// Direct imports for migrateJsonState (re-exports don't create local bindings)
-import { setRouterState, setSession } from './stores/session-store.js';
-import { setRegisteredGroup } from './stores/group-store.js';
+import { STORE_DIR } from './config.js';
 
 let db: Database.Database;
+
+/**
+ * Schema baseline marker. Bumped when the canonical CREATE TABLE statements
+ * change in a way that diverges from on-disk DBs that pre-date the change.
+ * Read with `PRAGMA user_version`. Verified at startup by assertSchemaIsCanonical.
+ */
+const SCHEMA_USER_VERSION = 1;
 
 /** Access the shared database instance. Used by store modules. */
 export function getDb(): Database.Database {
@@ -37,6 +37,7 @@ function createSchema(database: Database.Database): void {
       is_from_me INTEGER,
       is_bot_message INTEGER DEFAULT 0,
       thread_ts TEXT,
+      files TEXT,
       PRIMARY KEY (id, chat_jid),
       FOREIGN KEY (chat_jid) REFERENCES chats(jid)
     );
@@ -53,7 +54,8 @@ function createSchema(database: Database.Database): void {
       last_run TEXT,
       last_result TEXT,
       status TEXT DEFAULT 'active',
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      context_mode TEXT DEFAULT 'isolated'
     );
     CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
     CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
@@ -97,7 +99,7 @@ function createSchema(database: Database.Database): void {
       PRIMARY KEY (group_folder, thread_ts, slack_ts)
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
-      jid TEXT PRIMARY KEY,
+      jid TEXT NOT NULL,
       name TEXT NOT NULL,
       folder TEXT NOT NULL,
       trigger_pattern TEXT NOT NULL,
@@ -106,106 +108,20 @@ function createSchema(database: Database.Database): void {
       requires_trigger INTEGER DEFAULT 1,
       display_name TEXT,
       display_emoji TEXT,
-      assistant_name TEXT
+      display_icon_url TEXT,
+      assistant_name TEXT,
+      is_main INTEGER DEFAULT 0,
+      verbose_default INTEGER DEFAULT 0,
+      thinking_default INTEGER DEFAULT 0,
+      channel_role TEXT DEFAULT 'director',
+      bot_user_id TEXT,
+      bot_token TEXT,
+      PRIMARY KEY (jid, folder)
     );
     CREATE INDEX IF NOT EXISTS idx_registered_groups_folder ON registered_groups(folder);
-  `);
 
-  // Helper: run an idempotent migration, surfacing unexpected errors
-  const migrate = (label: string, fn: () => void) => {
-    try {
-      fn();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (
-        !msg.includes('duplicate column') &&
-        !msg.includes('already exists')
-      ) {
-        logger.warn({ error: msg }, `Migration error: ${label}`);
-        throw err;
-      }
-    }
-  };
-
-  migrate('scheduled_tasks.context_mode', () => {
-    database.exec(
-      `ALTER TABLE scheduled_tasks ADD COLUMN context_mode TEXT DEFAULT 'isolated'`,
-    );
-  });
-
-  migrate('messages.is_bot_message', () => {
-    database.exec(
-      `ALTER TABLE messages ADD COLUMN is_bot_message INTEGER DEFAULT 0`,
-    );
-    database
-      .prepare(`UPDATE messages SET is_bot_message = 1 WHERE content LIKE ?`)
-      .run(`${ASSISTANT_NAME}:%`);
-  });
-
-  migrate('messages.thread_ts', () => {
-    database.exec(`ALTER TABLE messages ADD COLUMN thread_ts TEXT`);
-  });
-
-  migrate('messages.files', () => {
-    database.exec(`ALTER TABLE messages ADD COLUMN files TEXT`);
-  });
-
-  migrate('registered_groups.is_main', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN is_main INTEGER DEFAULT 0`,
-    );
-    database.exec(
-      `UPDATE registered_groups SET is_main = 1 WHERE folder = 'main'`,
-    );
-  });
-
-  migrate('registered_groups.display_name', () => {
-    database.exec(`ALTER TABLE registered_groups ADD COLUMN display_name TEXT`);
-  });
-  migrate('registered_groups.display_emoji', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN display_emoji TEXT`,
-    );
-  });
-  migrate('registered_groups.assistant_name', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN assistant_name TEXT`,
-    );
-  });
-
-  migrate('registered_groups.verbose_default', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN verbose_default INTEGER DEFAULT 0`,
-    );
-  });
-  migrate('registered_groups.thinking_default', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN thinking_default INTEGER DEFAULT 0`,
-    );
-  });
-  migrate('registered_groups.display_icon_url', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN display_icon_url TEXT`,
-    );
-  });
-
-  migrate('registered_groups.channel_role', () => {
-    database.exec(
-      `ALTER TABLE registered_groups ADD COLUMN channel_role TEXT DEFAULT 'director'`,
-    );
-  });
-  migrate('registered_groups.bot_user_id', () => {
-    database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_user_id TEXT`);
-  });
-  migrate('registered_groups.bot_token', () => {
-    database.exec(`ALTER TABLE registered_groups ADD COLUMN bot_token TEXT`);
-  });
-
-  // Migrate registered_groups to composite PK (jid, folder) if still using single PK.
-  migrateRegisteredGroupsPK(database);
-
-  // Create thread_members table for multi-agent thread participation tracking
-  database.exec(`
+    -- Multi-agent thread participation tracking. One row per (channel, thread, agent)
+    -- so we can route follow-up messages to every agent that has joined a thread.
     CREATE TABLE IF NOT EXISTS thread_members (
       channel_jid TEXT NOT NULL,
       thread_ts TEXT NOT NULL,
@@ -215,10 +131,9 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_thread_members_thread
       ON thread_members(channel_jid, thread_ts);
-  `);
 
-  // Create thread_bot_triggers table for bot-triggered processing rate limiting
-  database.exec(`
+    -- Rate-limit log for bot-triggered processing. Used to prevent A→B→A loops
+    -- between agents in the same thread.
     CREATE TABLE IF NOT EXISTS thread_bot_triggers (
       channel_jid TEXT NOT NULL,
       thread_ts TEXT NOT NULL,
@@ -228,70 +143,51 @@ function createSchema(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_bot_triggers
       ON thread_bot_triggers(channel_jid, thread_ts, group_folder);
   `);
-
-  migrate('chats.channel/is_group', () => {
-    database.exec(`ALTER TABLE chats ADD COLUMN channel TEXT`);
-    database.exec(`ALTER TABLE chats ADD COLUMN is_group INTEGER DEFAULT 0`);
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 1 WHERE jid LIKE '%@g.us'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'whatsapp', is_group = 0 WHERE jid LIKE '%@s.whatsapp.net'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'discord', is_group = 1 WHERE jid LIKE 'dc:%'`,
-    );
-    database.exec(
-      `UPDATE chats SET channel = 'telegram', is_group = 1 WHERE jid LIKE 'tg:%'`,
-    );
-  });
 }
 
 /**
- * Migrate registered_groups from single PK (jid) to composite PK (jid, folder).
- * This enables multiple groups per channel for multi-agent @mention routing.
+ * Verify the on-disk schema matches what this code expects. Throws on mismatch
+ * so we fail loud at startup rather than die with cryptic errors at query time.
+ *
+ * Checks:
+ *   1. registered_groups uses composite (jid, folder) PK — single-column PK
+ *      means an old DB never ran the historical migration this code no longer
+ *      includes.
+ *   2. PRAGMA user_version is at the expected baseline. On fresh DBs we set it;
+ *      on existing DBs that predate the marker (user_version = 0) we set it
+ *      after a structural check.
  */
-function migrateRegisteredGroupsPK(database: Database.Database): void {
+function assertSchemaIsCanonical(database: Database.Database): void {
   const tableInfo = database
     .prepare(`PRAGMA table_info(registered_groups)`)
-    .all() as Array<{
-    name: string;
-    pk: number;
-  }>;
-  const pkColumns = tableInfo.filter((c) => c.pk > 0);
-  if (pkColumns.length === 1 && pkColumns[0].name === 'jid') {
-    logger.info('Migrating registered_groups to composite PK (jid, folder)...');
-    database.exec(`
-      CREATE TABLE registered_groups_new (
-        jid TEXT NOT NULL,
-        folder TEXT NOT NULL,
-        name TEXT NOT NULL,
-        trigger_pattern TEXT NOT NULL,
-        added_at TEXT NOT NULL,
-        container_config TEXT,
-        requires_trigger INTEGER DEFAULT 1,
-        display_name TEXT,
-        display_emoji TEXT,
-        display_icon_url TEXT,
-        assistant_name TEXT,
-        is_main INTEGER DEFAULT 0,
-        verbose_default INTEGER DEFAULT 0,
-        thinking_default INTEGER DEFAULT 0,
-        channel_role TEXT DEFAULT 'director',
-        bot_user_id TEXT,
-        bot_token TEXT,
-        PRIMARY KEY (jid, folder)
-      );
-      INSERT INTO registered_groups_new
-        SELECT jid, folder, name, trigger_pattern, added_at, container_config,
-               requires_trigger, display_name, display_emoji, display_icon_url,
-               assistant_name, is_main, verbose_default, thinking_default,
-               COALESCE(channel_role, 'director'), bot_user_id, bot_token
-        FROM registered_groups;
-      DROP TABLE registered_groups;
-      ALTER TABLE registered_groups_new RENAME TO registered_groups;
-    `);
-    logger.info('registered_groups migration complete');
+    .all() as Array<{ name: string; pk: number }>;
+  const pkColumns = tableInfo
+    .filter((c) => c.pk > 0)
+    .map((c) => c.name)
+    .sort();
+  const expectedPk = ['folder', 'jid'];
+  if (
+    pkColumns.length !== expectedPk.length ||
+    pkColumns[0] !== expectedPk[0] ||
+    pkColumns[1] !== expectedPk[1]
+  ) {
+    throw new Error(
+      `registered_groups primary key mismatch: expected (jid, folder) composite, got (${pkColumns.join(
+        ', ',
+      )}). This DB predates the schema collapse — see git history for migrateRegisteredGroupsPK to upgrade it manually before starting.`,
+    );
+  }
+
+  const currentVersion = (
+    database.prepare(`PRAGMA user_version`).get() as { user_version: number }
+  ).user_version;
+  if (currentVersion !== 0 && currentVersion !== SCHEMA_USER_VERSION) {
+    throw new Error(
+      `Unexpected schema user_version ${currentVersion}, expected 0 or ${SCHEMA_USER_VERSION}. Refusing to start with an unknown DB version.`,
+    );
+  }
+  if (currentVersion !== SCHEMA_USER_VERSION) {
+    database.exec(`PRAGMA user_version = ${SCHEMA_USER_VERSION}`);
   }
 }
 
@@ -301,75 +197,17 @@ export function initDatabase(): void {
 
   db = new Database(dbPath);
   createSchema(db);
-
-  // Migrate from JSON files if they exist
-  migrateJsonState();
+  assertSchemaIsCanonical(db);
 }
 
 /** @internal - for tests only. Creates a fresh in-memory database. */
 export function _initTestDatabase(): void {
   db = new Database(':memory:');
   createSchema(db);
+  assertSchemaIsCanonical(db);
 }
 
-function migrateJsonState(): void {
-  const migrateFile = (filename: string) => {
-    const filePath = path.join(DATA_DIR, filename);
-    if (!fs.existsSync(filePath)) return null;
-    try {
-      const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-      fs.renameSync(filePath, `${filePath}.migrated`);
-      return data;
-    } catch {
-      return null;
-    }
-  };
-
-  const routerState = migrateFile('router_state.json') as {
-    last_timestamp?: string;
-    last_agent_timestamp?: Record<string, string>;
-  } | null;
-  if (routerState) {
-    if (routerState.last_timestamp) {
-      setRouterState('last_timestamp', routerState.last_timestamp);
-    }
-    if (routerState.last_agent_timestamp) {
-      setRouterState(
-        'last_agent_timestamp',
-        JSON.stringify(routerState.last_agent_timestamp),
-      );
-    }
-  }
-
-  const sessions = migrateFile('sessions.json') as Record<
-    string,
-    string
-  > | null;
-  if (sessions) {
-    for (const [folder, sessionId] of Object.entries(sessions)) {
-      setSession(folder, sessionId);
-    }
-  }
-
-  const groups = migrateFile('registered_groups.json') as Record<
-    string,
-    RegisteredGroup
-  > | null;
-  if (groups) {
-    for (const [jid, group] of Object.entries(groups)) {
-      try {
-        setRegisteredGroup(channelJid(jid), group);
-      } catch (err) {
-        logger.warn(
-          { jid, folder: group.folder, err },
-          'Skipping migrated registered group with invalid folder',
-        );
-      }
-    }
-  }
-}
-
-// Re-export all store functions for backward compatibility
+// Re-export store functions through the unified db namespace
 export * from './stores/chat-store.js';
 export * from './stores/task-store.js';
 export * from './stores/group-store.js';
