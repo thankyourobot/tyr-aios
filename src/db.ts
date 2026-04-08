@@ -105,8 +105,8 @@ function createSchema(database: Database.Database): void {
     -- maps to which column. Always use named column lists for this table.
     CREATE TABLE IF NOT EXISTS registered_groups (
       jid TEXT NOT NULL,
-      name TEXT NOT NULL,
       folder TEXT NOT NULL,
+      name TEXT NOT NULL,
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
       container_config TEXT,
