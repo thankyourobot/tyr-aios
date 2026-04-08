@@ -238,7 +238,10 @@ export function getThreadMessages(
   is_bot_message: number;
   timestamp: string;
 }> {
-  // Match both channel JID and synthetic thread JID for backward compatibility
+  // Thread messages are stored under two chat_jid formats: the channel JID and
+  // the synthetic thread JID (see jid.ts buildThreadJid). Both formats appear
+  // in production for thread-scoped messages — Slack thread messages and
+  // system-generated approval/answer messages use the synthetic form. Match either.
   const syntheticJid = buildThreadJid(chatJid, threadTs);
   return getDb()
     .prepare(
