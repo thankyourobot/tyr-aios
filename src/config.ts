@@ -15,6 +15,8 @@ const envConfig = readEnvFile([
   'CONTAINER_MAX_OUTPUT_SIZE',
   'IDLE_TIMEOUT',
   'MAX_CONCURRENT_CONTAINERS',
+  'ONECLI_API_KEY',
+  'ONECLI_URL',
 ]);
 
 /**
@@ -77,8 +79,13 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
 // When BOTH are set, NanoClaw routes container credentials through OneCLI
 // instead of starting credential-proxy.ts. Empty string = not configured = legacy path.
 // See _bmad-output/implementation-artifacts/tech-spec-aios-onecli-agent-vault.md §6.
-export const ONECLI_URL = process.env.ONECLI_URL || '';
-export const ONECLI_API_KEY = process.env.ONECLI_API_KEY || '';
+//
+// Read from envConfig (the readEnvFile result) NOT process.env. The systemd unit
+// does not EnvironmentFile our .env, and we deliberately keep ONECLI_API_KEY out
+// of process.env so it can't leak to child processes that inherit env (per the
+// security comment on readEnvFile in env.ts).
+export const ONECLI_URL = envConfig.ONECLI_URL || '';
+export const ONECLI_API_KEY = envConfig.ONECLI_API_KEY || '';
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(idleTimeout.value, 10); // 5min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
