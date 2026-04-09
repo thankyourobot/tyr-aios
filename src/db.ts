@@ -98,6 +98,16 @@ function createSchema(database: Database.Database): void {
       created_at TEXT NOT NULL,
       PRIMARY KEY (group_folder, thread_ts, slack_ts)
     );
+    -- Lazy rewind: stores fork target session ID + resume_at message ID
+    -- between *rewind command and the next user message. Cleared after use.
+    CREATE TABLE IF NOT EXISTS pending_forks (
+      group_folder TEXT NOT NULL,
+      thread_ts TEXT NOT NULL,
+      source_session_id TEXT NOT NULL,
+      resume_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (group_folder, thread_ts)
+    );
     -- Column order in this CREATE TABLE differs from on-disk DBs that grew via
     -- the historical ALTER TABLE chain (since deleted). For named INSERT/SELECT
     -- this is invisible — but DO NOT use positional INSERT INTO registered_groups

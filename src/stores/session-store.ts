@@ -76,9 +76,14 @@ export function setThreadSession(
     );
 }
 
-export function deleteThreadSession(groupFolder: string, threadTs: string): void {
+export function deleteThreadSession(
+  groupFolder: string,
+  threadTs: string,
+): void {
   getDb()
-    .prepare('DELETE FROM thread_sessions WHERE group_folder = ? AND thread_ts = ?')
+    .prepare(
+      'DELETE FROM thread_sessions WHERE group_folder = ? AND thread_ts = ?',
+    )
     .run(groupFolder, threadTs);
 }
 
@@ -133,18 +138,6 @@ export function setPendingFork(
 ): void {
   getDb()
     .prepare(
-      `CREATE TABLE IF NOT EXISTS pending_forks (
-        group_folder TEXT NOT NULL,
-        thread_ts TEXT NOT NULL,
-        source_session_id TEXT NOT NULL,
-        resume_at TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        PRIMARY KEY (group_folder, thread_ts)
-      )`,
-    )
-    .run();
-  getDb()
-    .prepare(
       'INSERT OR REPLACE INTO pending_forks (group_folder, thread_ts, source_session_id, resume_at, created_at) VALUES (?, ?, ?, ?, ?)',
     )
     .run(
@@ -160,31 +153,23 @@ export function getPendingFork(
   groupFolder: string,
   threadTs: string,
 ): { sourceSessionId: string; resumeAt: string } | null {
-  try {
-    const row = getDb()
-      .prepare(
-        'SELECT source_session_id, resume_at FROM pending_forks WHERE group_folder = ? AND thread_ts = ?',
-      )
-      .get(groupFolder, threadTs) as
-      | { source_session_id: string; resume_at: string }
-      | undefined;
-    if (!row) return null;
-    return { sourceSessionId: row.source_session_id, resumeAt: row.resume_at };
-  } catch {
-    return null; // Table doesn't exist yet
-  }
+  const row = getDb()
+    .prepare(
+      'SELECT source_session_id, resume_at FROM pending_forks WHERE group_folder = ? AND thread_ts = ?',
+    )
+    .get(groupFolder, threadTs) as
+    | { source_session_id: string; resume_at: string }
+    | undefined;
+  if (!row) return null;
+  return { sourceSessionId: row.source_session_id, resumeAt: row.resume_at };
 }
 
 export function deletePendingFork(groupFolder: string, threadTs: string): void {
-  try {
-    getDb()
-      .prepare(
-        'DELETE FROM pending_forks WHERE group_folder = ? AND thread_ts = ?',
-      )
-      .run(groupFolder, threadTs);
-  } catch {
-    // Table doesn't exist yet — nothing to delete
-  }
+  getDb()
+    .prepare(
+      'DELETE FROM pending_forks WHERE group_folder = ? AND thread_ts = ?',
+    )
+    .run(groupFolder, threadTs);
 }
 
 export function getThreadResponseUuids(
