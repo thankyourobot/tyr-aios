@@ -6,6 +6,8 @@ import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { OneCLI } from '@onecli-sh/sdk';
+
 import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
@@ -14,6 +16,8 @@ import {
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
+  ONECLI_API_KEY,
+  ONECLI_URL,
   TIMEZONE,
 } from './config.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
@@ -33,6 +37,13 @@ import { ContainerInput, ContainerOutput, RegisteredGroup } from './types.js';
 // Re-export ContainerInput/ContainerOutput so callers can pull them from this module
 // without also importing from ./types.js. Used by 24 callers across the codebase.
 export type { ContainerInput, ContainerOutput } from './types.js';
+
+// OneCLI Agent Vault singleton — null when not configured (legacy credential-proxy.ts path active).
+// See tech-spec-aios-onecli-agent-vault.md §7.
+const onecli =
+  ONECLI_API_KEY && ONECLI_URL
+    ? new OneCLI({ apiKey: ONECLI_API_KEY, url: ONECLI_URL })
+    : null;
 
 interface VolumeMount {
   hostPath: string;
@@ -216,10 +227,11 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function buildContainerArgs(
+async function buildContainerArgs(
+  group: RegisteredGroup,
   mounts: VolumeMount[],
   containerName: string,
-): string[] {
+): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
   // Security hardening: drop all Linux capabilities and prevent privilege escalation.
@@ -230,30 +242,56 @@ function buildContainerArgs(
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
-
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
-  const authMode = detectAuthMode();
-  if (authMode === 'api-key') {
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-  }
-
   // 1M context is handled by the [1m] model suffix in agent-runner.
   // Do NOT set ANTHROPIC_BETAS here — it overrides Claude Code's internal
   // beta headers and breaks WebSearch.
   args.push('-e', 'ANTHROPIC_DEFAULT_OPUS_MODEL=claude-opus-4-6[1m]');
 
-  // Runtime-specific args for host gateway resolution
+  // Runtime-specific args for host gateway resolution.
+  // Must be added BEFORE applyContainerConfig so we can pass addHostMapping: false
+  // and avoid the SDK adding a duplicate --add-host.
   args.push(...hostGatewayArgs());
+
+  if (onecli) {
+    // OneCLI path: SDK fetches per-agent config and pushes -e/-v flags onto args.
+    // The server determines HTTPS_PROXY URL, CA cert mount, and (for Anthropic OAuth
+    // secrets) injects CLAUDE_CODE_OAUTH_TOKEN directly as an env var.
+    // See tech-spec-aios-onecli-agent-vault.md §7.
+    const applied = await onecli.applyContainerConfig(args, {
+      agent: group.folder,
+      addHostMapping: false, // already added via hostGatewayArgs() above
+      combineCaBundle: true, // covers Python/curl/Go via SSL_CERT_FILE
+    });
+    if (!applied) {
+      logger.error(
+        { group: group.name, folder: group.folder },
+        'OneCLI gateway unreachable — failing container spawn',
+      );
+      throw new Error('OneCLI gateway unreachable');
+    }
+    logger.info(
+      { group: group.name, folder: group.folder },
+      'OneCLI gateway config applied',
+    );
+  } else {
+    // Legacy path: route API traffic through credential-proxy.ts on the host.
+    // Containers never see real secrets — the proxy injects them on the wire.
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
+
+    // Mirror the host's auth method with a placeholder value.
+    // API key mode: SDK sends x-api-key, proxy replaces with real key.
+    // OAuth mode:   SDK exchanges placeholder token for temp API key,
+    //               proxy injects real OAuth token on that exchange request.
+    const authMode = detectAuthMode();
+    if (authMode === 'api-key') {
+      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+    } else {
+      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
+    }
+  }
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),
@@ -315,7 +353,7 @@ export async function runContainerAgent(
     ? `-t${input.threadTs.replace('.', '').slice(-8)}`
     : '-root';
   const containerName = `nanoclaw-${safeName}${threadSuffix}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = await buildContainerArgs(group, mounts, containerName);
 
   logger.debug(
     {

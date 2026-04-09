@@ -72,6 +72,13 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
   process.env.CREDENTIAL_PROXY_PORT || '3001',
   10,
 );
+
+// OneCLI Agent Vault — Phase 2 feature flag.
+// When BOTH are set, NanoClaw routes container credentials through OneCLI
+// instead of starting credential-proxy.ts. Empty string = not configured = legacy path.
+// See _bmad-output/implementation-artifacts/tech-spec-aios-onecli-agent-vault.md §6.
+export const ONECLI_URL = process.env.ONECLI_URL || '';
+export const ONECLI_API_KEY = process.env.ONECLI_API_KEY || '';
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(idleTimeout.value, 10); // 5min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(

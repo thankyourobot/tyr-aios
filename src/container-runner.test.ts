@@ -6,7 +6,8 @@ import { PassThrough } from 'stream';
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
-// Mock config
+// Mock config — empty OneCLI vars force the legacy credential-proxy path,
+// which is what the existing test cases assume.
 vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
@@ -15,6 +16,8 @@ vi.mock('./config.js', () => ({
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000, // 30min
+  ONECLI_API_KEY: '',
+  ONECLI_URL: '',
   TIMEZONE: 'America/Los_Angeles',
 }));
 

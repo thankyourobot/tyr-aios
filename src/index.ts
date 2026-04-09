@@ -1,13 +1,18 @@
 import fs from 'fs';
+import type { Server } from 'http';
 import path from 'path';
+import { OneCLI } from '@onecli-sh/sdk';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  ONECLI_API_KEY,
+  ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
 import { startCredentialProxy } from './credential-proxy.js';
+import { getAllRegisteredGroups } from './stores/group-store.js';
 import './channels/index.js';
 import {
   getChannelFactory,
@@ -724,16 +729,51 @@ async function main(): Promise<void> {
   loadState();
   state.loadEnvVars();
 
-  // Start credential proxy (containers route API calls through this)
-  const proxyServer = await startCredentialProxy(
-    CREDENTIAL_PROXY_PORT,
-    PROXY_BIND_HOST,
-  );
+  // Credential layer: OneCLI Agent Vault if configured, else legacy credential-proxy.ts.
+  // Feature flag is the presence of both ONECLI_API_KEY and ONECLI_URL in the environment.
+  // See tech-spec-aios-onecli-agent-vault.md §7.
+  let proxyServer: Server | null = null;
+  if (ONECLI_API_KEY && ONECLI_URL) {
+    logger.info({ url: ONECLI_URL }, 'Credential layer: OneCLI Agent Vault');
+    const onecli = new OneCLI({ apiKey: ONECLI_API_KEY, url: ONECLI_URL });
+
+    // Idempotently ensure each registered group folder maps to an OneCLI agent.
+    // Adding a new group later → next NanoClaw restart auto-creates its OneCLI identity.
+    const groups = getAllRegisteredGroups();
+    const uniqueFolders = [
+      ...new Set(Object.values(groups).map((g) => g.folder)),
+    ];
+    for (const folder of uniqueFolders) {
+      try {
+        const res = await onecli.ensureAgent({
+          name: folder,
+          identifier: folder,
+        });
+        logger.info(
+          { folder, created: res.created },
+          res.created ? 'Created OneCLI agent' : 'OneCLI agent already exists',
+        );
+      } catch (err) {
+        logger.error(
+          { err, folder },
+          'Failed to ensure OneCLI agent — startup aborting',
+        );
+        throw err;
+      }
+    }
+    // Do NOT start the legacy credential proxy.
+  } else {
+    logger.info('Credential layer: legacy credential-proxy.ts');
+    proxyServer = await startCredentialProxy(
+      CREDENTIAL_PROXY_PORT,
+      PROXY_BIND_HOST,
+    );
+  }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
-    proxyServer.close();
+    proxyServer?.close();
     await state.queue.shutdown(10000);
     for (const ch of state.channels) await ch.disconnect();
     process.exit(0);
