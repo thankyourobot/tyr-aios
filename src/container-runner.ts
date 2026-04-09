@@ -159,10 +159,18 @@ function buildVolumeMounts(
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
+  // Containers run as uid 1000 (agent:docker), so each subdir must be
+  // chowned after creation since the host runs as root.
   const groupIpcDir = resolveGroupIpcPath(group.folder);
-  fs.mkdirSync(path.join(groupIpcDir, 'messages'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'commands'), { recursive: true });
-  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  for (const subdir of ['messages', 'commands', 'input']) {
+    const dir = path.join(groupIpcDir, subdir);
+    fs.mkdirSync(dir, { recursive: true });
+    try {
+      fs.chownSync(dir, 1000, 1000);
+    } catch {
+      /* ignore chown failures (e.g., dev environment) */
+    }
+  }
   mounts.push({
     hostPath: groupIpcDir,
     containerPath: '/workspace/ipc',

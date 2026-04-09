@@ -29,7 +29,11 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_agent_status ON tasks(agent_id, status);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_blocked_by ON tasks(blocked_by);
 ```
+
+The single-column indexes (`idx_tasks_agent_id`, `idx_tasks_blocked_by`) cover queries that filter on those columns alone. The composite (`idx_tasks_agent_status`) is the primary index used by `list_tasks`.
 
 ## Status Lifecycle
 

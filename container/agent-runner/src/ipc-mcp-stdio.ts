@@ -475,6 +475,8 @@ function ensureTasksSchema(dbPath: string): void {
     );
     CREATE INDEX IF NOT EXISTS idx_tasks_agent_status ON tasks(agent_id, status);
     CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_agent_id ON tasks(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_tasks_blocked_by ON tasks(blocked_by);
   `;
   execSync(`sqlite3 "${dbPath}" "${schema.replace(/\n/g, ' ').replace(/"/g, '\\"')}"`, {
     encoding: 'utf-8',
