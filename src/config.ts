@@ -75,17 +75,19 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
   10,
 );
 
-// OneCLI Agent Vault — Phase 2 feature flag.
-// When BOTH are set, NanoClaw routes container credentials through OneCLI
-// instead of starting credential-proxy.ts. Empty string = not configured = legacy path.
-// See _bmad-output/implementation-artifacts/tech-spec-aios-onecli-agent-vault.md §6.
-//
-// Read from envConfig (the readEnvFile result) NOT process.env. The systemd unit
-// does not EnvironmentFile our .env, and we deliberately keep ONECLI_API_KEY out
-// of process.env so it can't leak to child processes that inherit env (per the
-// security comment on readEnvFile in env.ts).
-export const ONECLI_URL = envConfig.ONECLI_URL || '';
-export const ONECLI_API_KEY = envConfig.ONECLI_API_KEY || '';
+// OneCLI Agent Vault feature flag — both must be set or NanoClaw uses the
+// legacy credential-proxy.ts path. Read from envConfig (NOT process.env) so
+// the secret never enters the inheritable environment of spawned child
+// processes; see the docstring on readEnvFile in env.ts.
+// Spec: tech-spec-aios-onecli-agent-vault.md §6.
+export const ONECLI_URL = (envConfig.ONECLI_URL || '').trim();
+// Strip non-alphanumeric chars defensively — terminal-pasted values can carry
+// control bytes (e.g. ESC) that mangle the resulting Authorization header.
+export const ONECLI_API_KEY = (envConfig.ONECLI_API_KEY || '').replace(
+  /[^a-zA-Z0-9_-]/g,
+  '',
+);
+export const ONECLI_CLIENT_TIMEOUT_MS = 5000;
 export const IPC_POLL_INTERVAL = 1000;
 export const IDLE_TIMEOUT = parseInt(idleTimeout.value, 10); // 5min default — how long to keep container alive after last result
 export const MAX_CONCURRENT_CONTAINERS = Math.max(
@@ -107,7 +109,11 @@ export const TRIGGER_PATTERN = new RegExp(
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-// Log resolved config at startup so misconfiguration is immediately visible
+// Log resolved config at startup so misconfiguration is immediately visible.
+// ONECLI_API_KEY is reported by structural shape only (presence + length, never value)
+// so the daily journalctl review can confirm the credential layer flag without
+// surfacing the secret. The "credential layer" log line in index.ts says which
+// branch ran; this line says whether the env vars looked plausible.
 logger.info(
   {
     ASSISTANT_NAME: `${assistantName.value} (${assistantName.source})`,
@@ -116,6 +122,10 @@ logger.info(
     CONTAINER_MAX_OUTPUT_SIZE: `${containerMaxOutput.value} (${containerMaxOutput.source})`,
     IDLE_TIMEOUT: `${idleTimeout.value} (${idleTimeout.source})`,
     MAX_CONCURRENT_CONTAINERS: `${maxConcurrent.value} (${maxConcurrent.source})`,
+    ONECLI_URL: ONECLI_URL || '(unset)',
+    ONECLI_API_KEY: ONECLI_API_KEY
+      ? `(set, length=${ONECLI_API_KEY.length})`
+      : '(unset)',
   },
   'Config loaded',
 );

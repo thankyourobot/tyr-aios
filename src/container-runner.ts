@@ -17,6 +17,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
   ONECLI_API_KEY,
+  ONECLI_CLIENT_TIMEOUT_MS,
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
@@ -42,7 +43,11 @@ export type { ContainerInput, ContainerOutput } from './types.js';
 // See tech-spec-aios-onecli-agent-vault.md §7.
 const onecli =
   ONECLI_API_KEY && ONECLI_URL
-    ? new OneCLI({ apiKey: ONECLI_API_KEY, url: ONECLI_URL })
+    ? new OneCLI({
+        apiKey: ONECLI_API_KEY,
+        url: ONECLI_URL,
+        timeout: ONECLI_CLIENT_TIMEOUT_MS,
+      })
     : null;
 
 interface VolumeMount {
@@ -253,10 +258,8 @@ async function buildContainerArgs(
   args.push(...hostGatewayArgs());
 
   if (onecli) {
-    // OneCLI path: SDK fetches per-agent config and pushes -e/-v flags onto args.
-    // The server determines HTTPS_PROXY URL, CA cert mount, and (for Anthropic OAuth
-    // secrets) injects CLAUDE_CODE_OAUTH_TOKEN directly as an env var.
-    // See tech-spec-aios-onecli-agent-vault.md §7.
+    // SDK pushes -e/-v flags for HTTPS_PROXY, CA cert, and OAuth token onto args.
+    // Spec: tech-spec-aios-onecli-agent-vault.md §7.
     const applied = await onecli.applyContainerConfig(args, {
       agent: group.folder,
       addHostMapping: false, // already added via hostGatewayArgs() above
@@ -276,6 +279,8 @@ async function buildContainerArgs(
   } else {
     // Legacy path: route API traffic through credential-proxy.ts on the host.
     // Containers never see real secrets — the proxy injects them on the wire.
+    // Rollback dep: ANTHROPIC_AUTH_TOKEN must remain in .env until Phase 3 deletes
+    // this branch, otherwise detectAuthMode() can't resolve a fallback.
     args.push(
       '-e',
       `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,

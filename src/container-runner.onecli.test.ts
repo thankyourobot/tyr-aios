@@ -31,6 +31,7 @@ vi.mock('./config.js', () => ({
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000,
   ONECLI_API_KEY: 'oc_test_key',
+  ONECLI_CLIENT_TIMEOUT_MS: 5000,
   ONECLI_URL: 'http://onecli.test:10254',
   TIMEZONE: 'America/Los_Angeles',
 }));
@@ -224,6 +225,22 @@ describe('container-runner OneCLI branch', () => {
     ).rejects.toThrow('OneCLI gateway unreachable');
 
     // spawn must NOT have been called — we abort before docker run
+    expect(hoisted.spawnMock).not.toHaveBeenCalled();
+  });
+
+  it('propagates SDK exceptions and does not spawn (covers fetch failed / timeout)', async () => {
+    // The SDK throws OneCLIError or OneCLIRequestError on fetch failures,
+    // not just returning false. buildContainerArgs has no try/catch around
+    // applyContainerConfig, so the rejection should propagate intact and
+    // spawn should never be reached.
+    const sdkErr = new Error('OneCLIError: fetch failed');
+    hoisted.mockApplyContainerConfig.mockRejectedValue(sdkErr);
+
+    const onOutput = vi.fn(async () => {});
+    await expect(
+      runContainerAgent(testGroup, testInput, () => {}, onOutput),
+    ).rejects.toThrow('OneCLIError: fetch failed');
+
     expect(hoisted.spawnMock).not.toHaveBeenCalled();
   });
 });

@@ -150,6 +150,13 @@ docker exec onecli-postgres psql -U onecli -tAc "SELECT version();" 2>/dev/null 
   && report PASS "postgres v18" \
   || report WARN "postgres v18"
 
+# NanoClaw is actually using OneCLI right now (not silently fallen back to legacy).
+# Looks for "Credential layer: OneCLI Agent Vault" in the most recent startup window.
+journalctl -u nanoclaw --since "$(systemctl show -p ActiveEnterTimestamp --value nanoclaw)" --no-pager 2>/dev/null \
+  | grep -q "Credential layer: OneCLI Agent Vault" \
+  && report PASS "nanoclaw using OneCLI" \
+  || report FAIL "nanoclaw using OneCLI"
+
 echo ""
 echo "=== Summary ==="
 echo "  PASS: $PASS  FAIL: $FAIL  WARN: $WARN"

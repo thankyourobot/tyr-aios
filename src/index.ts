@@ -6,6 +6,7 @@ import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
   ONECLI_API_KEY,
+  ONECLI_CLIENT_TIMEOUT_MS,
   ONECLI_URL,
   POLL_INTERVAL,
   TIMEZONE,
@@ -735,7 +736,38 @@ async function main(): Promise<void> {
   let proxyServer: Server | null = null;
   if (ONECLI_API_KEY && ONECLI_URL) {
     logger.info({ url: ONECLI_URL }, 'Credential layer: OneCLI Agent Vault');
-    const onecli = new OneCLI({ apiKey: ONECLI_API_KEY, url: ONECLI_URL });
+    const onecli = new OneCLI({
+      apiKey: ONECLI_API_KEY,
+      url: ONECLI_URL,
+      timeout: ONECLI_CLIENT_TIMEOUT_MS,
+    });
+
+    // Retry covers boot races (onecli.service is oneshot, so "active" != "ready")
+    // and transient flake. Backoff: immediate, 500ms, 1500ms.
+    const ensureAgentWithRetry = async (
+      folder: string,
+    ): ReturnType<typeof onecli.ensureAgent> => {
+      const delays = [0, 500, 1500];
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < delays.length; attempt++) {
+        if (delays[attempt] > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+        }
+        try {
+          return await onecli.ensureAgent({
+            name: folder,
+            identifier: folder,
+          });
+        } catch (err) {
+          lastErr = err;
+          logger.warn(
+            { err, folder, attempt: attempt + 1 },
+            'ensureAgent attempt failed, will retry',
+          );
+        }
+      }
+      throw lastErr;
+    };
 
     // Idempotently ensure each registered group folder maps to an OneCLI agent.
     // Adding a new group later → next NanoClaw restart auto-creates its OneCLI identity.
@@ -745,10 +777,7 @@ async function main(): Promise<void> {
     ];
     for (const folder of uniqueFolders) {
       try {
-        const res = await onecli.ensureAgent({
-          name: folder,
-          identifier: folder,
-        });
+        const res = await ensureAgentWithRetry(folder);
         logger.info(
           { folder, created: res.created },
           res.created ? 'Created OneCLI agent' : 'OneCLI agent already exists',
@@ -756,7 +785,7 @@ async function main(): Promise<void> {
       } catch (err) {
         logger.error(
           { err, folder },
-          'Failed to ensure OneCLI agent — startup aborting',
+          'Failed to ensure OneCLI agent after 3 attempts — startup aborting',
         );
         throw err;
       }
