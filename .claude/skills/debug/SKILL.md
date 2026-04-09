@@ -296,8 +296,8 @@ The container communicates back to the host via files in `/workspace/ipc/`:
 # Check pending messages
 ls -la data/ipc/messages/
 
-# Check pending task operations
-ls -la data/ipc/tasks/
+# Check pending command operations
+ls -la data/ipc/commands/
 
 # Read a specific IPC file
 cat data/ipc/messages/*.json
@@ -305,13 +305,13 @@ cat data/ipc/messages/*.json
 # Check available groups (main channel only)
 cat data/ipc/main/available_groups.json
 
-# Check current tasks snapshot
-cat data/ipc/{groupFolder}/current_tasks.json
+# Check current jobs snapshot
+cat data/ipc/{groupFolder}/current_jobs.json
 ```
 
 **IPC file types:**
 - `messages/*.json` - Agent writes: outgoing WhatsApp messages
-- `tasks/*.json` - Agent writes: task operations (schedule, pause, resume, cancel, refresh_groups)
+- `commands/*.json` - Agent writes: command operations (schedule_job, pause_job, resume_job, cancel_job, register_group, refresh_groups)
 - `current_tasks.json` - Host writes: read-only snapshot of scheduled tasks
 - `available_groups.json` - Host writes: read-only list of WhatsApp groups (main only)
 

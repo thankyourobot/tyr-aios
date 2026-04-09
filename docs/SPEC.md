@@ -311,7 +311,7 @@ nanoclaw/
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
 │   ├── env/env                    # Copy of .env for container mounting
-│   └── ipc/                       # Container IPC (messages/, tasks/)
+│   └── ipc/                       # Container IPC (messages/, commands/)
 │
 ├── logs/                          # Runtime logs (gitignored)
 │   ├── nanoclaw.log               # Host stdout

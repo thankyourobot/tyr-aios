@@ -16,7 +16,7 @@ import path from 'path';
 
 // IPC directories (inside container)
 const IPC_DIR = '/workspace/ipc';
-const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const COMMANDS_DIR = path.join(IPC_DIR, 'commands');
 const RESULTS_DIR = path.join(IPC_DIR, 'x_results');
 
 function writeIpcFile(dir: string, data: object): string {
@@ -88,7 +88,7 @@ Make sure the content is appropriate and within X's character limit (280 chars f
         }
 
         const requestId = `xpost-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        writeIpcFile(TASKS_DIR, {
+        writeIpcFile(COMMANDS_DIR, {
           type: 'x_post',
           requestId,
           content: args.content,
@@ -121,7 +121,7 @@ Provide the tweet URL or tweet ID to like.`,
         }
 
         const requestId = `xlike-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        writeIpcFile(TASKS_DIR, {
+        writeIpcFile(COMMANDS_DIR, {
           type: 'x_like',
           requestId,
           tweetUrl: args.tweet_url,
@@ -155,7 +155,7 @@ Provide the tweet URL and your reply content.`,
         }
 
         const requestId = `xreply-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        writeIpcFile(TASKS_DIR, {
+        writeIpcFile(COMMANDS_DIR, {
           type: 'x_reply',
           requestId,
           tweetUrl: args.tweet_url,
@@ -189,7 +189,7 @@ Provide the tweet URL to retweet.`,
         }
 
         const requestId = `xretweet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        writeIpcFile(TASKS_DIR, {
+        writeIpcFile(COMMANDS_DIR, {
           type: 'x_retweet',
           requestId,
           tweetUrl: args.tweet_url,
@@ -223,7 +223,7 @@ Retweet with your own comment added.`,
         }
 
         const requestId = `xquote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        writeIpcFile(TASKS_DIR, {
+        writeIpcFile(COMMANDS_DIR, {
           type: 'x_quote',
           requestId,
           tweetUrl: args.tweet_url,

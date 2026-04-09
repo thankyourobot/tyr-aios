@@ -96,7 +96,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
     for (const sourceGroup of groupFolders) {
       const isMain = folderIsMain.get(sourceGroup) === true;
       const messagesDir = path.join(ipcBaseDir, sourceGroup, 'messages');
-      const tasksDir = path.join(ipcBaseDir, sourceGroup, 'tasks');
+      const commandsDir = path.join(ipcBaseDir, sourceGroup, 'commands');
 
       // Process messages from this group's IPC directory
       try {
@@ -242,14 +242,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
         );
       }
 
-      // Process tasks from this group's IPC directory
+      // Process commands from this group's IPC directory
       try {
-        if (fs.existsSync(tasksDir)) {
-          const taskFiles = fs
-            .readdirSync(tasksDir)
+        if (fs.existsSync(commandsDir)) {
+          const commandFiles = fs
+            .readdirSync(commandsDir)
             .filter((f) => f.endsWith('.json'));
-          for (const file of taskFiles) {
-            const filePath = path.join(tasksDir, file);
+          for (const file of commandFiles) {
+            const filePath = path.join(commandsDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               // Pass source group identity to processJobIpc for authorization
@@ -258,7 +258,7 @@ export function startIpcWatcher(deps: IpcDeps): void {
             } catch (err) {
               logger.error(
                 { file, sourceGroup, err },
-                'Error processing IPC task',
+                'Error processing IPC command',
               );
               const errorDir = path.join(ipcBaseDir, 'errors');
               fs.mkdirSync(errorDir, { recursive: true });
@@ -270,7 +270,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
           }
         }
       } catch (err) {
-        logger.error({ err, sourceGroup }, 'Error reading IPC tasks directory');
+        logger.error(
+          { err, sourceGroup },
+          'Error reading IPC commands directory',
+        );
       }
     }
 
@@ -575,6 +578,6 @@ export async function processJobIpc(
       break;
 
     default:
-      logger.warn({ type: data.type }, 'Unknown IPC task type');
+      logger.warn({ type: data.type }, 'Unknown IPC command type');
   }
 }

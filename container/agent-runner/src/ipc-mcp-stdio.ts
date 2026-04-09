@@ -29,7 +29,7 @@ import { expansionAuth } from './lcm-expansion-auth.js';
 
 const IPC_DIR = '/workspace/ipc';
 const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
-const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+const COMMANDS_DIR = path.join(IPC_DIR, 'commands');
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -162,7 +162,7 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
       timestamp: new Date().toISOString(),
     };
 
-    writeIpcFile(TASKS_DIR, data);
+    writeIpcFile(COMMANDS_DIR, data);
 
     return {
       content: [{ type: 'text' as const, text: `Job ${jobId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
@@ -221,7 +221,7 @@ server.tool(
       timestamp: new Date().toISOString(),
     };
 
-    writeIpcFile(TASKS_DIR, data);
+    writeIpcFile(COMMANDS_DIR, data);
 
     return { content: [{ type: 'text' as const, text: `Job ${args.job_id} pause requested.` }] };
   },
@@ -240,7 +240,7 @@ server.tool(
       timestamp: new Date().toISOString(),
     };
 
-    writeIpcFile(TASKS_DIR, data);
+    writeIpcFile(COMMANDS_DIR, data);
 
     return { content: [{ type: 'text' as const, text: `Job ${args.job_id} resume requested.` }] };
   },
@@ -259,7 +259,7 @@ server.tool(
       timestamp: new Date().toISOString(),
     };
 
-    writeIpcFile(TASKS_DIR, data);
+    writeIpcFile(COMMANDS_DIR, data);
 
     return { content: [{ type: 'text' as const, text: `Job ${args.job_id} cancellation requested.` }] };
   },
@@ -309,7 +309,7 @@ server.tool(
     if (args.schedule_type !== undefined) data.schedule_type = args.schedule_type;
     if (args.schedule_value !== undefined) data.schedule_value = args.schedule_value;
 
-    writeIpcFile(TASKS_DIR, data);
+    writeIpcFile(COMMANDS_DIR, data);
 
     return { content: [{ type: 'text' as const, text: `Job ${args.job_id} update requested.` }] };
   },
@@ -343,7 +343,7 @@ Use available_groups.json to find the JID for a group. The folder name must be c
       timestamp: new Date().toISOString(),
     };
 
-    writeIpcFile(TASKS_DIR, data);
+    writeIpcFile(COMMANDS_DIR, data);
 
     return {
       content: [{ type: 'text' as const, text: `Group "${args.name}" registered. It will start receiving messages immediately.` }],
