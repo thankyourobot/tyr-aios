@@ -111,9 +111,19 @@ RECENT_CONTAINERS=$(find /opt/nanoclaw/groups -name "container-*.log" -mtime -1 
 RECENT_JOBS=$(sqlite3 /opt/nanoclaw/store/messages.db "SELECT COUNT(*) FROM scheduled_jobs WHERE last_run > datetime('now', '-1 day');" 2>/dev/null)
 [ "$RECENT_JOBS" -ge 1 ] 2>/dev/null && report PASS "recent job runs" "${RECENT_JOBS} in 24h" || report WARN "recent job runs" "none in 24h"
 
-# Credential proxy listening
-PROXY_LISTENING=$(ss -tln 2>/dev/null | grep -c ':3001 ')
-[ "$PROXY_LISTENING" -ge 1 ] 2>/dev/null && report PASS "credential proxy listening" || report FAIL "credential proxy listening"
+# Credential proxy listening (legacy path only — section 7 covers OneCLI mode).
+# Skipped when OneCLI is configured in /opt/nanoclaw/.env. Phase 3 will delete
+# both this check and credential-proxy.ts entirely.
+if grep -q '^ONECLI_API_KEY=' /opt/nanoclaw/.env 2>/dev/null; then
+  report PASS "credential proxy listening" "skipped — OneCLI mode"
+else
+  PROXY_LISTENING=$(ss -tln 2>/dev/null | grep -c ':3001 ')
+  if [ "${PROXY_LISTENING:-0}" -ge 1 ] 2>/dev/null; then
+    report PASS "credential proxy listening"
+  else
+    report FAIL "credential proxy listening"
+  fi
+fi
 
 # Docker socket in use
 DOCKER_SOCKET=$(systemctl show -p Environment --value nanoclaw 2>/dev/null | tr ' ' '\n' | grep DOCKER_HOST | cut -d= -f2-)
@@ -151,11 +161,15 @@ docker exec onecli-postgres psql -U onecli -tAc "SELECT version();" 2>/dev/null 
   || report WARN "postgres v18"
 
 # NanoClaw is actually using OneCLI right now (not silently fallen back to legacy).
-# Looks for "Credential layer: OneCLI Agent Vault" in the most recent startup window.
-journalctl -u nanoclaw --since "$(systemctl show -p ActiveEnterTimestamp --value nanoclaw)" --no-pager 2>/dev/null \
-  | grep -q "Credential layer: OneCLI Agent Vault" \
-  && report PASS "nanoclaw using OneCLI" \
-  || report FAIL "nanoclaw using OneCLI"
+# Captures journalctl into a variable first to avoid grep -q's early-exit
+# triggering SIGPIPE on journalctl, which under pipefail surfaces as 141 and
+# breaks the && / || branch.
+NANOCLAW_LOG=$(journalctl -u nanoclaw --since "$(systemctl show -p ActiveEnterTimestamp --value nanoclaw)" --no-pager 2>/dev/null || true)
+if echo "$NANOCLAW_LOG" | grep -q "Credential layer: OneCLI Agent Vault"; then
+  report PASS "nanoclaw using OneCLI"
+else
+  report FAIL "nanoclaw using OneCLI"
+fi
 
 echo ""
 echo "=== Summary ==="
