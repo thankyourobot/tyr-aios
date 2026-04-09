@@ -461,7 +461,8 @@ function ensureTasksSchema(dbPath: string): void {
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
       folder TEXT NOT NULL UNIQUE,
-      created TEXT DEFAULT (datetime('now'))
+      created TEXT DEFAULT (datetime('now')),
+      meta JSON
     );
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,

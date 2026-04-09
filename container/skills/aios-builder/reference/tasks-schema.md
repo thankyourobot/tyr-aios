@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   folder TEXT NOT NULL UNIQUE,
-  created TEXT DEFAULT (datetime('now'))
+  created TEXT DEFAULT (datetime('now')),
+  meta JSON
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -86,6 +87,8 @@ The `agents` table registers which agents can receive tasks:
 | `id` | TEXT PK | Agent identifier (matches folder name) |
 | `name` | TEXT | Display name |
 | `folder` | TEXT UNIQUE | Group folder name |
+| `created` | TEXT | Creation timestamp (auto-set on insert) |
+| `meta` | JSON | Optional flexible metadata. Currently info-only — no code reads it. Use for future per-agent data without requiring a schema migration. |
 
 ## Standard Queries
 
