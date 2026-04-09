@@ -81,34 +81,34 @@ server.tool(
 );
 
 server.tool(
-  'schedule_task',
-  `Schedule a recurring or one-time task. The task will run as a full agent with access to all tools. Returns the task ID for future reference. To modify an existing task, use update_task instead.
+  'schedule_job',
+  `Schedule a recurring or one-time job. The job will run as a full agent with access to all tools. Returns the job ID for future reference. To modify an existing job, use update_job instead.
 
-CONTEXT MODE - Choose based on task type:
-\u2022 "group": Task runs in the group's conversation context, with access to chat history. Use for tasks that need context about ongoing discussions, user preferences, or recent interactions.
-\u2022 "isolated": Task runs in a fresh session with no conversation history. Use for independent tasks that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
+CONTEXT MODE - Choose based on job type:
+\u2022 "group": Job runs in the group's conversation context, with access to chat history. Use for jobs that need context about ongoing discussions, user preferences, or recent interactions.
+\u2022 "isolated": Job runs in a fresh session with no conversation history. Use for independent jobs that don't need prior context. When using isolated mode, include all necessary context in the prompt itself.
 
 If unsure which mode to use, you can ask the user. Examples:
 - "Remind me about our discussion" \u2192 group (needs conversation context)
-- "Check the weather every morning" \u2192 isolated (self-contained task)
+- "Check the weather every morning" \u2192 isolated (self-contained job)
 - "Follow up on my request" \u2192 group (needs to know what was requested)
 - "Generate a daily report" \u2192 isolated (just needs instructions in prompt)
 
-MESSAGING BEHAVIOR - The task agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
+MESSAGING BEHAVIOR - The job agent's output is sent to the user or group. It can also use send_message for immediate delivery, or wrap output in <internal> tags to suppress it. Include guidance in the prompt about whether the agent should:
 \u2022 Always send a message (e.g., reminders, daily briefings)
 \u2022 Only send a message when there's something to report (e.g., "notify me if...")
-\u2022 Never send a message (background maintenance tasks)
+\u2022 Never send a message (background maintenance jobs)
 
 SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
 \u2022 cron: Standard cron expression (e.g., "*/5 * * * *" for every 5 minutes, "0 9 * * *" for daily at 9am LOCAL time)
 \u2022 interval: Milliseconds between runs (e.g., "300000" for 5 minutes, "3600000" for 1 hour)
 \u2022 once: Local time WITHOUT "Z" suffix (e.g., "2026-02-01T15:30:00"). Do NOT use UTC/Z suffix.`,
   {
-    prompt: z.string().describe('What the agent should do when the task runs. For isolated mode, include all necessary context here.'),
+    prompt: z.string().describe('What the agent should do when the job runs. For isolated mode, include all necessary context here.'),
     schedule_type: z.enum(['cron', 'interval', 'once']).describe('cron=recurring at specific times, interval=recurring every N ms, once=run once at specific time'),
     schedule_value: z.string().describe('cron: "*/5 * * * *" | interval: milliseconds like "300000" | once: local timestamp like "2026-02-01T15:30:00" (no Z suffix!)'),
     context_mode: z.enum(['group', 'isolated']).default('group').describe('group=runs with chat history and memory, isolated=fresh session (include context in prompt)'),
-    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the task for. Defaults to the current group.'),
+    target_group_jid: z.string().optional().describe('(Main group only) JID of the group to schedule the job for. Defaults to the current group.'),
   },
   async (args) => {
     // Validate schedule_value before writing IPC
@@ -148,11 +148,11 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     // Non-main groups can only schedule for themselves
     const targetJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
 
-    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const jobId = `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     const data = {
-      type: 'schedule_task',
-      taskId,
+      type: 'schedule_job',
+      jobId,
       prompt: args.prompt,
       schedule_type: args.schedule_type,
       schedule_value: args.schedule_value,
@@ -165,57 +165,57 @@ SCHEDULE VALUE FORMAT (all times are LOCAL timezone):
     writeIpcFile(TASKS_DIR, data);
 
     return {
-      content: [{ type: 'text' as const, text: `Task ${taskId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
+      content: [{ type: 'text' as const, text: `Job ${jobId} scheduled: ${args.schedule_type} - ${args.schedule_value}` }],
     };
   },
 );
 
 server.tool(
-  'list_tasks',
-  "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
+  'list_jobs',
+  "List all scheduled jobs. From main: shows all jobs. From other groups: shows only that group's jobs.",
   {},
   async () => {
-    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
+    const jobsFile = path.join(IPC_DIR, 'current_jobs.json');
 
     try {
-      if (!fs.existsSync(tasksFile)) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+      if (!fs.existsSync(jobsFile)) {
+        return { content: [{ type: 'text' as const, text: 'No scheduled jobs found.' }] };
       }
 
-      const allTasks = JSON.parse(fs.readFileSync(tasksFile, 'utf-8'));
+      const allJobs = JSON.parse(fs.readFileSync(jobsFile, 'utf-8'));
 
-      const tasks = isMain
-        ? allTasks
-        : allTasks.filter((t: { groupFolder: string }) => t.groupFolder === groupFolder);
+      const jobs = isMain
+        ? allJobs
+        : allJobs.filter((j: { groupFolder: string }) => j.groupFolder === groupFolder);
 
-      if (tasks.length === 0) {
-        return { content: [{ type: 'text' as const, text: 'No scheduled tasks found.' }] };
+      if (jobs.length === 0) {
+        return { content: [{ type: 'text' as const, text: 'No scheduled jobs found.' }] };
       }
 
-      const formatted = tasks
+      const formatted = jobs
         .map(
-          (t: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
-            `- [${t.id}] ${t.prompt.slice(0, 50)}... (${t.schedule_type}: ${t.schedule_value}) - ${t.status}, next: ${t.next_run || 'N/A'}`,
+          (j: { id: string; prompt: string; schedule_type: string; schedule_value: string; status: string; next_run: string }) =>
+            `- [${j.id}] ${j.prompt.slice(0, 50)}... (${j.schedule_type}: ${j.schedule_value}) - ${j.status}, next: ${j.next_run || 'N/A'}`,
         )
         .join('\n');
 
-      return { content: [{ type: 'text' as const, text: `Scheduled tasks:\n${formatted}` }] };
+      return { content: [{ type: 'text' as const, text: `Scheduled jobs:\n${formatted}` }] };
     } catch (err) {
       return {
-        content: [{ type: 'text' as const, text: `Error reading tasks: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [{ type: 'text' as const, text: `Error reading jobs: ${err instanceof Error ? err.message : String(err)}` }],
       };
     }
   },
 );
 
 server.tool(
-  'pause_task',
-  'Pause a scheduled task. It will not run until resumed.',
-  { task_id: z.string().describe('The task ID to pause') },
+  'pause_job',
+  'Pause a scheduled job. It will not run until resumed.',
+  { job_id: z.string().describe('The job ID to pause') },
   async (args) => {
     const data = {
-      type: 'pause_task',
-      taskId: args.task_id,
+      type: 'pause_job',
+      jobId: args.job_id,
       groupFolder,
       isMain,
       timestamp: new Date().toISOString(),
@@ -223,18 +223,18 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} pause requested.` }] };
+    return { content: [{ type: 'text' as const, text: `Job ${args.job_id} pause requested.` }] };
   },
 );
 
 server.tool(
-  'resume_task',
-  'Resume a paused task.',
-  { task_id: z.string().describe('The task ID to resume') },
+  'resume_job',
+  'Resume a paused job.',
+  { job_id: z.string().describe('The job ID to resume') },
   async (args) => {
     const data = {
-      type: 'resume_task',
-      taskId: args.task_id,
+      type: 'resume_job',
+      jobId: args.job_id,
       groupFolder,
       isMain,
       timestamp: new Date().toISOString(),
@@ -242,18 +242,18 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} resume requested.` }] };
+    return { content: [{ type: 'text' as const, text: `Job ${args.job_id} resume requested.` }] };
   },
 );
 
 server.tool(
-  'cancel_task',
-  'Cancel and delete a scheduled task.',
-  { task_id: z.string().describe('The task ID to cancel') },
+  'cancel_job',
+  'Cancel and delete a scheduled job.',
+  { job_id: z.string().describe('The job ID to cancel') },
   async (args) => {
     const data = {
-      type: 'cancel_task',
-      taskId: args.task_id,
+      type: 'cancel_job',
+      jobId: args.job_id,
       groupFolder,
       isMain,
       timestamp: new Date().toISOString(),
@@ -261,18 +261,18 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} cancellation requested.` }] };
+    return { content: [{ type: 'text' as const, text: `Job ${args.job_id} cancellation requested.` }] };
   },
 );
 
 server.tool(
-  'update_task',
-  'Update an existing scheduled task. Only provided fields are changed; omitted fields stay the same.',
+  'update_job',
+  'Update an existing scheduled job. Only provided fields are changed; omitted fields stay the same.',
   {
-    task_id: z.string().describe('The task ID to update'),
-    prompt: z.string().optional().describe('New prompt for the task'),
+    job_id: z.string().describe('The job ID to update'),
+    prompt: z.string().optional().describe('New prompt for the job'),
     schedule_type: z.enum(['cron', 'interval', 'once']).optional().describe('New schedule type'),
-    schedule_value: z.string().optional().describe('New schedule value (see schedule_task for format)'),
+    schedule_value: z.string().optional().describe('New schedule value (see schedule_job for format)'),
   },
   async (args) => {
     // Validate schedule_value if provided
@@ -299,8 +299,8 @@ server.tool(
     }
 
     const data: Record<string, string | undefined> = {
-      type: 'update_task',
-      taskId: args.task_id,
+      type: 'update_job',
+      jobId: args.job_id,
       groupFolder,
       isMain: String(isMain),
       timestamp: new Date().toISOString(),
@@ -311,7 +311,7 @@ server.tool(
 
     writeIpcFile(TASKS_DIR, data);
 
-    return { content: [{ type: 'text' as const, text: `Task ${args.task_id} update requested.` }] };
+    return { content: [{ type: 'text' as const, text: `Job ${args.job_id} update requested.` }] };
   },
 );
 
@@ -437,9 +437,9 @@ server.tool(
   },
 );
 
-// --- Assignment Tools (direct sqlite3 access — no IPC needed) ---
+// --- Task Tools (direct sqlite3 access — no IPC needed) ---
 
-const ASSIGNMENTS_DB = '/workspace/extra/shared/assignments.db';
+const TASKS_DB = '/workspace/extra/shared/tasks.db';
 
 function execSqlite(dbPath: string, sql: string): string {
   try {
@@ -454,7 +454,7 @@ function execSqlite(dbPath: string, sql: string): string {
   }
 }
 
-function ensureAssignmentsSchema(dbPath: string): void {
+function ensureTasksSchema(dbPath: string): void {
   const schema = `
     PRAGMA journal_mode=WAL;
     CREATE TABLE IF NOT EXISTS agents (
@@ -463,7 +463,7 @@ function ensureAssignmentsSchema(dbPath: string): void {
       folder TEXT NOT NULL UNIQUE,
       created TEXT DEFAULT (datetime('now'))
     );
-    CREATE TABLE IF NOT EXISTS assignments (
+    CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY,
       title TEXT NOT NULL,
       agent_id TEXT NOT NULL REFERENCES agents(id),
@@ -473,8 +473,8 @@ function ensureAssignmentsSchema(dbPath: string): void {
       created TEXT DEFAULT (datetime('now')),
       updated TEXT DEFAULT (datetime('now'))
     );
-    CREATE INDEX IF NOT EXISTS idx_assignments_agent_status ON assignments(agent_id, status);
-    CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_agent_status ON tasks(agent_id, status);
+    CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   `;
   execSync(`sqlite3 "${dbPath}" "${schema.replace(/\n/g, ' ').replace(/"/g, '\\"')}"`, {
     encoding: 'utf-8',
@@ -483,22 +483,22 @@ function ensureAssignmentsSchema(dbPath: string): void {
 }
 
 server.tool(
-  'list_assignments',
-  'List assignments from the shared assignments database. Non-main agents see only their own assignments; main agent sees all.',
+  'list_tasks',
+  'List tasks from the shared tasks database. Non-main agents see only their own tasks; main agent sees all.',
   {
     status: z.enum(['open', 'active', 'blocked', 'done']).optional().describe('Filter by status. Omit to see open, active, and blocked.'),
   },
   async (args) => {
     try {
-      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+      ensureTasksSchema(TASKS_DB);
       const statusFilter = args.status
         ? `status = '${args.status}'`
         : "status IN ('open', 'active', 'blocked')";
       const agentFilter = isMain ? '' : `agent_id = '${groupFolder}' AND`;
-      const sql = `SELECT id, title, agent_id, status, blocked_by, json_extract(meta, '$.description') as description, json_extract(meta, '$.acceptance_criteria') as acceptance_criteria, json_extract(meta, '$.priority') as priority FROM assignments WHERE ${agentFilter} ${statusFilter} ORDER BY created`;
-      const result = execSqlite(ASSIGNMENTS_DB, sql);
+      const sql = `SELECT id, title, agent_id, status, blocked_by, json_extract(meta, '$.description') as description, json_extract(meta, '$.acceptance_criteria') as acceptance_criteria, json_extract(meta, '$.priority') as priority FROM tasks WHERE ${agentFilter} ${statusFilter} ORDER BY created`;
+      const result = execSqlite(TASKS_DB, sql);
       if (!result || result === '[]') {
-        return { content: [{ type: 'text' as const, text: 'No assignments found.' }] };
+        return { content: [{ type: 'text' as const, text: 'No tasks found.' }] };
       }
       const rows = JSON.parse(result);
       const formatted = rows.map((r: any) => {
@@ -521,24 +521,24 @@ server.tool(
 );
 
 server.tool(
-  'create_assignment',
-  'Create a new assignment in the shared assignments database. Requires title, agent_id, description, and acceptance_criteria.',
+  'create_task',
+  'Create a new task in the shared tasks database. Requires title, agent_id, description, and acceptance_criteria.',
   {
-    title: z.string().describe('Short title for the assignment'),
+    title: z.string().describe('Short title for the task'),
     agent_id: z.string().describe('Agent folder name to assign to (e.g., "strategy", "operations")'),
     description: z.string().describe('WHY this needs doing — background context and motivation'),
     acceptance_criteria: z.string().describe('How to verify the work is done correctly'),
     priority: z.enum(['highest', 'high', 'medium', 'low']).optional().describe('Relative urgency'),
     constraints: z.string().optional().describe('What NOT to do, scope limits'),
     references: z.string().optional().describe('File paths, specs, conversation context'),
-    blocked_by: z.string().optional().describe('Freetext note of what blocks this (assignment IDs, descriptions, etc.)'),
+    blocked_by: z.string().optional().describe('Freetext note of what blocks this (task IDs, descriptions, etc.)'),
   },
   async (args) => {
     try {
-      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+      ensureTasksSchema(TASKS_DB);
 
       // Validate agent exists
-      const agentCheck = execSqlite(ASSIGNMENTS_DB, `SELECT id FROM agents WHERE id = '${args.agent_id}' OR folder = '${args.agent_id}'`);
+      const agentCheck = execSqlite(TASKS_DB, `SELECT id FROM agents WHERE id = '${args.agent_id}' OR folder = '${args.agent_id}'`);
       if (!agentCheck || agentCheck === '[]') {
         return {
           content: [{ type: 'text' as const, text: `Agent "${args.agent_id}" not found in agents table. Register it first.` }],
@@ -563,10 +563,10 @@ server.tool(
       const blockedBy = args.blocked_by ? args.blocked_by.replace(/'/g, "''") : '';
       const titleEsc = args.title.replace(/'/g, "''");
 
-      const sql = `INSERT INTO assignments (id, title, agent_id, status, blocked_by, meta) VALUES ('${id}', '${titleEsc}', '${args.agent_id}', '${status}', ${blockedBy ? `'${blockedBy}'` : 'NULL'}, '${metaJson}')`;
-      execSqlite(ASSIGNMENTS_DB, sql);
+      const sql = `INSERT INTO tasks (id, title, agent_id, status, blocked_by, meta) VALUES ('${id}', '${titleEsc}', '${args.agent_id}', '${status}', ${blockedBy ? `'${blockedBy}'` : 'NULL'}, '${metaJson}')`;
+      execSqlite(TASKS_DB, sql);
 
-      return { content: [{ type: 'text' as const, text: `Assignment created: ${id} — "${args.title}" (${status})` }] };
+      return { content: [{ type: 'text' as const, text: `Task created: ${id} — "${args.title}" (${status})` }] };
     } catch (err) {
       return {
         content: [{ type: 'text' as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
@@ -577,10 +577,10 @@ server.tool(
 );
 
 server.tool(
-  'update_assignment',
-  'Update an existing assignment. Only provided fields are changed.',
+  'update_task',
+  'Update an existing task. Only provided fields are changed.',
   {
-    id: z.string().describe('Assignment ID to update'),
+    id: z.string().describe('Task ID to update'),
     status: z.enum(['open', 'active', 'blocked', 'done']).optional().describe('New status'),
     title: z.string().optional().describe('New title'),
     blocked_by: z.string().optional().describe('Freetext blocker note (set empty string to clear)'),
@@ -588,7 +588,7 @@ server.tool(
   },
   async (args) => {
     try {
-      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+      ensureTasksSchema(TASKS_DB);
 
       const sets: string[] = ["updated = datetime('now')"];
       if (args.status !== undefined) sets.push(`status = '${args.status}'`);
@@ -598,14 +598,14 @@ server.tool(
       }
       if (args.meta !== undefined) sets.push(`meta = '${args.meta.replace(/'/g, "''")}'`);
 
-      const sql = `UPDATE assignments SET ${sets.join(', ')} WHERE id = '${args.id}'`;
-      execSqlite(ASSIGNMENTS_DB, sql);
+      const sql = `UPDATE tasks SET ${sets.join(', ')} WHERE id = '${args.id}'`;
+      execSqlite(TASKS_DB, sql);
 
       // Verify it existed
-      const check = execSqlite(ASSIGNMENTS_DB, `SELECT id, title, status FROM assignments WHERE id = '${args.id}'`);
+      const check = execSqlite(TASKS_DB, `SELECT id, title, status FROM tasks WHERE id = '${args.id}'`);
       if (!check || check === '[]') {
         return {
-          content: [{ type: 'text' as const, text: `Assignment "${args.id}" not found.` }],
+          content: [{ type: 'text' as const, text: `Task "${args.id}" not found.` }],
           isError: true,
         };
       }
@@ -622,25 +622,25 @@ server.tool(
 );
 
 server.tool(
-  'complete_assignment',
-  'Mark an assignment as done.',
+  'complete_task',
+  'Mark a task as done.',
   {
-    id: z.string().describe('Assignment ID to complete'),
+    id: z.string().describe('Task ID to complete'),
   },
   async (args) => {
     try {
-      ensureAssignmentsSchema(ASSIGNMENTS_DB);
+      ensureTasksSchema(TASKS_DB);
 
       // Verify it exists
-      const check = execSqlite(ASSIGNMENTS_DB, `SELECT id, title, status FROM assignments WHERE id = '${args.id}'`);
+      const check = execSqlite(TASKS_DB, `SELECT id, title, status FROM tasks WHERE id = '${args.id}'`);
       if (!check || check === '[]') {
         return {
-          content: [{ type: 'text' as const, text: `Assignment "${args.id}" not found.` }],
+          content: [{ type: 'text' as const, text: `Task "${args.id}" not found.` }],
           isError: true,
         };
       }
 
-      execSqlite(ASSIGNMENTS_DB, `UPDATE assignments SET status = 'done', updated = datetime('now') WHERE id = '${args.id}'`);
+      execSqlite(TASKS_DB, `UPDATE tasks SET status = 'done', updated = datetime('now') WHERE id = '${args.id}'`);
 
       const row = JSON.parse(check)[0];
       return { content: [{ type: 'text' as const, text: `Completed: [${row.id}] "${row.title}"` }] };

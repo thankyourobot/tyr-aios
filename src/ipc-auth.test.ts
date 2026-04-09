@@ -2,13 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
-  createTask,
-  getAllTasks,
+  createJob,
+  getAllJobs,
   getRegisteredGroup,
-  getTaskById,
+  getJobById,
   setRegisteredGroup,
 } from './db.js';
-import { processTaskIpc, IpcDeps } from './ipc.js';
+import { processJobIpc, IpcDeps } from './ipc.js';
 import { channelJid } from './jid.js';
 import { RegisteredGroup } from './types.js';
 
@@ -66,13 +66,13 @@ beforeEach(() => {
   };
 });
 
-// --- schedule_task authorization ---
+// --- schedule_job authorization ---
 
-describe('schedule_task authorization', () => {
+describe('schedule_job authorization', () => {
   it('main group can schedule for another group', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'do something',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -84,15 +84,15 @@ describe('schedule_task authorization', () => {
     );
 
     // Verify task was created in DB for the other group
-    const allTasks = getAllTasks();
+    const allTasks = getAllJobs();
     expect(allTasks.length).toBe(1);
     expect(allTasks[0].group_folder).toBe('other-group');
   });
 
   it('non-main group can schedule for itself', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'self task',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -103,15 +103,15 @@ describe('schedule_task authorization', () => {
       deps,
     );
 
-    const allTasks = getAllTasks();
+    const allTasks = getAllJobs();
     expect(allTasks.length).toBe(1);
     expect(allTasks[0].group_folder).toBe('other-group');
   });
 
   it('non-main group cannot schedule for another group', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'unauthorized',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -122,14 +122,14 @@ describe('schedule_task authorization', () => {
       deps,
     );
 
-    const allTasks = getAllTasks();
+    const allTasks = getAllJobs();
     expect(allTasks.length).toBe(0);
   });
 
-  it('rejects schedule_task for unregistered target JID', async () => {
-    await processTaskIpc(
+  it('rejects schedule_job for unregistered target JID', async () => {
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'no target',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -140,16 +140,16 @@ describe('schedule_task authorization', () => {
       deps,
     );
 
-    const allTasks = getAllTasks();
+    const allTasks = getAllJobs();
     expect(allTasks.length).toBe(0);
   });
 });
 
-// --- pause_task authorization ---
+// --- pause_job authorization ---
 
-describe('pause_task authorization', () => {
+describe('pause_job authorization', () => {
   beforeEach(() => {
-    createTask({
+    createJob({
       id: 'task-main',
       group_folder: 'whatsapp_main',
       chat_jid: channelJid('main@g.us'),
@@ -161,7 +161,7 @@ describe('pause_task authorization', () => {
       status: 'active',
       created_at: '2024-01-01T00:00:00.000Z',
     });
-    createTask({
+    createJob({
       id: 'task-other',
       group_folder: 'other-group',
       chat_jid: channelJid('other@g.us'),
@@ -176,41 +176,41 @@ describe('pause_task authorization', () => {
   });
 
   it('main group can pause any task', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-other' },
+    await processJobIpc(
+      { type: 'pause_job', jobId: 'task-other' },
       'whatsapp_main',
       true,
       deps,
     );
-    expect(getTaskById('task-other')!.status).toBe('paused');
+    expect(getJobById('task-other')!.status).toBe('paused');
   });
 
   it('non-main group can pause its own task', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-other' },
+    await processJobIpc(
+      { type: 'pause_job', jobId: 'task-other' },
       'other-group',
       false,
       deps,
     );
-    expect(getTaskById('task-other')!.status).toBe('paused');
+    expect(getJobById('task-other')!.status).toBe('paused');
   });
 
   it('non-main group cannot pause another groups task', async () => {
-    await processTaskIpc(
-      { type: 'pause_task', taskId: 'task-main' },
+    await processJobIpc(
+      { type: 'pause_job', jobId: 'task-main' },
       'other-group',
       false,
       deps,
     );
-    expect(getTaskById('task-main')!.status).toBe('active');
+    expect(getJobById('task-main')!.status).toBe('active');
   });
 });
 
-// --- resume_task authorization ---
+// --- resume_job authorization ---
 
-describe('resume_task authorization', () => {
+describe('resume_job authorization', () => {
   beforeEach(() => {
-    createTask({
+    createJob({
       id: 'task-paused',
       group_folder: 'other-group',
       chat_jid: channelJid('other@g.us'),
@@ -225,41 +225,41 @@ describe('resume_task authorization', () => {
   });
 
   it('main group can resume any task', async () => {
-    await processTaskIpc(
-      { type: 'resume_task', taskId: 'task-paused' },
+    await processJobIpc(
+      { type: 'resume_job', jobId: 'task-paused' },
       'whatsapp_main',
       true,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('active');
+    expect(getJobById('task-paused')!.status).toBe('active');
   });
 
   it('non-main group can resume its own task', async () => {
-    await processTaskIpc(
-      { type: 'resume_task', taskId: 'task-paused' },
+    await processJobIpc(
+      { type: 'resume_job', jobId: 'task-paused' },
       'other-group',
       false,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('active');
+    expect(getJobById('task-paused')!.status).toBe('active');
   });
 
   it('non-main group cannot resume another groups task', async () => {
-    await processTaskIpc(
-      { type: 'resume_task', taskId: 'task-paused' },
+    await processJobIpc(
+      { type: 'resume_job', jobId: 'task-paused' },
       'third-group',
       false,
       deps,
     );
-    expect(getTaskById('task-paused')!.status).toBe('paused');
+    expect(getJobById('task-paused')!.status).toBe('paused');
   });
 });
 
-// --- cancel_task authorization ---
+// --- cancel_job authorization ---
 
-describe('cancel_task authorization', () => {
+describe('cancel_job authorization', () => {
   it('main group can cancel any task', async () => {
-    createTask({
+    createJob({
       id: 'task-to-cancel',
       group_folder: 'other-group',
       chat_jid: channelJid('other@g.us'),
@@ -272,17 +272,17 @@ describe('cancel_task authorization', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-to-cancel' },
+    await processJobIpc(
+      { type: 'cancel_job', jobId: 'task-to-cancel' },
       'whatsapp_main',
       true,
       deps,
     );
-    expect(getTaskById('task-to-cancel')).toBeUndefined();
+    expect(getJobById('task-to-cancel')).toBeUndefined();
   });
 
   it('non-main group can cancel its own task', async () => {
-    createTask({
+    createJob({
       id: 'task-own',
       group_folder: 'other-group',
       chat_jid: channelJid('other@g.us'),
@@ -295,17 +295,17 @@ describe('cancel_task authorization', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-own' },
+    await processJobIpc(
+      { type: 'cancel_job', jobId: 'task-own' },
       'other-group',
       false,
       deps,
     );
-    expect(getTaskById('task-own')).toBeUndefined();
+    expect(getJobById('task-own')).toBeUndefined();
   });
 
   it('non-main group cannot cancel another groups task', async () => {
-    createTask({
+    createJob({
       id: 'task-foreign',
       group_folder: 'whatsapp_main',
       chat_jid: channelJid('main@g.us'),
@@ -318,13 +318,13 @@ describe('cancel_task authorization', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    await processTaskIpc(
-      { type: 'cancel_task', taskId: 'task-foreign' },
+    await processJobIpc(
+      { type: 'cancel_job', jobId: 'task-foreign' },
       'other-group',
       false,
       deps,
     );
-    expect(getTaskById('task-foreign')).toBeDefined();
+    expect(getJobById('task-foreign')).toBeDefined();
   });
 });
 
@@ -332,7 +332,7 @@ describe('cancel_task authorization', () => {
 
 describe('register_group authorization', () => {
   it('non-main group cannot register a group', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
         type: 'register_group',
         jid: 'new@g.us',
@@ -350,7 +350,7 @@ describe('register_group authorization', () => {
   });
 
   it('main group cannot register with unsafe folder path', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
         type: 'register_group',
         jid: 'new@g.us',
@@ -372,12 +372,7 @@ describe('register_group authorization', () => {
 describe('refresh_groups authorization', () => {
   it('non-main group cannot trigger refresh', async () => {
     // This should be silently blocked (no crash, no effect)
-    await processTaskIpc(
-      { type: 'refresh_groups' },
-      'other-group',
-      false,
-      deps,
-    );
+    await processJobIpc({ type: 'refresh_groups' }, 'other-group', false, deps);
     // If we got here without error, the auth gate worked
   });
 });
@@ -436,13 +431,13 @@ describe('IPC message authorization', () => {
   });
 });
 
-// --- schedule_task with cron and interval types ---
+// --- schedule_job with cron and interval types ---
 
-describe('schedule_task schedule types', () => {
+describe('schedule_job schedule types', () => {
   it('creates task with cron schedule and computes next_run', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'cron task',
         schedule_type: 'cron',
         schedule_value: '0 9 * * *', // every day at 9am
@@ -453,20 +448,20 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0].schedule_type).toBe('cron');
-    expect(tasks[0].next_run).toBeTruthy();
+    const jobs = getAllJobs();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].schedule_type).toBe('cron');
+    expect(jobs[0].next_run).toBeTruthy();
     // next_run should be a valid ISO date in the future
-    expect(new Date(tasks[0].next_run!).getTime()).toBeGreaterThan(
+    expect(new Date(jobs[0].next_run!).getTime()).toBeGreaterThan(
       Date.now() - 60000,
     );
   });
 
   it('rejects invalid cron expression', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'bad cron',
         schedule_type: 'cron',
         schedule_value: 'not a cron',
@@ -477,15 +472,15 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(getAllJobs()).toHaveLength(0);
   });
 
   it('creates task with interval schedule', async () => {
     const before = Date.now();
 
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'interval task',
         schedule_type: 'interval',
         schedule_value: '3600000', // 1 hour
@@ -496,19 +491,19 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0].schedule_type).toBe('interval');
+    const jobs = getAllJobs();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].schedule_type).toBe('interval');
     // next_run should be ~1 hour from now
-    const nextRun = new Date(tasks[0].next_run!).getTime();
+    const nextRun = new Date(jobs[0].next_run!).getTime();
     expect(nextRun).toBeGreaterThanOrEqual(before + 3600000 - 1000);
     expect(nextRun).toBeLessThanOrEqual(Date.now() + 3600000 + 1000);
   });
 
   it('rejects invalid interval (non-numeric)', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'bad interval',
         schedule_type: 'interval',
         schedule_value: 'abc',
@@ -519,13 +514,13 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(getAllJobs()).toHaveLength(0);
   });
 
   it('rejects invalid interval (zero)', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'zero interval',
         schedule_type: 'interval',
         schedule_value: '0',
@@ -536,13 +531,13 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(getAllJobs()).toHaveLength(0);
   });
 
   it('rejects invalid once timestamp', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'bad once',
         schedule_type: 'once',
         schedule_value: 'not-a-date',
@@ -553,17 +548,17 @@ describe('schedule_task schedule types', () => {
       deps,
     );
 
-    expect(getAllTasks()).toHaveLength(0);
+    expect(getAllJobs()).toHaveLength(0);
   });
 });
 
 // --- context_mode defaulting ---
 
-describe('schedule_task context_mode', () => {
+describe('schedule_job context_mode', () => {
   it('accepts context_mode=group', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'group context',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -575,14 +570,14 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
-    expect(tasks[0].context_mode).toBe('group');
+    const jobs = getAllJobs();
+    expect(jobs[0].context_mode).toBe('group');
   });
 
   it('accepts context_mode=isolated', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'isolated context',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -594,14 +589,14 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
-    expect(tasks[0].context_mode).toBe('isolated');
+    const jobs = getAllJobs();
+    expect(jobs[0].context_mode).toBe('isolated');
   });
 
   it('defaults invalid context_mode to isolated', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'bad context',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -613,14 +608,14 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
-    expect(tasks[0].context_mode).toBe('isolated');
+    const jobs = getAllJobs();
+    expect(jobs[0].context_mode).toBe('isolated');
   });
 
   it('defaults missing context_mode to isolated', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
-        type: 'schedule_task',
+        type: 'schedule_job',
         prompt: 'no context mode',
         schedule_type: 'once',
         schedule_value: '2025-06-01T00:00:00',
@@ -631,8 +626,8 @@ describe('schedule_task context_mode', () => {
       deps,
     );
 
-    const tasks = getAllTasks();
-    expect(tasks[0].context_mode).toBe('isolated');
+    const jobs = getAllJobs();
+    expect(jobs[0].context_mode).toBe('isolated');
   });
 });
 
@@ -640,7 +635,7 @@ describe('schedule_task context_mode', () => {
 
 describe('register_group success', () => {
   it('main group can register a new group', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
         type: 'register_group',
         jid: 'new@g.us',
@@ -662,7 +657,7 @@ describe('register_group success', () => {
   });
 
   it('register_group rejects request with missing fields', async () => {
-    await processTaskIpc(
+    await processJobIpc(
       {
         type: 'register_group',
         jid: 'partial@g.us',

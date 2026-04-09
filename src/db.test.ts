@@ -2,17 +2,17 @@ import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   _initTestDatabase,
-  createTask,
-  deleteTask,
+  createJob,
+  deleteJob,
   getAllChats,
   getAllRegisteredGroups,
+  getJobById,
   getMessagesSince,
   getNewMessages,
-  getTaskById,
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
-  updateTask,
+  updateJob,
 } from './db.js';
 import { channelJid, type AnyJid, type ChannelJid } from './jid.js';
 
@@ -340,12 +340,12 @@ describe('storeChatMetadata', () => {
   });
 });
 
-// --- Task CRUD ---
+// --- Job CRUD ---
 
-describe('task CRUD', () => {
-  it('creates and retrieves a task', () => {
-    createTask({
-      id: 'task-1',
+describe('job CRUD', () => {
+  it('creates and retrieves a job', () => {
+    createJob({
+      id: 'job-1',
       group_folder: 'main',
       chat_jid: channelJid('group@g.us'),
       prompt: 'do something',
@@ -357,15 +357,15 @@ describe('task CRUD', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    const task = getTaskById('task-1');
-    expect(task).toBeDefined();
-    expect(task!.prompt).toBe('do something');
-    expect(task!.status).toBe('active');
+    const job = getJobById('job-1');
+    expect(job).toBeDefined();
+    expect(job!.prompt).toBe('do something');
+    expect(job!.status).toBe('active');
   });
 
-  it('updates task status', () => {
-    createTask({
-      id: 'task-2',
+  it('updates job status', () => {
+    createJob({
+      id: 'job-2',
       group_folder: 'main',
       chat_jid: channelJid('group@g.us'),
       prompt: 'test',
@@ -377,13 +377,13 @@ describe('task CRUD', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    updateTask('task-2', { status: 'paused' });
-    expect(getTaskById('task-2')!.status).toBe('paused');
+    updateJob('job-2', { status: 'paused' });
+    expect(getJobById('job-2')!.status).toBe('paused');
   });
 
-  it('deletes a task and its run logs', () => {
-    createTask({
-      id: 'task-3',
+  it('deletes a job and its run logs', () => {
+    createJob({
+      id: 'job-3',
       group_folder: 'main',
       chat_jid: channelJid('group@g.us'),
       prompt: 'delete me',
@@ -395,8 +395,8 @@ describe('task CRUD', () => {
       created_at: '2024-01-01T00:00:00.000Z',
     });
 
-    deleteTask('task-3');
-    expect(getTaskById('task-3')).toBeUndefined();
+    deleteJob('job-3');
+    expect(getJobById('job-3')).toBeUndefined();
   });
 });
 

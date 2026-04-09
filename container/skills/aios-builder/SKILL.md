@@ -36,7 +36,7 @@ Load on demand — when the agent needs specific guidance during work.
 | Agent Patterns | `reference/agent-patterns.md` | Before building or modifying an agent — what makes a good agent, CLAUDE.md conventions |
 | Skill Patterns | `reference/skill-patterns.md` | Before building or modifying a skill — structure, registries, deployment, multi-tenant |
 | Database Patterns | `reference/database-patterns.md` | Before designing a database — schema conventions, initialization, location |
-| Assignments Schema | `reference/assignments-schema.md` | Before querying or modifying the shared assignments database — DDL, meta fields, status lifecycle |
+| Tasks Schema | `reference/tasks-schema.md` | Before querying or modifying the shared tasks database — DDL, meta fields, status lifecycle |
 | Adversarial Review | `reference/adversarial-review.md` | Before running an adversarial review — reviewer protocol, invocation, resolution |
 | Multi-Tenant Example | `reference/multi-tenant-example.md` | Before building a multi-tenant skill — annotated case study of the three-tier pattern |
 | Onboarding Patterns | `reference/onboarding-patterns.md` | Before designing an agent's onboarding path or first-launch behavior |

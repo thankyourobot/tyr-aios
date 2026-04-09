@@ -5,7 +5,7 @@ import { CronExpressionParser } from 'cron-parser';
 
 import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { createJob, deleteJob, getJobById, updateJob } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { channelJid } from './jid.js';
 import { logger } from './logger.js';
@@ -20,7 +20,11 @@ export interface IpcSendMessageOpts {
 }
 
 export interface IpcDeps {
-  sendMessage: (jid: string, text: string, opts?: IpcSendMessageOpts) => Promise<void>;
+  sendMessage: (
+    jid: string,
+    text: string,
+    opts?: IpcSendMessageOpts,
+  ) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -126,7 +130,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
                     displayIconUrl: senderGroup?.displayIconUrl,
                   });
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup, threadTs: data.threadTs },
+                    {
+                      chatJid: data.chatJid,
+                      sourceGroup,
+                      threadTs: data.threadTs,
+                    },
                     'IPC message sent',
                   );
                 } else {
@@ -143,7 +151,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   deps.isGroupInChannel?.(data.chatJid, sourceGroup) ||
                   registeredGroups[data.chatJid]?.folder === sourceGroup;
                 if (isAuthorized && deps.onPlanReady) {
-                  await deps.onPlanReady(data.chatJid, sourceGroup, data.plan, data.threadTs);
+                  await deps.onPlanReady(
+                    data.chatJid,
+                    sourceGroup,
+                    data.plan,
+                    data.threadTs,
+                  );
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC plan_ready handled',
@@ -162,7 +175,12 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   deps.isGroupInChannel?.(data.chatJid, sourceGroup) ||
                   registeredGroups[data.chatJid]?.folder === sourceGroup;
                 if (isAuthorized && deps.onAskUser) {
-                  await deps.onAskUser(data.chatJid, sourceGroup, data.questions as unknown[], data.threadTs);
+                  await deps.onAskUser(
+                    data.chatJid,
+                    sourceGroup,
+                    data.questions as unknown[],
+                    data.threadTs,
+                  );
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup },
                     'IPC ask_user handled',
@@ -234,8 +252,8 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(tasksDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              // Pass source group identity to processTaskIpc for authorization
-              await processTaskIpc(data, sourceGroup, isMain, deps);
+              // Pass source group identity to processJobIpc for authorization
+              await processJobIpc(data, sourceGroup, isMain, deps);
               fs.unlinkSync(filePath);
             } catch (err) {
               logger.error(
@@ -263,10 +281,10 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
-export async function processTaskIpc(
+export async function processJobIpc(
   data: {
     type: string;
-    taskId?: string;
+    jobId?: string;
     prompt?: string;
     schedule_type?: string;
     schedule_value?: string;
@@ -289,7 +307,7 @@ export async function processTaskIpc(
   const registeredGroups = deps.registeredGroups();
 
   switch (data.type) {
-    case 'schedule_task':
+    case 'schedule_job':
       if (
         data.prompt &&
         data.schedule_type &&
@@ -303,7 +321,7 @@ export async function processTaskIpc(
         if (!targetGroupEntry) {
           logger.warn(
             { targetJid },
-            'Cannot schedule task: target group not registered',
+            'Cannot schedule job: target group not registered',
           );
           break;
         }
@@ -314,7 +332,7 @@ export async function processTaskIpc(
         if (!isMain && targetFolder !== sourceGroup) {
           logger.warn(
             { sourceGroup, targetFolder },
-            'Unauthorized schedule_task attempt blocked',
+            'Unauthorized schedule_job attempt blocked',
           );
           break;
         }
@@ -357,15 +375,15 @@ export async function processTaskIpc(
           nextRun = date.toISOString();
         }
 
-        const taskId =
-          data.taskId ||
-          `task-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const jobId =
+          data.jobId ||
+          `job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const contextMode =
           data.context_mode === 'group' || data.context_mode === 'isolated'
             ? data.context_mode
             : 'isolated';
-        createTask({
-          id: taskId,
+        createJob({
+          id: jobId,
           group_folder: targetFolder,
           chat_jid: targetJid,
           prompt: data.prompt,
@@ -377,85 +395,82 @@ export async function processTaskIpc(
           created_at: new Date().toISOString(),
         });
         logger.info(
-          { taskId, sourceGroup, targetFolder, contextMode },
-          'Task created via IPC',
+          { jobId, sourceGroup, targetFolder, contextMode },
+          'Job created via IPC',
         );
       }
       break;
 
-    case 'pause_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
-          updateTask(data.taskId, { status: 'paused' });
-          logger.info(
-            { taskId: data.taskId, sourceGroup },
-            'Task paused via IPC',
-          );
+    case 'pause_job':
+      if (data.jobId) {
+        const job = getJobById(data.jobId);
+        if (job && (isMain || job.group_folder === sourceGroup)) {
+          updateJob(data.jobId, { status: 'paused' });
+          logger.info({ jobId: data.jobId, sourceGroup }, 'Job paused via IPC');
         } else {
           logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task pause attempt',
+            { jobId: data.jobId, sourceGroup },
+            'Unauthorized job pause attempt',
           );
         }
       }
       break;
 
-    case 'resume_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
-          updateTask(data.taskId, { status: 'active' });
+    case 'resume_job':
+      if (data.jobId) {
+        const job = getJobById(data.jobId);
+        if (job && (isMain || job.group_folder === sourceGroup)) {
+          updateJob(data.jobId, { status: 'active' });
           logger.info(
-            { taskId: data.taskId, sourceGroup },
-            'Task resumed via IPC',
+            { jobId: data.jobId, sourceGroup },
+            'Job resumed via IPC',
           );
         } else {
           logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task resume attempt',
+            { jobId: data.jobId, sourceGroup },
+            'Unauthorized job resume attempt',
           );
         }
       }
       break;
 
-    case 'cancel_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (task && (isMain || task.group_folder === sourceGroup)) {
-          deleteTask(data.taskId);
+    case 'cancel_job':
+      if (data.jobId) {
+        const job = getJobById(data.jobId);
+        if (job && (isMain || job.group_folder === sourceGroup)) {
+          deleteJob(data.jobId);
           logger.info(
-            { taskId: data.taskId, sourceGroup },
-            'Task cancelled via IPC',
+            { jobId: data.jobId, sourceGroup },
+            'Job cancelled via IPC',
           );
         } else {
           logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task cancel attempt',
+            { jobId: data.jobId, sourceGroup },
+            'Unauthorized job cancel attempt',
           );
         }
       }
       break;
 
-    case 'update_task':
-      if (data.taskId) {
-        const task = getTaskById(data.taskId);
-        if (!task) {
+    case 'update_job':
+      if (data.jobId) {
+        const job = getJobById(data.jobId);
+        if (!job) {
           logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Task not found for update',
+            { jobId: data.jobId, sourceGroup },
+            'Job not found for update',
           );
           break;
         }
-        if (!isMain && task.group_folder !== sourceGroup) {
+        if (!isMain && job.group_folder !== sourceGroup) {
           logger.warn(
-            { taskId: data.taskId, sourceGroup },
-            'Unauthorized task update attempt',
+            { jobId: data.jobId, sourceGroup },
+            'Unauthorized job update attempt',
           );
           break;
         }
 
-        const updates: Parameters<typeof updateTask>[1] = {};
+        const updates: Parameters<typeof updateJob>[1] = {};
         if (data.prompt !== undefined) updates.prompt = data.prompt;
         if (data.schedule_type !== undefined)
           updates.schedule_type = data.schedule_type as
@@ -467,36 +482,36 @@ export async function processTaskIpc(
 
         // Recompute next_run if schedule changed
         if (data.schedule_type || data.schedule_value) {
-          const updatedTask = {
-            ...task,
+          const updatedJob = {
+            ...job,
             ...updates,
           };
-          if (updatedTask.schedule_type === 'cron') {
+          if (updatedJob.schedule_type === 'cron') {
             try {
               const interval = CronExpressionParser.parse(
-                updatedTask.schedule_value,
+                updatedJob.schedule_value,
                 { tz: TIMEZONE },
               );
               updates.next_run = interval.next().toISOString();
             } catch {
               logger.warn(
-                { taskId: data.taskId, value: updatedTask.schedule_value },
-                'Invalid cron in task update',
+                { jobId: data.jobId, value: updatedJob.schedule_value },
+                'Invalid cron in job update',
               );
               break;
             }
-          } else if (updatedTask.schedule_type === 'interval') {
-            const ms = parseInt(updatedTask.schedule_value, 10);
+          } else if (updatedJob.schedule_type === 'interval') {
+            const ms = parseInt(updatedJob.schedule_value, 10);
             if (!isNaN(ms) && ms > 0) {
               updates.next_run = new Date(Date.now() + ms).toISOString();
             }
           }
         }
 
-        updateTask(data.taskId, updates);
+        updateJob(data.jobId, updates);
         logger.info(
-          { taskId: data.taskId, sourceGroup, updates },
-          'Task updated via IPC',
+          { jobId: data.jobId, sourceGroup, updates },
+          'Job updated via IPC',
         );
       }
       break;

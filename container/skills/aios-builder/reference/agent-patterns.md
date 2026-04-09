@@ -12,7 +12,7 @@ Agents map to **departments/functions** (strategy, growth, finance) or **key ini
 
 **1. Specific goals.** The agent has a prime directive — an embedded intent it's always optimizing toward. This intent filters every decision about what skills to use, what actions to take, and what to ignore. An agent without clear goals becomes a chatbot.
 
-**2. Consistent personality and heartbeat.** The agent has a rhythm — it checks in proactively, reaches out at predictable times, and maintains a consistent character. Heartbeats (scheduled tasks) are how agents stay present without being asked.
+**2. Consistent personality and heartbeat.** The agent has a rhythm — it checks in proactively, reaches out at predictable times, and maintains a consistent character. Heartbeats (scheduled jobs) are how agents stay present without being asked.
 
 **3. Hyper-relevant skills.** When goals are narrow, it's obvious which skills belong and which don't. If a skill doesn't serve the agent's core goals, it shouldn't be added. Aim for 7-10 skills per agent maximum — beyond that, context gets clouded, the wrong tools get used, and personality gets muddled.
 

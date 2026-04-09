@@ -1,6 +1,6 @@
 # NanoClaw Specification
 
-A personal Claude assistant with multi-channel support, persistent memory per conversation, scheduled tasks, and container-isolated agent execution.
+A personal Claude assistant with multi-channel support, persistent memory per conversation, scheduled jobs, and container-isolated agent execution.
 
 ---
 
@@ -14,7 +14,7 @@ A personal Claude assistant with multi-channel support, persistent memory per co
 6. [Session Management](#session-management)
 7. [Message Flow](#message-flow)
 8. [Commands](#commands)
-9. [Scheduled Tasks](#scheduled-tasks)
+9. [Scheduled Jobs](#scheduled-jobs)
 10. [MCP Servers](#mcp-servers)
 11. [Deployment](#deployment)
 12. [Security Considerations](#security-considerations)
@@ -265,7 +265,7 @@ nanoclaw/
 │   ├── group-queue.ts             # Per-group queue with global concurrency limit
 │   ├── mount-security.ts          # Mount allowlist validation for containers
 │   ├── whatsapp-auth.ts           # Standalone WhatsApp authentication
-│   ├── task-scheduler.ts          # Runs scheduled tasks when due
+│   ├── job-scheduler.ts           # Runs scheduled jobs when due
 │   └── container-runner.ts        # Spawns agents in containers
 │
 ├── container/
@@ -306,7 +306,7 @@ nanoclaw/
 │
 ├── store/                         # Local data (gitignored)
 │   ├── auth/                      # WhatsApp authentication state
-│   └── messages.db                # SQLite database (messages, chats, scheduled_tasks, task_run_logs, registered_groups, sessions, router_state)
+│   └── messages.db                # SQLite database (messages, chats, scheduled_jobs, job_run_logs, registered_groups, sessions, router_state)
 │
 ├── data/                          # Application state (gitignored)
 │   ├── sessions/                  # Per-group session data (.claude/ dirs with JSONL transcripts)
@@ -553,7 +553,7 @@ This allows the agent to understand the conversation context even if it wasn't m
 
 ---
 
-## Scheduled Tasks
+## Scheduled Jobs
 
 NanoClaw has a built-in scheduler that runs tasks as full agents in their group's context.
 
@@ -577,7 +577,7 @@ NanoClaw has a built-in scheduler that runs tasks as full agents in their group'
 ```
 User: @Andy remind me every Monday at 9am to review the weekly metrics
 
-Claude: [calls mcp__nanoclaw__schedule_task]
+Claude: [calls mcp__nanoclaw__schedule_job]
         {
           "prompt": "Send a reminder to review weekly metrics. Be encouraging!",
           "schedule_type": "cron",
@@ -592,7 +592,7 @@ Claude: Done! I'll remind you every Monday at 9am.
 ```
 User: @Andy at 5pm today, send me a summary of today's emails
 
-Claude: [calls mcp__nanoclaw__schedule_task]
+Claude: [calls mcp__nanoclaw__schedule_job]
         {
           "prompt": "Search for today's emails, summarize the important ones, and send the summary to the group.",
           "schedule_type": "once",

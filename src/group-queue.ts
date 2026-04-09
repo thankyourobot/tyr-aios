@@ -7,7 +7,7 @@ import { stopContainer } from './container-runtime.js';
 import type { ChannelJid } from './jid.js';
 import { logger } from './logger.js';
 
-interface QueuedTask {
+interface QueuedWork {
   id: string;
   chatJid: ChannelJid;
   fn: () => Promise<void>;
@@ -20,7 +20,7 @@ const MAX_IDLE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 /**
  * Composite queue key: chatJid + threadTs + groupFolder.
  * Enables per-thread, per-agent parallel container execution.
- * Channel-root messages and scheduled tasks use '__root__' sentinel.
+ * Channel-root messages and scheduled jobs use '__root__' sentinel.
  */
 function queueKey(
   chatJid: ChannelJid,
@@ -33,10 +33,10 @@ function queueKey(
 interface GroupState {
   active: boolean;
   idleWaiting: boolean;
-  isTaskContainer: boolean;
-  runningTaskId: string | null;
+  isJobContainer: boolean;
+  runningJobId: string | null;
   pendingMessages: boolean;
-  pendingTasks: QueuedTask[];
+  pendingJobs: QueuedWork[];
   process: ChildProcess | null;
   containerName: string | null;
   groupFolder: string;
@@ -70,10 +70,10 @@ export class GroupQueue {
       state = {
         active: false,
         idleWaiting: false,
-        isTaskContainer: false,
-        runningTaskId: null,
+        isJobContainer: false,
+        runningJobId: null,
         pendingMessages: false,
-        pendingTasks: [],
+        pendingJobs: [],
         process: null,
         containerName: null,
         groupFolder,
@@ -197,53 +197,53 @@ export class GroupQueue {
     );
   }
 
-  enqueueTask(
+  enqueueJob(
     chatJid: ChannelJid,
-    taskId: string,
+    jobId: string,
     fn: () => Promise<void>,
     groupFolder: string,
   ): void {
     if (this.shuttingDown) return;
 
-    // Tasks always run on the __root__ slot
+    // Jobs always run on the __root__ slot
     const key = queueKey(chatJid, null, groupFolder);
     const state = this.getGroup(chatJid, null, groupFolder);
     state.lastActivity = Date.now();
 
-    // Prevent double-queuing: check both pending and currently-running task
-    if (state.runningTaskId === taskId) {
-      logger.debug({ chatJid, taskId }, 'Task already running, skipping');
+    // Prevent double-queuing: check both pending and currently-running job
+    if (state.runningJobId === jobId) {
+      logger.debug({ chatJid, jobId }, 'Job already running, skipping');
       return;
     }
-    if (state.pendingTasks.some((t) => t.id === taskId)) {
-      logger.debug({ chatJid, taskId }, 'Task already queued, skipping');
+    if (state.pendingJobs.some((j) => j.id === jobId)) {
+      logger.debug({ chatJid, jobId }, 'Job already queued, skipping');
       return;
     }
 
     if (state.active) {
-      state.pendingTasks.push({ id: taskId, chatJid, fn });
+      state.pendingJobs.push({ id: jobId, chatJid, fn });
       if (state.idleWaiting) {
         this.closeStdin(chatJid, null, groupFolder);
       }
-      logger.debug({ chatJid, taskId }, 'Container active, task queued');
+      logger.debug({ chatJid, jobId }, 'Container active, job queued');
       return;
     }
 
     if (this.activeCount >= MAX_CONCURRENT_CONTAINERS) {
-      state.pendingTasks.push({ id: taskId, chatJid, fn });
+      state.pendingJobs.push({ id: jobId, chatJid, fn });
       if (!this.waitingSlots.includes(key)) {
         this.waitingSlots.push(key);
       }
       logger.debug(
-        { chatJid, taskId, activeCount: this.activeCount },
-        'At concurrency limit, task queued',
+        { chatJid, jobId, activeCount: this.activeCount },
+        'At concurrency limit, job queued',
       );
       return;
     }
 
     // Run immediately
-    this.runTask(key, { id: taskId, chatJid, fn }).catch((err) =>
-      logger.error({ chatJid, taskId, err }, 'Unhandled error in runTask'),
+    this.runJob(key, { id: jobId, chatJid, fn }).catch((err) =>
+      logger.error({ chatJid, jobId, err }, 'Unhandled error in runJob'),
     );
   }
 
@@ -261,7 +261,7 @@ export class GroupQueue {
 
   /**
    * Mark the container as idle-waiting (finished work, waiting for IPC input).
-   * If tasks are pending on this slot, preempt the idle container immediately.
+   * If jobs are pending on this slot, preempt the idle container immediately.
    */
   notifyIdle(
     chatJid: ChannelJid,
@@ -270,14 +270,11 @@ export class GroupQueue {
   ): void {
     const state = this.getGroup(chatJid, threadTs, groupFolder);
     state.idleWaiting = true;
-    // Preempt for pending tasks (any slot) or pending root messages.
+    // Preempt for pending jobs (any slot) or pending root messages.
     // Root messages are independent conversations — no reason to idle-wait.
     // Thread slots keep idle-waiting so follow-ups can pipe to the container.
     const isRootSlot = !threadTs || threadTs === '__root__';
-    if (
-      state.pendingTasks.length > 0 ||
-      (isRootSlot && state.pendingMessages)
-    ) {
+    if (state.pendingJobs.length > 0 || (isRootSlot && state.pendingMessages)) {
       this.closeStdin(chatJid, threadTs, groupFolder);
     }
   }
@@ -294,7 +291,7 @@ export class GroupQueue {
     groupFolder: string,
   ): boolean {
     const state = this.getGroup(chatJid, threadTs, groupFolder);
-    if (!state.active || state.isTaskContainer) return false;
+    if (!state.active || state.isJobContainer) return false;
     state.idleWaiting = false; // Agent is about to receive work, no longer idle
 
     const threadKey = threadTs || '__root__';
@@ -394,7 +391,7 @@ export class GroupQueue {
     state.process = null;
     state.containerName = null;
     state.idleWaiting = false;
-    // Do NOT clear pendingMessages or pendingTasks — preserve the queue
+    // Do NOT clear pendingMessages or pendingJobs — preserve the queue
     this.activeCount--;
     this.drainWaiting();
 
@@ -407,19 +404,19 @@ export class GroupQueue {
    */
   getActiveGroups(): Array<{
     groupFolder: string;
-    isTaskContainer: boolean;
+    isJobContainer: boolean;
   }> {
     const seen = new Set<string>();
     const result: Array<{
       groupFolder: string;
-      isTaskContainer: boolean;
+      isJobContainer: boolean;
     }> = [];
     for (const [_key, state] of this.groups) {
       if (state.active && !seen.has(state.groupFolder)) {
         seen.add(state.groupFolder);
         result.push({
           groupFolder: state.groupFolder,
-          isTaskContainer: state.isTaskContainer,
+          isJobContainer: state.isJobContainer,
         });
       }
     }
@@ -436,7 +433,7 @@ export class GroupQueue {
     const state = this.getGroup(chatJid, threadTs, groupFolder);
     state.active = true;
     state.idleWaiting = false;
-    state.isTaskContainer = false;
+    state.isJobContainer = false;
     state.pendingMessages = false;
     state.lastActivity = Date.now();
     this.activeCount++;
@@ -512,33 +509,33 @@ export class GroupQueue {
     }
   }
 
-  private async runTask(key: string, task: QueuedTask): Promise<void> {
+  private async runJob(key: string, job: QueuedWork): Promise<void> {
     const state = this.groups.get(key);
     if (!state) return;
     state.active = true;
     state.lastActivity = Date.now();
     state.idleWaiting = false;
-    state.isTaskContainer = true;
-    state.runningTaskId = task.id;
+    state.isJobContainer = true;
+    state.runningJobId = job.id;
     this.activeCount++;
 
     logger.debug(
-      { key, taskId: task.id, activeCount: this.activeCount },
-      'Running queued task',
+      { key, jobId: job.id, activeCount: this.activeCount },
+      'Running queued job',
     );
 
     try {
-      await task.fn();
+      await job.fn();
     } catch (err) {
-      logger.error({ key, taskId: task.id, err }, 'Error running task');
+      logger.error({ key, jobId: job.id, err }, 'Error running job');
     } finally {
       this.cleanupThreadIpc(
         state.groupFolder,
         state.threadKey === '__root__' ? null : state.threadKey,
       );
       state.active = false;
-      state.isTaskContainer = false;
-      state.runningTaskId = null;
+      state.isJobContainer = false;
+      state.runningJobId = null;
       state.process = null;
       state.containerName = null;
       // groupFolder intentionally NOT cleared — drainGroup may need it
@@ -581,13 +578,13 @@ export class GroupQueue {
     const state = this.groups.get(key);
     if (!state) return;
 
-    // Tasks first (they won't be re-discovered from SQLite like messages)
-    if (state.pendingTasks.length > 0) {
-      const task = state.pendingTasks.shift()!;
-      this.runTask(key, task).catch((err) =>
+    // Jobs first (they won't be re-discovered from SQLite like messages)
+    if (state.pendingJobs.length > 0) {
+      const job = state.pendingJobs.shift()!;
+      this.runJob(key, job).catch((err) =>
         logger.error(
-          { key, taskId: task.id, err },
-          'Unhandled error in runTask (drain)',
+          { key, jobId: job.id, err },
+          'Unhandled error in runJob (drain)',
         ),
       );
       return;
@@ -613,7 +610,7 @@ export class GroupQueue {
       this.groups.delete(key);
     } else if (
       Date.now() - state.lastActivity > MAX_IDLE_AGE_MS &&
-      state.pendingTasks.length === 0 &&
+      state.pendingJobs.length === 0 &&
       !state.pendingMessages
     ) {
       logger.info(
@@ -636,13 +633,13 @@ export class GroupQueue {
       const state = this.groups.get(nextKey);
       if (!state) continue;
 
-      // Prioritize tasks over messages
-      if (state.pendingTasks.length > 0) {
-        const task = state.pendingTasks.shift()!;
-        this.runTask(nextKey, task).catch((err) =>
+      // Prioritize jobs over messages
+      if (state.pendingJobs.length > 0) {
+        const job = state.pendingJobs.shift()!;
+        this.runJob(nextKey, job).catch((err) =>
           logger.error(
-            { key: nextKey, taskId: task.id, err },
-            'Unhandled error in runTask (waiting)',
+            { key: nextKey, jobId: job.id, err },
+            'Unhandled error in runJob (waiting)',
           ),
         );
       } else if (state.pendingMessages) {

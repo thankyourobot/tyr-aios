@@ -17,7 +17,7 @@ Do NOT run the `/update-nanoclaw` skill — it is deprecated under the sibling-p
 - **Deployment:** single VM (Hetzner Cloud CX33, Nuremberg), rootful Docker, NanoClaw runs as root
 - **Channels:** Slack only (WhatsApp/Telegram/Discord/Gmail upstream adapters are present but unused)
 - **Agents:** 4 directors — Sherlock (strategy), Tom (operations), Ryan (growth), Alfred (back-office) — each with their own Slack app / bot user
-- **Orchestration model:** per-group queues, per-thread container isolation, `#all-directors` multi-group routing, inter-agent Slack @mentions, assignment system (`assignments.db`), plan-mode PreToolUse hooks
+- **Orchestration model:** per-group queues, per-thread container isolation, `#all-directors` multi-group routing, inter-agent Slack @mentions, task system (`tasks.db`), scheduled jobs (`scheduled_jobs` in messages.db), plan-mode PreToolUse hooks
 - **Memory model:** per-group `.claude/` directories, LCM conversation summaries with lineage and integrity checker
 - **Type safety:** branded types for `JID`, `BotUserId`, `AgentToken`
 - **Container hardening:** `--cap-drop=ALL`, `--security-opt=no-new-privileges:true`, Opus 4.6 with 1M context pinning, prompt redaction in logs, audit logging
@@ -35,8 +35,8 @@ Do NOT run the `/update-nanoclaw` skill — it is deprecated under the sibling-p
 | `src/container-runner.ts` | Spawns agent containers with mounts, env, security flags |
 | `src/container-runtime.ts` | Container runtime abstraction (host gateway detection, bind host, orphan cleanup) |
 | `src/credential-proxy.ts` | Anthropic credential injection proxy (to be replaced by OneCLI — see spec) |
-| `src/task-scheduler.ts` | Scheduled tasks and recurring assignments |
-| `src/db.ts` | SQLite operations (registered groups, assignments, messages) |
+| `src/job-scheduler.ts` | Scheduled jobs (recurring/cron work) |
+| `src/db.ts` | SQLite operations (registered groups, scheduled_jobs, messages) |
 | `src/jid.ts` | JID branded type and parsing |
 | `groups/{folder}/CLAUDE.md` | Per-group agent context (isolated) |
 | `groups/global/CLAUDE.md` | Shared agent context (read-only for non-main agents) |

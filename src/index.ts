@@ -56,7 +56,7 @@ import {
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
-import { startSchedulerLoop } from './task-scheduler.js';
+import { startSchedulerLoop } from './job-scheduler.js';
 import {
   Channel,
   NewMessage,
@@ -293,13 +293,20 @@ async function handleCommand(
     const signalPath = path.join(ipcDir, 'input', threadKey, '_lcm_compact');
     try {
       fs.mkdirSync(path.dirname(signalPath), { recursive: true });
-      fs.writeFileSync(signalPath, JSON.stringify({ timestamp: new Date().toISOString() }));
-      await channel.sendMessage(chatJid, 'Compacting memory... session has reset with summaries preserved. Please send a message to continue.', {
-        displayName: group.displayName,
-        displayEmoji: group.displayEmoji,
-        displayIconUrl: group.displayIconUrl,
-        threadTs: msg.threadTs,
-      });
+      fs.writeFileSync(
+        signalPath,
+        JSON.stringify({ timestamp: new Date().toISOString() }),
+      );
+      await channel.sendMessage(
+        chatJid,
+        'Compacting memory... session has reset with summaries preserved. Please send a message to continue.',
+        {
+          displayName: group.displayName,
+          displayEmoji: group.displayEmoji,
+          displayIconUrl: group.displayIconUrl,
+          threadTs: msg.threadTs,
+        },
+      );
     } catch (err) {
       logger.error({ err }, '*compact failed');
     }

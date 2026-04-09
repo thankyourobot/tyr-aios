@@ -13,7 +13,7 @@ vi.mock('./container-runner.js', () => ({
 }));
 
 vi.mock('./db.js', () => ({
-  getAllTasks: vi.fn(() => []),
+  getAllJobs: vi.fn(() => []),
   getGroupByFolder: vi.fn(),
   getJidsForFolder: vi.fn(() => []),
   getMessagesSinceIncludingBots: vi.fn(() => []),
@@ -23,7 +23,7 @@ vi.mock('./db.js', () => ({
 }));
 
 vi.mock('./snapshot-writer.js', () => ({
-  writeTasksSnapshot: vi.fn(),
+  writeJobsSnapshot: vi.fn(),
   writeGroupsSnapshot: vi.fn(),
   writeRecentActivitySnapshot: vi.fn(),
 }));

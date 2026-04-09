@@ -1,67 +1,67 @@
 import { getDb } from '../db.js';
 import type { ChannelJid } from '../jid.js';
-import { ScheduledTask, TaskRunLog } from '../types.js';
+import { ScheduledJob, JobRunLog } from '../types.js';
 
 /** DB rows have chat_jid as string; cast to ChannelJid at boundary. */
-type ScheduledTaskRow = Omit<ScheduledTask, 'chat_jid'> & {
+type ScheduledJobRow = Omit<ScheduledJob, 'chat_jid'> & {
   chat_jid: string;
 };
-function castTask(row: ScheduledTaskRow): ScheduledTask {
+function castJob(row: ScheduledJobRow): ScheduledJob {
   return { ...row, chat_jid: row.chat_jid as ChannelJid };
 }
 
-export function createTask(
-  task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
+export function createJob(
+  job: Omit<ScheduledJob, 'last_run' | 'last_result'>,
 ): void {
   getDb()
     .prepare(
       `
-    INSERT INTO scheduled_tasks (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
+    INSERT INTO scheduled_jobs (id, group_folder, chat_jid, prompt, schedule_type, schedule_value, context_mode, next_run, status, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
-      task.id,
-      task.group_folder,
-      task.chat_jid,
-      task.prompt,
-      task.schedule_type,
-      task.schedule_value,
-      task.context_mode || 'isolated',
-      task.next_run,
-      task.status,
-      task.created_at,
+      job.id,
+      job.group_folder,
+      job.chat_jid,
+      job.prompt,
+      job.schedule_type,
+      job.schedule_value,
+      job.context_mode || 'isolated',
+      job.next_run,
+      job.status,
+      job.created_at,
     );
 }
 
-export function getTaskById(id: string): ScheduledTask | undefined {
+export function getJobById(id: string): ScheduledJob | undefined {
   const row = getDb()
-    .prepare('SELECT * FROM scheduled_tasks WHERE id = ?')
-    .get(id) as ScheduledTaskRow | undefined;
-  return row ? castTask(row) : undefined;
+    .prepare('SELECT * FROM scheduled_jobs WHERE id = ?')
+    .get(id) as ScheduledJobRow | undefined;
+  return row ? castJob(row) : undefined;
 }
 
-export function getTasksForGroup(groupFolder: string): ScheduledTask[] {
+export function getJobsForGroup(groupFolder: string): ScheduledJob[] {
   const rows = getDb()
     .prepare(
-      'SELECT * FROM scheduled_tasks WHERE group_folder = ? ORDER BY created_at DESC',
+      'SELECT * FROM scheduled_jobs WHERE group_folder = ? ORDER BY created_at DESC',
     )
-    .all(groupFolder) as ScheduledTaskRow[];
-  return rows.map(castTask);
+    .all(groupFolder) as ScheduledJobRow[];
+  return rows.map(castJob);
 }
 
-export function getAllTasks(): ScheduledTask[] {
+export function getAllJobs(): ScheduledJob[] {
   const rows = getDb()
-    .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
-    .all() as ScheduledTaskRow[];
-  return rows.map(castTask);
+    .prepare('SELECT * FROM scheduled_jobs ORDER BY created_at DESC')
+    .all() as ScheduledJobRow[];
+  return rows.map(castJob);
 }
 
-export function updateTask(
+export function updateJob(
   id: string,
   updates: Partial<
     Pick<
-      ScheduledTask,
+      ScheduledJob,
       'prompt' | 'schedule_type' | 'schedule_value' | 'next_run' | 'status'
     >
   >,
@@ -94,30 +94,30 @@ export function updateTask(
 
   values.push(id);
   getDb()
-    .prepare(`UPDATE scheduled_tasks SET ${fields.join(', ')} WHERE id = ?`)
+    .prepare(`UPDATE scheduled_jobs SET ${fields.join(', ')} WHERE id = ?`)
     .run(...values);
 }
 
-export function deleteTask(id: string): void {
-  getDb().prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  getDb().prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+export function deleteJob(id: string): void {
+  getDb().prepare('DELETE FROM job_run_logs WHERE job_id = ?').run(id);
+  getDb().prepare('DELETE FROM scheduled_jobs WHERE id = ?').run(id);
 }
 
-export function getDueTasks(): ScheduledTask[] {
+export function getDueJobs(): ScheduledJob[] {
   const now = new Date().toISOString();
   const rows = getDb()
     .prepare(
       `
-    SELECT * FROM scheduled_tasks
+    SELECT * FROM scheduled_jobs
     WHERE status = 'active' AND next_run IS NOT NULL AND next_run <= ?
     ORDER BY next_run
   `,
     )
-    .all(now) as ScheduledTaskRow[];
-  return rows.map(castTask);
+    .all(now) as ScheduledJobRow[];
+  return rows.map(castJob);
 }
 
-export function updateTaskAfterRun(
+export function updateJobAfterRun(
   id: string,
   nextRun: string | null,
   lastResult: string,
@@ -126,7 +126,7 @@ export function updateTaskAfterRun(
   getDb()
     .prepare(
       `
-    UPDATE scheduled_tasks
+    UPDATE scheduled_jobs
     SET next_run = ?, last_run = ?, last_result = ?, status = CASE WHEN ? IS NULL THEN 'completed' ELSE status END
     WHERE id = ?
   `,
@@ -134,16 +134,16 @@ export function updateTaskAfterRun(
     .run(nextRun, now, lastResult, nextRun, id);
 }
 
-export function logTaskRun(log: TaskRunLog): void {
+export function logJobRun(log: JobRunLog): void {
   getDb()
     .prepare(
       `
-    INSERT INTO task_run_logs (task_id, run_at, duration_ms, status, result, error)
+    INSERT INTO job_run_logs (job_id, run_at, duration_ms, status, result, error)
     VALUES (?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
-      log.task_id,
+      log.job_id,
       log.run_at,
       log.duration_ms,
       log.status,

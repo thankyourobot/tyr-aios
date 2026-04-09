@@ -4,7 +4,7 @@ Reference for TYR's AI Operating System architecture. Read this to understand ho
 
 ## System Overview
 
-TYR's AI OS is a multi-agent system running on a single VM. NanoClaw is the runtime — a lightweight TypeScript orchestrator built on the Claude Agent SDK. Each agent execution runs in an ephemeral Docker container with isolated filesystem mounts. Agents communicate with humans via Slack and with each other via a shared SQLite task database.
+TYR's AI OS is a multi-agent system running on a single VM. NanoClaw is the runtime — a lightweight TypeScript orchestrator built on the Claude Agent SDK. Each agent execution runs in an ephemeral Docker container with isolated filesystem mounts. Agents communicate with humans via Slack and with each other via a shared SQLite tasks database.
 
 ## Groups
 
@@ -35,7 +35,7 @@ Mount logic, allowed tools, and SDK settings are defined in the NanoClaw source.
 ```
 /opt/nanoclaw/
 ├── src/                        # NanoClaw runtime source
-├── store/messages.db           # Core DB: messages, groups, sessions, scheduled tasks
+├── store/messages.db           # Core DB: messages, groups, sessions, scheduled jobs
 ├── groups/                     # Per-group workspaces
 │   ├── global/CLAUDE.md        # Shared context (mounted read-only to non-main groups)
 │   └── {folder}/               # One directory per group
@@ -74,7 +74,7 @@ Mount logic, allowed tools, and SDK settings are defined in the NanoClaw source.
 
 Main group also gets the NanoClaw project root mounted at `/workspace/project/` (read-only).
 
-**Write boundaries:** Non-main agents can only write to their own workspace, IPC directory, and allowlisted shared paths. They cannot write to the host, other groups' workspaces, or `container/skills/`. To deploy anything outside their workspace (e.g., a global skill), non-main agents create a task in the shared `assignments.db` for the main group agent to review and execute.
+**Write boundaries:** Non-main agents can only write to their own workspace, IPC directory, and allowlisted shared paths. They cannot write to the host, other groups' workspaces, or `container/skills/`. To deploy anything outside their workspace (e.g., a global skill), non-main agents create a task in the shared `tasks.db` for the main group agent to review and execute.
 
 Additional mounts beyond the defaults are controlled by the mount allowlist config on the host.
 
@@ -84,7 +84,7 @@ Additional mounts beyond the defaults are controlled by the mount allowlist conf
 
 Located at `container/skills/{skill-name}/`. NanoClaw's container runner copies these to each group's `.claude/skills/` on every container launch. Claude Code discovers them natively via `settingSources`.
 
-Global skill deployment requires host-level write access — only the main group agent can do this. Non-main agents build in their workspace and coordinate deployment via the shared task database. Once files are in `container/skills/`, the skill propagates to all agents on their next invocation.
+Global skill deployment requires host-level write access — only the main group agent can do this. Non-main agents build in their workspace and coordinate deployment via the shared tasks database. Once files are in `container/skills/`, the skill propagates to all agents on their next invocation.
 
 ### Group-Local Skills
 
@@ -119,9 +119,9 @@ Agents communicate via Slack @mentions. Director agents have their own Slack app
 
 **Channel roles:** Agents can be `director` (default responder) or `member` (requires @mention). Multiple agents can share a channel.
 
-### Shared Task Database
+### Shared Tasks Database
 
-The shared `assignments.db` remains available for asynchronous coordination when immediate attention isn't needed.
+The shared `tasks.db` remains available for asynchronous coordination when immediate attention isn't needed.
 
 ### Emoji Reactions
 
@@ -137,17 +137,17 @@ Agents have access to NanoClaw MCP tools. Two categories:
 
 **Host IPC tools** — bridge the container isolation boundary, communicating with the NanoClaw host process for actions the container can't do directly:
 - `send_message` — Post a Slack message
-- `schedule_task` / `list_tasks` / `pause_task` / `resume_task` / `cancel_task` / `update_task` — Manage scheduled tasks
+- `schedule_job` / `list_jobs` / `pause_job` / `resume_job` / `cancel_job` / `update_job` — Manage scheduled jobs (recurring/cron work)
 - `register_group` — Register a new group (main only)
 - `get_recent_activity` — Recent message activity snapshot
 
-**Assignment tools** — direct sqlite3 access to the shared assignments database (no host involvement needed):
-- `list_assignments` — List assignments (filtered by agent for non-main, all for main)
-- `create_assignment` — Create with required fields (title, agent_id, description, acceptance_criteria)
-- `update_assignment` — Update status, title, blocked_by, or meta
-- `complete_assignment` — Mark assignment as done
+**Task tools** — direct sqlite3 access to the shared tasks database (no host involvement needed). Tasks are one-off work items between agents:
+- `list_tasks` — List tasks (filtered by agent for non-main, all for main)
+- `create_task` — Create with required fields (title, agent_id, description, acceptance_criteria)
+- `update_task` — Update status, title, blocked_by, or meta
+- `complete_task` — Mark task as done
 
-**Scope:** Agents can send messages and reactions to channels where they are registered. The main group can send to any channel. Assignment tools are available to all agents.
+**Scope:** Agents can send messages and reactions to channels where they are registered. The main group can send to any channel. Task tools are available to all agents.
 
 ### IPC
 
@@ -155,12 +155,12 @@ Filesystem-based message passing at `/workspace/ipc/`. Used for piping follow-up
 
 ## Scheduling
 
-NanoClaw's task scheduler polls `scheduled_tasks` in `store/messages.db` for due tasks.
+NanoClaw's job scheduler polls `scheduled_jobs` in `store/messages.db` for due jobs.
 
 - **Schedule types:** `cron` (cron expression), `interval` (milliseconds), `one-shot` (ISO datetime)
-- **Targeting:** Each task specifies a `group_folder` (which agent runs it) and `chat_jid` (where output is sent)
+- **Targeting:** Each job specifies a `group_folder` (which agent runs it) and `chat_jid` (where output is sent)
 - **Context modes:** `isolated` (fresh container) or `group` (persistent session)
-- **Self-scheduling:** Agents can create tasks via the `schedule_task` MCP tool
+- **Self-scheduling:** Agents can create jobs via the `schedule_job` MCP tool
 
 Timezone is configured at the system level on the host.
 
@@ -171,17 +171,17 @@ Timezone is configured at the system level on the host.
 - **WAL mode** for databases accessed by multiple containers
 - **Agent-local databases** go in `/workspace/group/database/`
 - **Shared databases** go in `data/shared/` (host) → `/workspace/extra/shared/` (container)
-- **Task IDs** use ULIDs (sortable, no coordination needed)
+- **Task and job IDs** use ULIDs (sortable, no coordination needed)
 - **Backups:** Litestream continuously replicates SQLite databases to B2
 
 ### Core Databases
 
 | Database | Location | Purpose |
 |---|---|---|
-| `messages.db` | `store/` | Messages, groups, sessions, scheduled tasks (NanoClaw internal) |
-| `assignments.db` | `data/shared/` | Cross-agent task coordination |
+| `messages.db` | `store/` | Messages, groups, sessions, scheduled jobs (NanoClaw internal) |
+| `tasks.db` | `data/shared/` | Cross-agent task coordination |
 
-The shared `assignments.db` is the coordination mechanism between agents. Inspect its schema directly. Available inside containers at `/workspace/extra/shared/assignments.db`.
+The shared `tasks.db` is the coordination mechanism between agents. Inspect its schema directly. Available inside containers at `/workspace/extra/shared/tasks.db`.
 
 ## State & Persistence
 

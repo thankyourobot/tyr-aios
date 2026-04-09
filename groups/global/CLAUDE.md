@@ -25,7 +25,7 @@ These are different product choices. We do NOT measure our health by "commits be
 - `groups/strategy/projects/upstream-policy.md` — the policy (permanent guidance)
 - `groups/strategy/projects/upstream-watch.md` — the living triage log (updated when upstream changes are reviewed)
 
-As of 2026-04-08 these are drafts pending Sherlock's review and incorporation (see assignment in `assignments.db`).
+As of 2026-04-08 these are drafts pending Sherlock's review and incorporation (see task in `tasks.db`).
 
 **For agents working on infrastructure, security, or build/deploy code:**
 
@@ -86,16 +86,18 @@ Your workspace has a standardized structure:
 
 ## Task Management
 
-All agents share a task database at `/workspace/extra/shared/assignments.db` (SQLite, WAL mode).
-Use the assignment MCP tools (`list_assignments`, `create_assignment`, `update_assignment`, `complete_assignment`) as the primary interface. Fall back to `sqlite3` CLI for manual inspection or debugging.
+All agents share a task database at `/workspace/extra/shared/tasks.db` (SQLite, WAL mode).
+Use the task MCP tools (`list_tasks`, `create_task`, `update_task`, `complete_task`) as the primary interface. Fall back to `sqlite3` CLI for manual inspection or debugging.
+
+**Tasks vs jobs:** Tasks are one-off work items between agents. Jobs are recurring/scheduled work (heartbeats, daily reports) — managed via `schedule_job`/`list_jobs`/etc. tools.
 
 **Key columns:** `id`, `title`, `agent_id`, `status`, `blocked_by`, `meta` (JSON)
 **Status values:** `open`, `active`, `blocked`, `done`
 **Status lifecycle:** `open` → (plan approved) → `active` → `done`. Set `blocked` when not ready to start.
 
-### Assignment Creation Standards
+### Task Creation Standards
 
-Assignments MUST include these fields in `meta` (JSON):
+Tasks MUST include these fields in `meta` (JSON):
 - `meta.description` (required): WHY this needs doing — background context and motivation
 - `meta.acceptance_criteria` (required): how to verify the work is done correctly
 - `meta.source` (required): who created it — human name or agent folder
@@ -105,11 +107,11 @@ Optional meta fields:
 - `meta.constraints`: what NOT to do, scope limits
 - `meta.references`: file paths, specs, conversation context
 
-**Underspecified assignments:** Assignments without `description` and `acceptance_criteria` are underspecified. Do NOT start work on them — ask for clarification from the creator (`meta.source`) first.
+**Underspecified tasks:** Tasks without `description` and `acceptance_criteria` are underspecified. Do NOT start work on them — ask for clarification from the creator (`meta.source`) first.
 
 ### Blocking
 
-`blocked_by` is an informal freetext field. Use it to note what's blocking — assignment IDs, descriptions, external dependencies. There is no automated cascade. When you see a blocked assignment during a heartbeat, check the blocker's status yourself and move the assignment to `open` if the blocker is resolved.
+`blocked_by` is an informal freetext field. Use it to note what's blocking — task IDs, descriptions, external dependencies. There is no automated cascade. When you see a blocked task during a heartbeat, check the blocker's status yourself and move the task to `open` if the blocker is resolved.
 
 ## Inter-Agent Communication
 
@@ -131,9 +133,9 @@ Prefer reactions over "Got it" or "Acknowledged" messages.
 
 **Anti-loop rule:** When responding to another agent, do NOT @mention them back unless you need them to take a specific new action. Your response goes to the thread — they'll see it. Mentioning them would trigger re-processing unnecessarily.
 
-## Scheduled Tasks
+## Scheduled Jobs
 
-Use the `schedule_task` MCP tool to create recurring or one-shot tasks. You can schedule tasks for yourself; only the main group agent can schedule tasks for other agents.
+Use the `schedule_job` MCP tool to create recurring or one-shot jobs. You can schedule jobs for yourself; only the main group agent can schedule jobs for other agents.
 
 **Critical: your response IS the message.** NanoClaw posts your output directly to the channel. This means:
 - If you want to stay silent, produce **no output at all** — do not say "staying silent" or "nothing to do"

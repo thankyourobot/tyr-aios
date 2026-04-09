@@ -57,7 +57,7 @@ interface ContainerInput {
   groupFolder: string;
   chatJid: string;
   isMain: boolean;
-  isScheduledTask?: boolean;
+  isScheduledJob?: boolean;
   assistantName?: string;
   verbose?: boolean;
   thinking?: boolean;
@@ -896,8 +896,8 @@ async function main(): Promise<void> {
   if (containerInput.planMode) {
     prompt += `\n\n[PLAN MODE — You MUST call the EnterPlanMode tool as your very first action. Do NOT respond to the user yet. Call EnterPlanMode first, then explore the codebase and design your approach. Use AskUserQuestion if you need to clarify requirements. When your plan is complete, call ExitPlanMode to present it for approval. Do NOT execute — wait for user approval.]`;
   }
-  if (containerInput.isScheduledTask) {
-    prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
+  if (containerInput.isScheduledJob) {
+    prompt = `[SCHEDULED JOB - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
   const pending = drainIpcInput();
   if (pending.length > 0) {

@@ -131,7 +131,7 @@ describe('GroupQueue', () => {
     const taskFn = vi.fn(async () => {
       executionOrder.push('task');
     });
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
     queue.enqueueMessageCheck(G1, null, GF);
 
     // Release the first processing
@@ -263,14 +263,14 @@ describe('GroupQueue', () => {
     });
 
     // Start the task (runs immediately — slot available)
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
     await vi.advanceTimersByTimeAsync(10);
     expect(taskCallCount).toBe(1);
 
     // Scheduler poll re-discovers the same task while it's running —
     // this must be silently dropped
     const dupFn = vi.fn(async () => {});
-    queue.enqueueTask(G1, 'task-1', dupFn, GF);
+    queue.enqueueJob(G1, 'task-1', dupFn, GF);
     await vi.advanceTimersByTimeAsync(10);
 
     // Duplicate was NOT queued
@@ -308,7 +308,7 @@ describe('GroupQueue', () => {
 
     // Enqueue a task while container is active but NOT idle
     const taskFn = vi.fn(async () => {});
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
 
     // _close should NOT have been written (container is working, not idle)
     const writeFileSync = vi.mocked(fs.default.writeFileSync);
@@ -347,7 +347,7 @@ describe('GroupQueue', () => {
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
 
     // _close SHOULD have been written (container is idle)
     const closeWrites = writeFileSync.mock.calls.filter(
@@ -386,7 +386,7 @@ describe('GroupQueue', () => {
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
 
     const closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
@@ -406,8 +406,8 @@ describe('GroupQueue', () => {
       });
     });
 
-    // Start a task (sets isTaskContainer = true)
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    // Start a task (sets isJobContainer = true)
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
     await vi.advanceTimersByTimeAsync(10);
     queue.registerProcess(G1, null, {} as any, 'container-1', GF);
 
@@ -631,7 +631,7 @@ describe('GroupQueue', () => {
     writeFileSync.mockClear();
 
     const taskFn = vi.fn(async () => {});
-    queue.enqueueTask(G1, 'task-1', taskFn, GF);
+    queue.enqueueJob(G1, 'task-1', taskFn, GF);
 
     let closeWrites = writeFileSync.mock.calls.filter(
       (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),

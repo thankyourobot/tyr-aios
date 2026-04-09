@@ -84,7 +84,7 @@ export interface SendMessageOpts {
   botToken?: string; // Per-agent bot token — post as this agent's Slack app instead of the default
 }
 
-export interface ScheduledTask {
+export interface ScheduledJob {
   id: string;
   group_folder: string;
   chat_jid: ChannelJid;
@@ -99,8 +99,8 @@ export interface ScheduledTask {
   created_at: string;
 }
 
-export interface TaskRunLog {
-  task_id: string;
+export interface JobRunLog {
+  job_id: string;
   run_at: string;
   duration_ms: number;
   status: 'success' | 'error';
@@ -174,7 +174,7 @@ export interface ContainerInput {
   groupFolder: string;
   chatJid: AnyJid;
   isMain: boolean;
-  isScheduledTask?: boolean;
+  isScheduledJob?: boolean;
   assistantName?: string;
   verbose?: boolean;
   thinking?: boolean;

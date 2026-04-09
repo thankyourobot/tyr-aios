@@ -6,7 +6,7 @@ import type { AppState } from './app-state.js';
 import { runContainerAgent } from './container-runner.js';
 import { ContainerOutput } from './types.js';
 import {
-  getAllTasks,
+  getAllJobs,
   getGroupByFolder,
   getJidsForFolder,
   getMessagesSinceIncludingBots,
@@ -21,8 +21,8 @@ import { logger } from './logger.js';
 import { findChannel } from './router.js';
 import {
   writeGroupsSnapshot,
+  writeJobsSnapshot,
   writeRecentActivitySnapshot,
-  writeTasksSnapshot,
 } from './snapshot-writer.js';
 import { FileAttachment, RegisteredGroup } from './types.js';
 
@@ -113,19 +113,19 @@ export class AgentExecutor {
         : threadSessionId || parentSessionId;
     const shouldFork = rewindOpts ? true : isNewThread;
 
-    // Update tasks snapshot for container to read (filtered by group)
-    const tasks = getAllTasks();
-    writeTasksSnapshot(
+    // Update jobs snapshot for container to read (filtered by group)
+    const jobs = getAllJobs();
+    writeJobsSnapshot(
       group.folder,
       isMain,
-      tasks.map((t) => ({
-        id: t.id,
-        groupFolder: t.group_folder,
-        prompt: t.prompt,
-        schedule_type: t.schedule_type,
-        schedule_value: t.schedule_value,
-        status: t.status,
-        next_run: t.next_run,
+      jobs.map((j) => ({
+        id: j.id,
+        groupFolder: j.group_folder,
+        prompt: j.prompt,
+        schedule_type: j.schedule_type,
+        schedule_value: j.schedule_value,
+        status: j.status,
+        next_run: j.next_run,
       })),
     );
 

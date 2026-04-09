@@ -48,17 +48,17 @@ The meta-loop also reviews the loops themselves — not just the map. Are the ca
 
 Meta-loop cadence scales with maturity. Early-stage: the map is rough and revision should be frequent. Mature: revision happens on meaningful triggers — a consistent pattern in research, a sub-function persistently underperforming, a significant external shift in the domain.
 
-## Gaps as Tasks
+## Gaps as Tasks and Jobs
 
-The gap analysis has no value if it doesn't change what the agent does. Every meaningful gap should translate to work — tracked in `assignments.db` and driven to completion through the standard heartbeat loop.
+The gap analysis has no value if it doesn't change what the agent does. Every meaningful gap should translate to work — tracked in `tasks.db` (one-off) or `scheduled_jobs` (recurring) and driven to completion through the standard heartbeat loop.
 
 Two types of work emerge from a gap analysis:
 
-**One-off tasks** close a specific gap — build this process, configure this integration, deliver this artifact. Create them in `assignments.db` with enough context to act on. The heartbeat picks them up.
+**One-off tasks** close a specific gap — build this process, configure this integration, deliver this artifact. Create them in `tasks.db` with enough context to act on. The heartbeat picks them up.
 
-**Recurring tasks** address gaps that require ongoing attention — a domain research cadence, a monitoring check, a periodic review. These become scheduled tasks via the `schedule_task` MCP tool.
+**Recurring jobs** address gaps that require ongoing attention — a domain research cadence, a monitoring check, a periodic review. These become scheduled jobs via the `schedule_job` MCP tool.
 
-All three loops are recurring tasks. Schedule them. A loop that only runs when someone thinks to do it isn't a loop — it's an intention. Domain research and execution signal cadence scales with domain velocity — fast-moving functions (growth, product) warrant higher frequency; stable functions can run slower. Meta-loop cadence scales with maturity — earlier stages revisit the map more often; mature domains wait for meaningful triggers.
+All three loops are recurring jobs. Schedule them. A loop that only runs when someone thinks to do it isn't a loop — it's an intention. Domain research and execution signal cadence scales with domain velocity — fast-moving functions (growth, product) warrant higher frequency; stable functions can run slower. Meta-loop cadence scales with maturity — earlier stages revisit the map more often; mature domains wait for meaningful triggers.
 
 A gap analysis that isn't generating tasks isn't working. If the map is growing but the task queue isn't moving, the map has become overhead.
 

@@ -11,7 +11,7 @@ let db: Database.Database;
  * change in a way that diverges from on-disk DBs that pre-date the change.
  * Read with `PRAGMA user_version`. Verified at startup by assertSchemaIsCanonical.
  */
-const SCHEMA_USER_VERSION = 1;
+const SCHEMA_USER_VERSION = 2;
 
 /** Access the shared database instance. Used by store modules. */
 export function getDb(): Database.Database {
@@ -43,7 +43,7 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
 
-    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
       chat_jid TEXT NOT NULL,
@@ -57,22 +57,22 @@ function createSchema(database: Database.Database): void {
       created_at TEXT NOT NULL,
       context_mode TEXT DEFAULT 'isolated'
     );
-    CREATE INDEX IF NOT EXISTS idx_next_run ON scheduled_tasks(next_run);
-    CREATE INDEX IF NOT EXISTS idx_status ON scheduled_tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_next_run ON scheduled_jobs(next_run);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_status ON scheduled_jobs(status);
 
-    CREATE TABLE IF NOT EXISTS task_run_logs (
+    CREATE TABLE IF NOT EXISTS job_run_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      task_id TEXT NOT NULL,
+      job_id TEXT NOT NULL,
       run_at TEXT NOT NULL,
       duration_ms INTEGER NOT NULL,
       status TEXT NOT NULL,
       result TEXT,
       error TEXT,
-      FOREIGN KEY (task_id) REFERENCES scheduled_tasks(id)
+      FOREIGN KEY (job_id) REFERENCES scheduled_jobs(id)
     );
-    CREATE INDEX IF NOT EXISTS idx_task_run_logs ON task_run_logs(task_id, run_at);
+    CREATE INDEX IF NOT EXISTS idx_job_run_logs ON job_run_logs(job_id, run_at);
     CREATE INDEX IF NOT EXISTS idx_messages_chat_timestamp ON messages(chat_jid, timestamp);
-    CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_group ON scheduled_tasks(group_folder);
+    CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_group ON scheduled_jobs(group_folder);
 
     CREATE TABLE IF NOT EXISTS router_state (
       key TEXT PRIMARY KEY,
@@ -214,6 +214,6 @@ export function _initTestDatabase(): void {
 
 // Re-export store functions through the unified db namespace
 export * from './stores/chat-store.js';
-export * from './stores/task-store.js';
+export * from './stores/job-store.js';
 export * from './stores/group-store.js';
 export * from './stores/session-store.js';

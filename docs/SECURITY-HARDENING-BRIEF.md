@@ -228,7 +228,7 @@ If a compromise is suspected, rotate in this order:
 2. All Slack bot tokens (4 agents, each has its own app)
 3. GitHub deploy key
 4. SSH key to VM (generate new key, update `authorized_keys`)
-5. Review assignments.db and messages.db for unauthorized modifications
+5. Review tasks.db and messages.db for unauthorized modifications
 6. Check git log on VM for unexpected commits
 7. Rebuild container image from clean Dockerfile
 8. Review NanoClaw source for modifications (especially `credential-proxy.ts`, `mount-security.ts`, `container-runner.ts`)
@@ -265,7 +265,7 @@ Recommended additions:
 
 **Recent activity snapshot (MEDIUM)** — `src/agent-executor.ts` lines 134-160 / `src/snapshot-writer.ts`. First 200 chars of recent messages written to `recent_activity.json` in IPC dirs. By design (agents need context), but persists on disk.
 
-**Task result summaries (LOW)** — `src/task-scheduler.ts` line 245. First 200 chars stored in SQLite `scheduled_tasks` table.
+**Job result summaries (LOW)** — `src/job-scheduler.ts`. First 200 chars stored in SQLite `scheduled_jobs` table.
 
 ### What doesn't exist yet
 - No log rotation policy — journalctl and container log files grow unbounded

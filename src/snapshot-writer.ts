@@ -16,10 +16,10 @@ function ensureIpcDir(groupFolder: string): string {
   return dir;
 }
 
-export function writeTasksSnapshot(
+export function writeJobsSnapshot(
   groupFolder: string,
   isMain: boolean,
-  tasks: Array<{
+  jobs: Array<{
     id: string;
     groupFolder: string;
     prompt: string;
@@ -31,13 +31,13 @@ export function writeTasksSnapshot(
 ): void {
   const groupIpcDir = ensureIpcDir(groupFolder);
 
-  // Main sees all tasks, others only see their own
-  const filteredTasks = isMain
-    ? tasks
-    : tasks.filter((t) => t.groupFolder === groupFolder);
+  // Main sees all jobs, others only see their own
+  const filteredJobs = isMain
+    ? jobs
+    : jobs.filter((j) => j.groupFolder === groupFolder);
 
-  const tasksFile = path.join(groupIpcDir, 'current_tasks.json');
-  fs.writeFileSync(tasksFile, JSON.stringify(filteredTasks, null, 2));
+  const jobsFile = path.join(groupIpcDir, 'current_jobs.json');
+  fs.writeFileSync(jobsFile, JSON.stringify(filteredJobs, null, 2));
 }
 
 /**

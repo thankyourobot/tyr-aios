@@ -609,7 +609,7 @@ export async function runContainerAgent(
 
 // Re-export snapshot functions from their new home
 export {
-  writeTasksSnapshot,
+  writeJobsSnapshot,
   writeGroupsSnapshot,
   writeRecentActivitySnapshot,
   type AvailableGroup,

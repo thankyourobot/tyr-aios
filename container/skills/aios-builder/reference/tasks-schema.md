@@ -1,6 +1,8 @@
-# Assignments Database Schema
+# Tasks Database Schema
 
-Schema reference for `/workspace/extra/shared/assignments.db` — the cross-agent work coordination database.
+Schema reference for `/workspace/extra/shared/tasks.db` — the cross-agent work coordination database.
+
+**Tasks vs jobs:** Tasks (this database) are one-off work items between agents. Jobs are recurring/scheduled work managed by the host scheduler in `messages.db` `scheduled_jobs` table — see `schedule_job` / `list_jobs` MCP tools.
 
 ## DDL
 
@@ -14,7 +16,7 @@ CREATE TABLE IF NOT EXISTS agents (
   created TEXT DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS assignments (
+CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
   agent_id TEXT NOT NULL REFERENCES agents(id),
@@ -25,8 +27,8 @@ CREATE TABLE IF NOT EXISTS assignments (
   updated TEXT DEFAULT (datetime('now'))
 );
 
-CREATE INDEX IF NOT EXISTS idx_assignments_agent_status ON assignments(agent_id, status);
-CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
+CREATE INDEX IF NOT EXISTS idx_tasks_agent_status ON tasks(agent_id, status);
+CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 ```
 
 ## Status Lifecycle
@@ -40,7 +42,7 @@ CREATE INDEX IF NOT EXISTS idx_assignments_status ON assignments(status);
 
 **Expected flow:** `open` → (plan approved) → `active` → `done`
 
-Agents evaluate readiness during heartbeats. An assignment should not move to `active` without a plan being approved first.
+Agents evaluate readiness during heartbeats. A task should not move to `active` without a plan being approved first.
 
 ## Meta Fields
 
@@ -52,7 +54,7 @@ The `meta` column stores a JSON object. Required and optional fields:
 |-------|---------|---------|
 | `description` | WHY this needs doing — background and motivation | `"We need domain research to inform the GTM strategy for Q2"` |
 | `acceptance_criteria` | How to verify the work is done correctly | `"Research doc covers 5+ competitors with pricing, positioning, and differentiation"` |
-| `source` | Who created this assignment | `"jeremiah"` or `"strategy"` |
+| `source` | Who created this task | `"jeremiah"` or `"strategy"` |
 
 ### Optional
 
@@ -65,15 +67,15 @@ The `meta` column stores a JSON object. Required and optional fields:
 ## Blocking
 
 `blocked_by` is an informal freetext field. Use it to describe what's blocking:
-- Assignment IDs: `"01JQXYZ123"`
+- Task IDs: `"01JQXYZ123"`
 - Descriptions: `"Waiting on API key from Jeremiah"`
 - Multiple blockers: `"01JQXYZ123, need Slack app created for growth agent"`
 
-There is no automated cascade. Agents check blocker status during heartbeats and move assignments from `blocked` to `open` when blockers are resolved.
+There is no automated cascade. Agents check blocker status during heartbeats and move tasks from `blocked` to `open` when blockers are resolved.
 
 ## Agents Table
 
-The `agents` table registers which agents can receive assignments:
+The `agents` table registers which agents can receive tasks:
 
 | Column | Type | Purpose |
 |--------|------|---------|
@@ -83,20 +85,20 @@ The `agents` table registers which agents can receive assignments:
 
 ## Standard Queries
 
-**List open assignments for an agent:**
+**List open tasks for an agent:**
 ```sql
 SELECT id, title, status, blocked_by,
   json_extract(meta, '$.description') as description,
   json_extract(meta, '$.acceptance_criteria') as criteria,
   json_extract(meta, '$.priority') as priority
-FROM assignments
+FROM tasks
 WHERE agent_id = 'strategy' AND status IN ('open', 'active', 'blocked')
 ORDER BY created;
 ```
 
-**Create an assignment:**
+**Create a task:**
 ```sql
-INSERT INTO assignments (id, title, agent_id, status, blocked_by, meta)
+INSERT INTO tasks (id, title, agent_id, status, blocked_by, meta)
 VALUES (
   '01JQXYZ123',
   'Create domain research skill',
@@ -109,15 +111,15 @@ VALUES (
 
 **Update status:**
 ```sql
-UPDATE assignments SET status = 'active', updated = datetime('now') WHERE id = '01JQXYZ123';
+UPDATE tasks SET status = 'active', updated = datetime('now') WHERE id = '01JQXYZ123';
 ```
 
-**Complete an assignment:**
+**Complete a task:**
 ```sql
-UPDATE assignments SET status = 'done', updated = datetime('now') WHERE id = '01JQXYZ123';
+UPDATE tasks SET status = 'done', updated = datetime('now') WHERE id = '01JQXYZ123';
 ```
 
 **Check if a blocker is resolved:**
 ```sql
-SELECT id, status FROM assignments WHERE id = '01JQXYZ123';
+SELECT id, status FROM tasks WHERE id = '01JQXYZ123';
 ```
