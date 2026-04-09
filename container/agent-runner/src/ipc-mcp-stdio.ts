@@ -470,7 +470,8 @@ function ensureTasksSchema(dbPath: string): void {
       agent_id TEXT NOT NULL REFERENCES agents(id),
       status TEXT NOT NULL DEFAULT 'open',
       blocked_by TEXT,
-      meta TEXT DEFAULT '{}',
+      meta JSON,
+      workpaper TEXT,
       created TEXT DEFAULT (datetime('now')),
       updated TEXT DEFAULT (datetime('now'))
     );

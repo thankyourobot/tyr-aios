@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   agent_id TEXT NOT NULL REFERENCES agents(id),
   status TEXT NOT NULL DEFAULT 'open',
   blocked_by TEXT,
-  meta TEXT DEFAULT '{}',
+  meta JSON,
+  workpaper TEXT,
   created TEXT DEFAULT (datetime('now')),
   updated TEXT DEFAULT (datetime('now'))
 );
@@ -77,6 +78,14 @@ The `meta` column stores a JSON object. Required and optional fields:
 - Multiple blockers: `"01JQXYZ123, need Slack app created for growth agent"`
 
 There is no automated cascade. Agents check blocker status during heartbeats and move tasks from `blocked` to `open` when blockers are resolved.
+
+## Workpaper Field
+
+The `workpaper` column is an optional freetext field for linking a task to its associated workpaper document(s) in the agent's `projects/` directory. Currently info-only — no code reads it. Kept for forward-compat: lets agents associate tasks with detailed project documents without requiring a schema migration.
+
+Examples:
+- Single path: `"projects/gap-analysis/domain-model.md"`
+- Comma-separated: `"projects/security-hardening.md, projects/supply-chain-briefing.md"`
 
 ## Agents Table
 
