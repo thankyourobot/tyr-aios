@@ -26,7 +26,6 @@ vi.mock('./config.js', () => ({
   CONTAINER_IMAGE: 'nanoclaw-agent:latest',
   CONTAINER_MAX_OUTPUT_SIZE: 10485760,
   CONTAINER_TIMEOUT: 1800000,
-  CREDENTIAL_PROXY_PORT: 3001,
   DATA_DIR: '/tmp/nanoclaw-test-data',
   GROUPS_DIR: '/tmp/nanoclaw-test-groups',
   IDLE_TIMEOUT: 1800000,
@@ -94,7 +93,9 @@ vi.mock('child_process', async () => {
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
 import { channelJid } from './jid.js';
+import { logger } from './logger.js';
 import type { RegisteredGroup } from './types.js';
+import fs from 'fs';
 
 function createFakeProcess() {
   const proc = new EventEmitter() as EventEmitter & {
@@ -144,6 +145,9 @@ describe('container-runner OneCLI branch', () => {
     hoisted.spawnMock.mockReset();
     hoisted.spawnMock.mockImplementation(() => fakeProc);
     hoisted.mockApplyContainerConfig.mockReset();
+    // Default: SDK succeeds with no env-var injections. Tests that need to
+    // inspect HTTPS_PROXY/CLAUDE_CODE_OAUTH_TOKEN injection override this.
+    hoisted.mockApplyContainerConfig.mockResolvedValue(true);
     hoisted.mockEnsureAgent.mockReset();
   });
 
@@ -242,5 +246,123 @@ describe('container-runner OneCLI branch', () => {
     ).rejects.toThrow('OneCLIError: fetch failed');
 
     expect(hoisted.spawnMock).not.toHaveBeenCalled();
+  });
+
+  // --- runContainerAgent lifecycle tests (timeout, redaction, exit handling).
+  // These don't care about the credential layer; they exercise child process
+  // management and use the default mockResolvedValue(true) from beforeEach.
+
+  it('timeout after output resolves as success', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Here is my response',
+      newSessionId: 'session-123',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Fire the hard timeout (IDLE_TIMEOUT + 30s = 1830000ms)
+    await vi.advanceTimersByTimeAsync(1830000);
+
+    // Emit close event (as if container was stopped by the timeout)
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.newSessionId).toBe('session-123');
+    expect(onOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ result: 'Here is my response' }),
+    );
+  });
+
+  it('timeout with no output resolves as error', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    await vi.advanceTimersByTimeAsync(1830000);
+    fakeProc.emit('close', 137);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('timed out');
+    expect(onOutput).not.toHaveBeenCalled();
+  });
+
+  it('error exit redacts prompt from file log and truncates pino output', async () => {
+    const sensitivePrompt = 'my-secret-password-12345 and other sensitive data';
+    const sensitiveInput = { ...testInput, prompt: sensitivePrompt };
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      sensitiveInput,
+      () => {},
+      onOutput,
+    );
+
+    fakeProc.stderr.push('Error: something went wrong\n');
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 1);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('error');
+
+    const writeFileCall = vi
+      .mocked(fs.writeFileSync)
+      .mock.calls.find(
+        (call) =>
+          typeof call[1] === 'string' && call[1].includes('=== Input ==='),
+      );
+    expect(writeFileCall).toBeDefined();
+    const logContent = writeFileCall![1] as string;
+    expect(logContent).not.toContain(sensitivePrompt);
+    expect(logContent).toContain(`[REDACTED: ${sensitivePrompt.length} chars]`);
+
+    const errorCall = vi
+      .mocked(logger.error)
+      .mock.calls.find((call) => call[1] === 'Container exited with error');
+    expect(errorCall).toBeDefined();
+    const errorObj = errorCall![0] as Record<string, unknown>;
+    expect(errorObj).toHaveProperty('stderrTail');
+    expect(errorObj).toHaveProperty('stdoutLength');
+    expect(errorObj).not.toHaveProperty('stderr');
+    expect(errorObj).not.toHaveProperty('stdout');
+  });
+
+  it('normal exit after output resolves as success', async () => {
+    const onOutput = vi.fn(async () => {});
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+      onOutput,
+    );
+
+    emitOutputMarker(fakeProc, {
+      status: 'success',
+      result: 'Done',
+      newSessionId: 'session-456',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+
+    const result = await resultPromise;
+    expect(result.status).toBe('success');
+    expect(result.newSessionId).toBe('session-456');
   });
 });

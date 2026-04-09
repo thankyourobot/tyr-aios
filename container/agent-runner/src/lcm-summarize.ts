@@ -62,7 +62,7 @@ function resolveTargetTokens(inputTokens: number, isCondensed: boolean): number 
 // --- API ---
 
 function hasApiCredentials(): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN);
+  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
 }
 
 /**
@@ -105,7 +105,7 @@ async function callAnthropicAPI(userContent: string, maxTokens: number = 2048): 
   if (process.env.ANTHROPIC_API_KEY) {
     headers['x-api-key'] = process.env.ANTHROPIC_API_KEY;
   } else {
-    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || '';
+    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
     headers['Authorization'] = `Bearer ${token}`;
     headers['anthropic-beta'] = 'oauth-2025-04-20';
   }

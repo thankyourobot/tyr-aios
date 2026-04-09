@@ -12,7 +12,6 @@ import {
   CONTAINER_IMAGE,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
-  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
@@ -24,13 +23,11 @@ import {
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import {
-  CONTAINER_HOST_GATEWAY,
   CONTAINER_RUNTIME_BIN,
   hostGatewayArgs,
   readonlyMountArgs,
   stopContainer,
 } from './container-runtime.js';
-import { detectAuthMode } from './credential-proxy.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { createParseState, parseStreamingChunk } from './output-parser.js';
 import { ContainerInput, ContainerOutput, RegisteredGroup } from './types.js';
@@ -39,16 +36,14 @@ import { ContainerInput, ContainerOutput, RegisteredGroup } from './types.js';
 // without also importing from ./types.js. Used by 24 callers across the codebase.
 export type { ContainerInput, ContainerOutput } from './types.js';
 
-// OneCLI Agent Vault singleton — null when not configured (legacy credential-proxy.ts path active).
-// See tech-spec-aios-onecli-agent-vault.md §7.
-const onecli =
-  ONECLI_API_KEY && ONECLI_URL
-    ? new OneCLI({
-        apiKey: ONECLI_API_KEY,
-        url: ONECLI_URL,
-        timeout: ONECLI_CLIENT_TIMEOUT_MS,
-      })
-    : null;
+// OneCLI Agent Vault singleton. index.ts main() validates ONECLI_API_KEY/
+// ONECLI_URL at startup and throws if missing, so this constructor never
+// runs in production with empty values.
+const onecli = new OneCLI({
+  apiKey: ONECLI_API_KEY,
+  url: ONECLI_URL,
+  timeout: ONECLI_CLIENT_TIMEOUT_MS,
+});
 
 interface VolumeMount {
   hostPath: string;
@@ -257,46 +252,23 @@ async function buildContainerArgs(
   // and avoid the SDK adding a duplicate --add-host.
   args.push(...hostGatewayArgs());
 
-  if (onecli) {
-    // SDK pushes -e/-v flags for HTTPS_PROXY, CA cert, and OAuth token onto args.
-    // Spec: tech-spec-aios-onecli-agent-vault.md §7.
-    const applied = await onecli.applyContainerConfig(args, {
-      agent: group.folder,
-      addHostMapping: false, // already added via hostGatewayArgs() above
-      combineCaBundle: true, // covers Python/curl/Go via SSL_CERT_FILE
-    });
-    if (!applied) {
-      logger.error(
-        { group: group.name, folder: group.folder },
-        'OneCLI gateway unreachable — failing container spawn',
-      );
-      throw new Error('OneCLI gateway unreachable');
-    }
-    logger.info(
+  // SDK pushes -e/-v flags for HTTPS_PROXY, CA cert, and OAuth token onto args.
+  const applied = await onecli.applyContainerConfig(args, {
+    agent: group.folder,
+    addHostMapping: false, // already added via hostGatewayArgs() above
+    combineCaBundle: true, // covers Python/curl/Go via SSL_CERT_FILE
+  });
+  if (!applied) {
+    logger.error(
       { group: group.name, folder: group.folder },
-      'OneCLI gateway config applied',
+      'OneCLI gateway unreachable — failing container spawn',
     );
-  } else {
-    // Legacy path: route API traffic through credential-proxy.ts on the host.
-    // Containers never see real secrets — the proxy injects them on the wire.
-    // Rollback dep: ANTHROPIC_AUTH_TOKEN must remain in .env until Phase 3 deletes
-    // this branch, otherwise detectAuthMode() can't resolve a fallback.
-    args.push(
-      '-e',
-      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-    );
-
-    // Mirror the host's auth method with a placeholder value.
-    // API key mode: SDK sends x-api-key, proxy replaces with real key.
-    // OAuth mode:   SDK exchanges placeholder token for temp API key,
-    //               proxy injects real OAuth token on that exchange request.
-    const authMode = detectAuthMode();
-    if (authMode === 'api-key') {
-      args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-    } else {
-      args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
-    }
+    throw new Error('OneCLI gateway unreachable');
   }
+  logger.info(
+    { group: group.name, folder: group.folder },
+    'OneCLI gateway config applied',
+  );
 
   // Run as host user so bind-mounted files are accessible.
   // Skip when running as root (uid 0), as the container's node user (uid 1000),

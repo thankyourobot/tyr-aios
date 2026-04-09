@@ -2,23 +2,18 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createLeafSummary, createCondensedSummary, LCM_CONDENSE_THRESHOLD } from './lcm-summarize.js';
 
 let savedApiKey: string | undefined;
-let savedAuthToken: string | undefined;
 let savedOauthToken: string | undefined;
 
 beforeEach(() => {
   savedApiKey = process.env.ANTHROPIC_API_KEY;
-  savedAuthToken = process.env.ANTHROPIC_AUTH_TOKEN;
   savedOauthToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
   delete process.env.ANTHROPIC_API_KEY;
-  delete process.env.ANTHROPIC_AUTH_TOKEN;
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 });
 
 afterEach(() => {
   if (savedApiKey !== undefined) process.env.ANTHROPIC_API_KEY = savedApiKey;
   else delete process.env.ANTHROPIC_API_KEY;
-  if (savedAuthToken !== undefined) process.env.ANTHROPIC_AUTH_TOKEN = savedAuthToken;
-  else delete process.env.ANTHROPIC_AUTH_TOKEN;
   if (savedOauthToken !== undefined) process.env.CLAUDE_CODE_OAUTH_TOKEN = savedOauthToken;
   else delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
 });

@@ -165,7 +165,7 @@ function getApiHeaders(): Record<string, string> {
   if (process.env.ANTHROPIC_API_KEY) {
     headers['x-api-key'] = process.env.ANTHROPIC_API_KEY;
   } else {
-    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || '';
+    const token = process.env.CLAUDE_CODE_OAUTH_TOKEN || '';
     headers['Authorization'] = `Bearer ${token}`;
     headers['anthropic-beta'] = 'oauth-2025-04-20';
   }
@@ -173,7 +173,7 @@ function getApiHeaders(): Record<string, string> {
 }
 
 function hasApiCredentials(): boolean {
-  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN);
+  return !!(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_OAUTH_TOKEN);
 }
 
 // --- Sub-agent runner ---

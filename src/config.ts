@@ -5,8 +5,9 @@ import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 // Read config values from .env (falls back to process.env).
-// Secrets (API keys, tokens) are NOT read here — they are loaded only
-// by the credential proxy (credential-proxy.ts), never exposed to containers.
+// Secrets (API keys, tokens) are NOT loaded into process.env — they live in
+// envConfig (closure-local) so they can't leak to child processes via env
+// inheritance. See readEnvFile docstring in env.ts.
 const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
@@ -70,16 +71,9 @@ export const DATA_DIR = path.resolve(PROJECT_ROOT, 'data');
 export const CONTAINER_IMAGE = containerImage.value;
 export const CONTAINER_TIMEOUT = parseInt(containerTimeout.value, 10);
 export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(containerMaxOutput.value, 10); // 10MB default
-export const CREDENTIAL_PROXY_PORT = parseInt(
-  process.env.CREDENTIAL_PROXY_PORT || '3001',
-  10,
-);
 
-// OneCLI Agent Vault feature flag — both must be set or NanoClaw uses the
-// legacy credential-proxy.ts path. Read from envConfig (NOT process.env) so
-// the secret never enters the inheritable environment of spawned child
-// processes; see the docstring on readEnvFile in env.ts.
-// Spec: tech-spec-aios-onecli-agent-vault.md §6.
+// OneCLI Agent Vault. Required at runtime — container-runner.ts throws if
+// either is missing when its module-scope OneCLI client is constructed.
 export const ONECLI_URL = (envConfig.ONECLI_URL || '').trim();
 // Strip non-alphanumeric chars defensively — terminal-pasted values can carry
 // control bytes (e.g. ESC) that mangle the resulting Authorization header.

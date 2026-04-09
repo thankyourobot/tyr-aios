@@ -1,10 +1,8 @@
 import fs from 'fs';
-import type { Server } from 'http';
 import path from 'path';
 import { OneCLI } from '@onecli-sh/sdk';
 import {
   ASSISTANT_NAME,
-  CREDENTIAL_PROXY_PORT,
   ONECLI_API_KEY,
   ONECLI_CLIENT_TIMEOUT_MS,
   ONECLI_URL,
@@ -12,7 +10,6 @@ import {
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
-import { startCredentialProxy } from './credential-proxy.js';
 import { getAllRegisteredGroups } from './stores/group-store.js';
 import './channels/index.js';
 import {
@@ -23,7 +20,6 @@ import { writeGroupsSnapshot } from './snapshot-writer.js';
 import {
   cleanupOrphans,
   ensureContainerRuntimeRunning,
-  PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
   getAllChats,
@@ -730,79 +726,69 @@ async function main(): Promise<void> {
   loadState();
   state.loadEnvVars();
 
-  // Credential layer: OneCLI Agent Vault if configured, else legacy credential-proxy.ts.
-  // Feature flag is the presence of both ONECLI_API_KEY and ONECLI_URL in the environment.
-  // See tech-spec-aios-onecli-agent-vault.md §7.
-  let proxyServer: Server | null = null;
-  if (ONECLI_API_KEY && ONECLI_URL) {
-    logger.info({ url: ONECLI_URL }, 'Credential layer: OneCLI Agent Vault');
-    const onecli = new OneCLI({
-      apiKey: ONECLI_API_KEY,
-      url: ONECLI_URL,
-      timeout: ONECLI_CLIENT_TIMEOUT_MS,
-    });
+  if (!ONECLI_API_KEY || !ONECLI_URL) {
+    throw new Error(
+      'ONECLI_URL and ONECLI_API_KEY must both be set in /opt/nanoclaw/.env',
+    );
+  }
+  logger.info({ url: ONECLI_URL }, 'Credential layer: OneCLI Agent Vault');
+  const onecli = new OneCLI({
+    apiKey: ONECLI_API_KEY,
+    url: ONECLI_URL,
+    timeout: ONECLI_CLIENT_TIMEOUT_MS,
+  });
 
-    // Retry covers boot races (onecli.service is oneshot, so "active" != "ready")
-    // and transient flake. Backoff: immediate, 500ms, 1500ms.
-    const ensureAgentWithRetry = async (
-      folder: string,
-    ): ReturnType<typeof onecli.ensureAgent> => {
-      const delays = [0, 500, 1500];
-      let lastErr: unknown;
-      for (let attempt = 0; attempt < delays.length; attempt++) {
-        if (delays[attempt] > 0) {
-          await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
-        }
-        try {
-          return await onecli.ensureAgent({
-            name: folder,
-            identifier: folder,
-          });
-        } catch (err) {
-          lastErr = err;
-          logger.warn(
-            { err, folder, attempt: attempt + 1 },
-            'ensureAgent attempt failed, will retry',
-          );
-        }
+  // Retry covers boot races (onecli.service is oneshot, so "active" != "ready")
+  // and transient flake. Backoff: immediate, 500ms, 1500ms.
+  const ensureAgentWithRetry = async (
+    folder: string,
+  ): ReturnType<typeof onecli.ensureAgent> => {
+    const delays = [0, 500, 1500];
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      if (delays[attempt] > 0) {
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
       }
-      throw lastErr;
-    };
-
-    // Idempotently ensure each registered group folder maps to an OneCLI agent.
-    // Adding a new group later → next NanoClaw restart auto-creates its OneCLI identity.
-    const groups = getAllRegisteredGroups();
-    const uniqueFolders = [
-      ...new Set(Object.values(groups).map((g) => g.folder)),
-    ];
-    for (const folder of uniqueFolders) {
       try {
-        const res = await ensureAgentWithRetry(folder);
-        logger.info(
-          { folder, created: res.created },
-          res.created ? 'Created OneCLI agent' : 'OneCLI agent already exists',
-        );
+        return await onecli.ensureAgent({
+          name: folder,
+          identifier: folder,
+        });
       } catch (err) {
-        logger.error(
-          { err, folder },
-          'Failed to ensure OneCLI agent after 3 attempts — startup aborting',
+        lastErr = err;
+        logger.warn(
+          { err, folder, attempt: attempt + 1 },
+          'ensureAgent attempt failed, will retry',
         );
-        throw err;
       }
     }
-    // Do NOT start the legacy credential proxy.
-  } else {
-    logger.info('Credential layer: legacy credential-proxy.ts');
-    proxyServer = await startCredentialProxy(
-      CREDENTIAL_PROXY_PORT,
-      PROXY_BIND_HOST,
-    );
+    throw lastErr;
+  };
+
+  // Idempotently ensure each registered group folder maps to an OneCLI agent.
+  const groups = getAllRegisteredGroups();
+  const uniqueFolders = [
+    ...new Set(Object.values(groups).map((g) => g.folder)),
+  ];
+  for (const folder of uniqueFolders) {
+    try {
+      const res = await ensureAgentWithRetry(folder);
+      logger.info(
+        { folder, created: res.created },
+        res.created ? 'Created OneCLI agent' : 'OneCLI agent already exists',
+      );
+    } catch (err) {
+      logger.error(
+        { err, folder },
+        'Failed to ensure OneCLI agent after 3 attempts — startup aborting',
+      );
+      throw err;
+    }
   }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
-    proxyServer?.close();
     await state.queue.shutdown(10000);
     for (const ch of state.channels) await ch.disconnect();
     process.exit(0);

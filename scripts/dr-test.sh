@@ -111,20 +111,6 @@ RECENT_CONTAINERS=$(find /opt/nanoclaw/groups -name "container-*.log" -mtime -1 
 RECENT_JOBS=$(sqlite3 /opt/nanoclaw/store/messages.db "SELECT COUNT(*) FROM scheduled_jobs WHERE last_run > datetime('now', '-1 day');" 2>/dev/null)
 [ "$RECENT_JOBS" -ge 1 ] 2>/dev/null && report PASS "recent job runs" "${RECENT_JOBS} in 24h" || report WARN "recent job runs" "none in 24h"
 
-# Credential proxy listening (legacy path only — section 7 covers OneCLI mode).
-# Skipped when OneCLI is configured in /opt/nanoclaw/.env. Phase 3 will delete
-# both this check and credential-proxy.ts entirely.
-if grep -q '^ONECLI_API_KEY=' /opt/nanoclaw/.env 2>/dev/null; then
-  report PASS "credential proxy listening" "skipped — OneCLI mode"
-else
-  PROXY_LISTENING=$(ss -tln 2>/dev/null | grep -c ':3001 ')
-  if [ "${PROXY_LISTENING:-0}" -ge 1 ] 2>/dev/null; then
-    report PASS "credential proxy listening"
-  else
-    report FAIL "credential proxy listening"
-  fi
-fi
-
 # Docker socket in use
 DOCKER_SOCKET=$(systemctl show -p Environment --value nanoclaw 2>/dev/null | tr ' ' '\n' | grep DOCKER_HOST | cut -d= -f2-)
 [ -z "$DOCKER_SOCKET" ] && DOCKER_SOCKET="/var/run/docker.sock (rootful)"
