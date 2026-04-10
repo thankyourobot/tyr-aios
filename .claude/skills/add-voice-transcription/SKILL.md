@@ -92,13 +92,7 @@ Add to `.env`:
 OPENAI_API_KEY=<their-key>
 ```
 
-Sync to container environment:
-
-```bash
-mkdir -p data/env && cp .env data/env/env
-```
-
-The container reads environment from `data/env/env`, not `.env` directly.
+The OpenAI key stays in the host `.env` — voice transcription happens in the NanoClaw host process before the message reaches the agent container, so containers never see this key.
 
 ### Build and restart
 
@@ -132,7 +126,7 @@ Look for:
 
 ### Voice notes show "[Voice Message - transcription unavailable]"
 
-1. Check `OPENAI_API_KEY` is set in `.env` AND synced to `data/env/env`
+1. Check `OPENAI_API_KEY` is set in `.env`
 2. Verify key works: `curl -s https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY" | head -c 200`
 3. Check OpenAI billing — Whisper requires a funded account
 

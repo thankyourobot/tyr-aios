@@ -308,13 +308,7 @@ Add pool tokens to `.env`:
 TELEGRAM_BOT_POOL=TOKEN1,TOKEN2,TOKEN3,...
 ```
 
-**Important**: Sync to all required locations:
-
-```bash
-cp .env data/env/env
-```
-
-Also add `TELEGRAM_BOT_POOL` to the launchd plist (`~/Library/LaunchAgents/com.nanoclaw.plist`) in the `EnvironmentVariables` dict if using launchd.
+If using launchd, also add `TELEGRAM_BOT_POOL` to the launchd plist (`~/Library/LaunchAgents/com.nanoclaw.plist`) in the `EnvironmentVariables` dict — launchd doesn't auto-read `.env`.
 
 ### Step 7: Rebuild and Restart
 
@@ -380,5 +374,5 @@ To remove Agent Swarm support while keeping basic Telegram:
 4. Remove `initBotPool` call from `main()`
 5. Remove `sender` param from MCP tool in `container/agent-runner/src/ipc-mcp-stdio.ts`
 6. Remove Agent Teams section from group CLAUDE.md files
-7. Remove `TELEGRAM_BOT_POOL` from `.env`, `data/env/env`, and launchd plist/systemd unit
+7. Remove `TELEGRAM_BOT_POOL` from `.env` and launchd plist (if using launchd)
 8. Rebuild: `npm run build && ./container/build.sh && launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist && launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist` (macOS) or `npm run build && ./container/build.sh && systemctl --user restart nanoclaw` (Linux)

@@ -17,7 +17,6 @@ src/container-runner.ts               container/agent-runner/
     │ spawns container                      │ runs Claude Agent SDK
     │ with volume mounts                   │ with MCP servers
     │                                      │
-    ├── data/env/env ──────────────> /workspace/env-dir/env
     ├── groups/{folder} ───────────> /workspace/group
     ├── data/ipc/{folder} ────────> /workspace/ipc
     ├── data/sessions/{folder}/.claude/ ──> /home/node/.claude/ (isolated per-group)
@@ -67,12 +66,13 @@ Common causes:
 ```
 Invalid API key · Please run /login
 ```
-**Fix:** Ensure `.env` file exists with either OAuth token or API key:
+**Fix:** Anthropic credentials come from the OneCLI Agent Vault, not `.env`. Check the orchestrator API key is configured and the vault is reachable:
 ```bash
-cat .env  # Should show one of:
-# CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...  (subscription)
-# ANTHROPIC_API_KEY=sk-ant-api03-...        (pay-per-use)
+grep -c '^ONECLI_API_KEY=' .env       # Should print 1 (no value shown)
+grep -c '^ONECLI_URL='     .env       # Should print 1
+systemctl status onecli                # Should be active (running)
 ```
+If `ONECLI_API_KEY` is missing, retrieve it from 1Password ("OneCLI orchestrator API key") and add it to `.env`, then restart NanoClaw.
 
 #### Root User Restriction
 ```
@@ -80,19 +80,16 @@ cat .env  # Should show one of:
 ```
 **Fix:** Container must run as non-root user. Check Dockerfile has `USER node`.
 
-### 2. Environment Variables Not Passing
+### 2. Anthropic Credentials Not Reaching Container
 
-**Runtime note:** Environment variables passed via `-e` may be lost when using `-i` (interactive/piped stdin).
+Anthropic credentials are injected into agent containers by the OneCLI Agent Vault SDK (`@onecli-sh/sdk`). At spawn time, `applyContainerConfig()` in `src/container-runner.ts` pushes `CLAUDE_CODE_OAUTH_TOKEN`, proxy env vars, and the CA bundle onto the docker run args list. There is no `.env` extraction or volume mount for credentials.
 
-**Workaround:** The system extracts only authentication variables (`CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`) from `.env` and mounts them for sourcing inside the container. Other env vars are not exposed.
+If agents start failing with `Invalid API key` or 401 errors:
 
-To verify env vars are reaching the container:
-```bash
-echo '{}' | docker run -i \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  --entrypoint /bin/bash nanoclaw-agent:latest \
-  -c 'export $(cat /workspace/env-dir/env | xargs); echo "OAuth: ${#CLAUDE_CODE_OAUTH_TOKEN} chars, API: ${#ANTHROPIC_API_KEY} chars"'
-```
+1. Check the OneCLI vault is up: `systemctl status onecli`
+2. Check the gateway is reachable from a container's network namespace: `curl -fsS http://172.17.0.1:10255/health`
+3. Check NanoClaw logs for `OneCLI gateway config applied` on each container spawn (success) or `OneCLI gateway unreachable` (failure): `journalctl -u nanoclaw -n 100 --no-pager | grep -i onecli`
+4. Verify the orchestrator API key is set: `grep -c '^ONECLI_API_KEY=' /opt/nanoclaw/.env` (should print `1`, no value emitted)
 
 ### 3. Mount Issues
 
@@ -115,17 +112,17 @@ docker run --rm --entrypoint /bin/bash nanoclaw-agent:latest -c 'ls -la /workspa
 Expected structure:
 ```
 /workspace/
-├── env-dir/env           # Environment file (CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY)
 ├── group/                # Current group folder (cwd)
 ├── project/              # Project root (main channel only)
 ├── global/               # Global CLAUDE.md (non-main only)
 ├── ipc/                  # Inter-process communication
-│   ├── messages/         # Outgoing WhatsApp messages
-│   ├── tasks/            # Scheduled task commands
-│   ├── current_tasks.json    # Read-only: scheduled tasks visible to this group
-│   └── available_groups.json # Read-only: WhatsApp groups for activation (main only)
+│   ├── messages/         # Outgoing channel messages
+│   ├── commands/         # Job/group command operations
+│   └── input/            # Per-thread input from host
 └── extra/                # Additional custom mounts
 ```
+
+Anthropic credentials reach the container via env vars injected by the OneCLI SDK (`CLAUDE_CODE_OAUTH_TOKEN`, `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, etc.) — not via a mounted env file.
 
 ### 4. Permission Issues
 
@@ -177,35 +174,15 @@ If an MCP server fails to start, the agent may exit. Check the container logs fo
 
 ## Manual Container Testing
 
-### Test the full agent flow:
-```bash
-# Set up env file
-mkdir -p data/env groups/test
-cp .env data/env/env
+The full agent spawn path goes through `runContainerAgent()` in `src/container-runner.ts`, which calls the OneCLI SDK to inject credentials. There is no useful way to bypass that and run the agent image standalone — without OneCLI's env vars and CA bundle the container has no Anthropic credentials and HTTPS calls to api.anthropic.com will fail.
 
-# Run test query
-echo '{"prompt":"What is 2+2?","groupFolder":"test","chatJid":"test@g.us","isMain":false}' | \
-  docker run -i \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  -v $(pwd)/groups/test:/workspace/group \
-  -v $(pwd)/data/ipc:/workspace/ipc \
-  nanoclaw-agent:latest
-```
+To test container changes end-to-end, use the real spawn path instead: send a message through Slack (or whichever channel the group is registered on) and tail the logs.
 
-### Test Claude Code directly:
-```bash
-docker run --rm --entrypoint /bin/bash \
-  -v $(pwd)/data/env:/workspace/env-dir:ro \
-  nanoclaw-agent:latest -c '
-  export $(cat /workspace/env-dir/env | xargs)
-  claude -p "Say hello" --dangerously-skip-permissions --allowedTools ""
-'
-```
-
-### Interactive shell in container:
+### Interactive shell in container (no agent execution):
 ```bash
 docker run --rm -it --entrypoint /bin/bash nanoclaw-agent:latest
 ```
+Useful for poking at the image (file layout, installed packages, user). Anthropic-dependent commands will not work in this shell because the OneCLI gateway env vars and CA aren't injected.
 
 ## SDK Options Reference
 
@@ -322,11 +299,11 @@ Run this to check common issues:
 ```bash
 echo "=== Checking NanoClaw Container Setup ==="
 
-echo -e "\n1. Authentication configured?"
-[ -f .env ] && (grep -q "CLAUDE_CODE_OAUTH_TOKEN=sk-" .env || grep -q "ANTHROPIC_API_KEY=sk-" .env) && echo "OK" || echo "MISSING - add CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY to .env"
+echo -e "\n1. OneCLI orchestrator key configured?"
+[ -f .env ] && grep -q "^ONECLI_API_KEY=" .env && grep -q "^ONECLI_URL=" .env && echo "OK" || echo "MISSING - set ONECLI_API_KEY (from 1Password) and ONECLI_URL in .env"
 
-echo -e "\n2. Env file copied for container?"
-[ -f data/env/env ] && echo "OK" || echo "MISSING - will be created on first run"
+echo -e "\n2. OneCLI vault running?"
+systemctl is-active --quiet onecli && echo "OK" || echo "NOT RUNNING - systemctl start onecli"
 
 echo -e "\n3. Container runtime running?"
 docker info &>/dev/null && echo "OK" || echo "NOT RUNNING - start Docker Desktop (macOS) or sudo systemctl start docker (Linux)"

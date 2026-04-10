@@ -4,19 +4,27 @@ If a compromise is suspected, rotate credentials in this order. Each step includ
 
 ## 1. Anthropic OAuth Token (highest impact)
 
-All agent API access flows through this token via the credential proxy.
+All agent API access flows through this token via the OneCLI Agent Vault. Rotation happens in the vault, not in `/opt/nanoclaw/.env` (the OAuth token is no longer stored there post-OneCLI cutover).
 
 ```bash
-# 1. Generate new token at console.anthropic.com
-# 2. Update on VM:
-ssh tyr-aios
-nano /opt/nanoclaw/.env          # Replace CLAUDE_CODE_OAUTH_TOKEN value
-cp /opt/nanoclaw/.env /opt/nanoclaw/data/env/env
-systemctl restart nanoclaw
+# 1. Revoke compromised token + generate new one at console.anthropic.com.
 
-# 3. Verify:
-journalctl -u nanoclaw -n 10 --no-pager   # Should show "Credential proxy started"
-# Send a test message to any agent in Slack — should get a response
+# 2. Update the vault. The dashboard is bound to 127.0.0.1 on the VM, so
+#    SSH-tunnel from your laptop to reach it:
+ssh -L 10254:127.0.0.1:10254 tyr-aios
+
+#    Then in a local browser open http://127.0.0.1:10254
+#    → Secrets → anthropic-primary → Edit value → paste new token → Save.
+#    The new value is re-encrypted at rest with SECRET_ENCRYPTION_KEY.
+
+# 3. Restart NanoClaw so newly spawned agent containers pick up the new token
+#    via the OneCLI SDK (in-flight containers keep the old token until they exit):
+ssh tyr-aios "systemctl restart nanoclaw"
+
+# 4. Verify:
+ssh tyr-aios "journalctl -u nanoclaw -n 50 --no-pager | grep -i 'OneCLI gateway'"
+#    Should show "OneCLI gateway config applied" on each agent spawn.
+# Then send a test message to any agent in Slack — should get a response.
 ```
 
 ## 2. Slack Bot Tokens (4 agents)
@@ -90,7 +98,7 @@ ssh tyr-aios "stat /root/.ssh/authorized_keys"
 ssh tyr-aios "cd /opt/nanoclaw && git fetch origin && git reset --hard origin/main && ./container/build.sh && systemctl restart nanoclaw"
 
 # Review NanoClaw source for modifications (especially security-critical files):
-ssh tyr-aios "cd /opt/nanoclaw && git diff origin/main -- src/credential-proxy.ts src/mount-security.ts src/container-runner.ts"
+ssh tyr-aios "cd /opt/nanoclaw && git diff origin/main -- src/container-runner.ts src/mount-security.ts src/config.ts src/index.ts"
 ```
 
 ## 6. Post-Incident Review

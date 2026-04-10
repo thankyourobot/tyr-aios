@@ -397,7 +397,7 @@ The token can be extracted from `~/.claude/.credentials.json` if you're logged i
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-Only the authentication variables (`CLAUDE_CODE_OAUTH_TOKEN` and `ANTHROPIC_API_KEY`) are extracted from `.env` and written to `data/env/env`, then mounted into the container at `/workspace/env-dir/env` and sourced by the entrypoint script. This ensures other environment variables in `.env` are not exposed to the agent. This workaround is needed because some container runtimes lose `-e` environment variables when using `-i` (interactive mode with piped stdin).
+Container credential injection is handled by the OneCLI Agent Vault. Agent containers receive `CLAUDE_CODE_OAUTH_TOKEN` (and proxy/CA env vars for non-Anthropic HTTP traffic) via the `@onecli-sh/sdk` `applyContainerConfig()` call in `src/container-runner.ts` — no `.env` extraction or volume mount is involved. Variables that aren't credentials (e.g. `SLACK_BOT_TOKEN`, `OPENAI_API_KEY`, `ASSISTANT_NAME`) stay in the host `.env` and are read by the NanoClaw host process; agent containers never see them.
 
 ### Changing the Assistant Name
 
