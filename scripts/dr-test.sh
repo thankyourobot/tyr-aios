@@ -157,6 +157,40 @@ else
   report FAIL "nanoclaw using OneCLI"
 fi
 
+# 8. LCM persistence
+echo ""
+echo "8. LCM persistence"
+
+sqlite3 /opt/nanoclaw/store/messages.db "SELECT DISTINCT folder FROM registered_groups;" 2>/dev/null \
+| while IFS= read -r folder; do
+  LCM_DB="/opt/nanoclaw/data/sessions/${folder}/.claude/lcm.db"
+
+  # Skip groups with no container activity in the last 48h
+  ACTIVE=$(find "/opt/nanoclaw/groups/${folder}/logs" -name "container-*.log" -mtime -2 2>/dev/null | head -1)
+  if [ -z "$ACTIVE" ]; then
+    continue
+  fi
+
+  if [ ! -f "$LCM_DB" ]; then
+    report WARN "${folder} lcm.db" "missing despite recent container activity"
+    continue
+  fi
+
+  # WAL-safe read-only open prevents creating root-owned -shm/-wal files
+  LCM_FRESH=$(sqlite3 "file://${LCM_DB}?mode=ro" \
+    "SELECT CASE WHEN MAX(created_at) > datetime('now', '-48 hours') THEN 'FRESH' ELSE 'STALE' END FROM lcm_messages;" 2>/dev/null || echo "ERROR")
+  LCM_COUNT=$(sqlite3 "file://${LCM_DB}?mode=ro" \
+    "SELECT COUNT(*) FROM lcm_messages;" 2>/dev/null || echo "0")
+
+  if [ "$LCM_FRESH" = "FRESH" ]; then
+    report PASS "${folder} lcm" "${LCM_COUNT} msgs, persisting"
+  elif [ "$LCM_FRESH" = "STALE" ]; then
+    report WARN "${folder} lcm" "${LCM_COUNT} msgs but stale (>48h)"
+  else
+    report WARN "${folder} lcm" "query failed (locked or corrupt?)"
+  fi
+done
+
 echo ""
 echo "=== Summary ==="
 echo "  PASS: $PASS  FAIL: $FAIL  WARN: $WARN"
