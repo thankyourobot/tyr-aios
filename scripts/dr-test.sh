@@ -191,6 +191,23 @@ sqlite3 /opt/nanoclaw/store/messages.db "SELECT DISTINCT folder FROM registered_
   fi
 done
 
+
+echo 9. Container egress filter
+
+# Check 1: DOCKER-USER has the DROP rule for docker0
+if iptables -L DOCKER-USER -n -v 2>/dev/null | grep -q 'DROP.*docker0'; then
+  report PASS "egress-filter iptables" "DOCKER-USER DROP rule for docker0 present"
+else
+  report FAIL "egress-filter iptables" "DOCKER-USER DROP rule for docker0 missing"
+fi
+
+# Check 2: systemd unit is active
+if systemctl is-active --quiet nanoclaw-egress-filter; then
+  report PASS "egress-filter service" "nanoclaw-egress-filter.service active"
+else
+  report FAIL "egress-filter service" "nanoclaw-egress-filter.service not active"
+fi
+
 echo ""
 echo "=== Summary ==="
 echo "  PASS: $PASS  FAIL: $FAIL  WARN: $WARN"
