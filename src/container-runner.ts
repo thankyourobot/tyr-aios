@@ -45,6 +45,39 @@ const onecli = new OneCLI({
   timeout: ONECLI_CLIENT_TIMEOUT_MS,
 });
 
+// Env var keys whose values must never appear in logs or on-disk container logs.
+// The OneCLI SDK injects these as `-e KEY=VALUE` args — the values contain
+// per-agent proxy tokens or OAuth credentials that are valid until rotated.
+const REDACTED_ENV_KEYS = new Set([
+  'HTTPS_PROXY',
+  'HTTP_PROXY',
+  'https_proxy',
+  'http_proxy',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'ANTHROPIC_API_KEY',
+]);
+
+/** Redact sensitive `-e KEY=VALUE` entries from a docker args array for safe logging. */
+function redactArgs(args: readonly string[]): string[] {
+  return args.map((arg, i) => {
+    // `-e KEY=VALUE` can appear as a single arg or as two args (`-e`, `KEY=VALUE`).
+    const eqIdx = arg.indexOf('=');
+    if (eqIdx > 0) {
+      const key = arg.slice(0, eqIdx);
+      if (REDACTED_ENV_KEYS.has(key)) return `${key}=[REDACTED]`;
+    }
+    // Also catch the two-arg form: previous arg is `-e`
+    if (i > 0 && args[i - 1] === '-e') {
+      const eqIdx2 = arg.indexOf('=');
+      if (eqIdx2 > 0) {
+        const key = arg.slice(0, eqIdx2);
+        if (REDACTED_ENV_KEYS.has(key)) return `${key}=[REDACTED]`;
+      }
+    }
+    return arg;
+  });
+}
+
 interface VolumeMount {
   hostPath: string;
   containerPath: string;
@@ -340,7 +373,7 @@ export async function runContainerAgent(
         (m) =>
           `${m.hostPath} -> ${m.containerPath}${m.readonly ? ' (ro)' : ''}`,
       ),
-      containerArgs: containerArgs.join(' '),
+      containerArgs: redactArgs(containerArgs).join(' '),
     },
     'Container mount configuration',
   );
@@ -542,7 +575,7 @@ export async function runContainerAgent(
           JSON.stringify(redactedInput, null, 2),
           ``,
           `=== Container Args ===`,
-          containerArgs.join(' '),
+          redactArgs(containerArgs).join(' '),
           ``,
           `=== Mounts ===`,
           mounts
